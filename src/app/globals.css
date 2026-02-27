@@ -50,12 +50,13 @@
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
 
-  /* Deep Space Custom Colors */
-  --color-indigo: #6366f1;
+  /* Deep Space Custom Colors — Purple/Violet Accent (GitNexus-inspired) */
+  --color-indigo: #7c3aed;
+  --color-violet: #7c3aed;
   --color-cyan: #22d3ee;
-  --color-space: #020817;
-  --color-space-light: #0f172a;
-  --color-space-lighter: #1e293b;
+  --color-space: #0a0612;
+  --color-space-light: #0f0a1e;
+  --color-space-lighter: #1a1333;
 }
 
 /* 
@@ -64,78 +65,79 @@
 */
 :root {
   --radius: 0.625rem;
-  --background: #020817;
+  --background: #0a0612;
   --foreground: #f1f5f9;
-  --card: rgba(15, 23, 42, 0.6);
+  --card: rgba(15, 10, 30, 0.6);
   --card-foreground: #f1f5f9;
-  --popover: #0f172a;
+  --popover: #0f0a1e;
   --popover-foreground: #f1f5f9;
-  --primary: #6366f1;
+  --primary: #7c3aed;
   --primary-foreground: #ffffff;
-  --secondary: #1e293b;
+  --secondary: #1a1333;
   --secondary-foreground: #f1f5f9;
-  --muted: #1e293b;
+  --muted: #1a1333;
   --muted-foreground: #94a3b8;
-  --accent: #1e293b;
+  --accent: #1a1333;
   --accent-foreground: #f1f5f9;
   --destructive: #ef4444;
-  --border: rgba(99, 102, 241, 0.15);
-  --input: rgba(99, 102, 241, 0.15);
-  --ring: #6366f1;
-  --chart-1: #6366f1;
+  --border: rgba(124, 58, 237, 0.15);
+  --input: rgba(124, 58, 237, 0.15);
+  --ring: #7c3aed;
+  --chart-1: #7c3aed;
   --chart-2: #22d3ee;
   --chart-3: #a855f7;
   --chart-4: #10b981;
   --chart-5: #f59e0b;
-  --sidebar: #0f172a;
+  --sidebar: #0f0a1e;
   --sidebar-foreground: #f1f5f9;
-  --sidebar-primary: #6366f1;
+  --sidebar-primary: #7c3aed;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1e293b;
+  --sidebar-accent: #1a1333;
   --sidebar-accent-foreground: #f1f5f9;
-  --sidebar-border: rgba(99, 102, 241, 0.15);
-  --sidebar-ring: #6366f1;
+  --sidebar-border: rgba(124, 58, 237, 0.15);
+  --sidebar-ring: #7c3aed;
 }
 
 /* Keep dark variant identical (always dark) */
 .dark {
-  --background: #020817;
+  --background: #0a0612;
   --foreground: #f1f5f9;
-  --card: rgba(15, 23, 42, 0.6);
+  --card: rgba(15, 10, 30, 0.6);
   --card-foreground: #f1f5f9;
-  --popover: #0f172a;
+  --popover: #0f0a1e;
   --popover-foreground: #f1f5f9;
-  --primary: #6366f1;
+  --primary: #7c3aed;
   --primary-foreground: #ffffff;
-  --secondary: #1e293b;
+  --secondary: #1a1333;
   --secondary-foreground: #f1f5f9;
-  --muted: #1e293b;
+  --muted: #1a1333;
   --muted-foreground: #94a3b8;
-  --accent: #1e293b;
+  --accent: #1a1333;
   --accent-foreground: #f1f5f9;
   --destructive: #ef4444;
-  --border: rgba(99, 102, 241, 0.15);
-  --input: rgba(99, 102, 241, 0.15);
-  --ring: #6366f1;
-  --chart-1: #6366f1;
+  --border: rgba(124, 58, 237, 0.15);
+  --input: rgba(124, 58, 237, 0.15);
+  --ring: #7c3aed;
+  --chart-1: #7c3aed;
   --chart-2: #22d3ee;
   --chart-3: #a855f7;
   --chart-4: #10b981;
   --chart-5: #f59e0b;
-  --sidebar: #0f172a;
+  --sidebar: #0f0a1e;
   --sidebar-foreground: #f1f5f9;
-  --sidebar-primary: #6366f1;
+  --sidebar-primary: #7c3aed;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1e293b;
+  --sidebar-accent: #1a1333;
   --sidebar-accent-foreground: #f1f5f9;
-  --sidebar-border: rgba(99, 102, 241, 0.15);
-  --sidebar-ring: #6366f1;
+  --sidebar-border: rgba(124, 58, 237, 0.15);
+  --sidebar-ring: #7c3aed;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
@@ -147,10 +149,10 @@
    ============================================================================ */
 
 .glass-card {
-  background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(99, 102, 241, 0.15);
+  background: rgba(15, 10, 30, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(124, 58, 237, 0.15);
   border-radius: 1rem;
 }
 
@@ -159,11 +161,12 @@
 }
 
 .glass-card-hover:hover {
-  background: rgba(15, 23, 42, 0.8);
-  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(15, 10, 30, 0.8);
+  border-color: rgba(124, 58, 237, 0.4);
   box-shadow:
-    0 0 20px rgba(99, 102, 241, 0.1),
-    0 0 60px rgba(99, 102, 241, 0.05);
+    0 0 20px rgba(124, 58, 237, 0.15),
+    0 0 60px rgba(124, 58, 237, 0.08),
+    inset 0 0 30px rgba(124, 58, 237, 0.03);
 }
 
 /* ============================================================================
@@ -175,13 +178,18 @@
 }
 
 .node-glow:hover {
-  box-shadow: 0 0 24px rgba(99, 102, 241, 0.3);
-  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 0 30px rgba(124, 58, 237, 0.35), 0 0 60px rgba(124, 58, 237, 0.1);
+  border-color: rgba(124, 58, 237, 0.6);
 }
 
 .node-glow-cyan:hover {
-  box-shadow: 0 0 24px rgba(34, 211, 238, 0.3);
-  border-color: rgba(34, 211, 238, 0.5);
+  box-shadow: 0 0 30px rgba(34, 211, 238, 0.35), 0 0 60px rgba(34, 211, 238, 0.1);
+  border-color: rgba(34, 211, 238, 0.6);
+}
+
+.node-glow-purple:hover {
+  box-shadow: 0 0 30px rgba(168, 85, 247, 0.35), 0 0 60px rgba(168, 85, 247, 0.1);
+  border-color: rgba(168, 85, 247, 0.6);
 }
 
 /* ============================================================================
@@ -238,12 +246,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.2);
+  background: rgba(124, 58, 237, 0.2);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.4);
+  background: rgba(124, 58, 237, 0.4);
 }
 
 /* ============================================================================
@@ -251,19 +259,41 @@
    ============================================================================ */
 
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
+
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.1); }
-  50% { box-shadow: 0 0 40px rgba(99, 102, 241, 0.25); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(124, 58, 237, 0.1);
+  }
+
+  50% {
+    box-shadow: 0 0 40px rgba(124, 58, 237, 0.3);
+  }
 }
 
 @keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .animate-float {
@@ -275,7 +305,7 @@
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #6366f1, #22d3ee, #a855f7);
+  background: linear-gradient(135deg, #7c3aed, #22d3ee, #a855f7);
   background-size: 200% 200%;
   animation: gradient-shift 5s ease infinite;
   -webkit-background-clip: text;
@@ -292,11 +322,33 @@
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(2px 2px at 20px 30px, rgba(99, 102, 241, 0.3), transparent),
+    radial-gradient(2px 2px at 20px 30px, rgba(124, 58, 237, 0.35), transparent),
     radial-gradient(2px 2px at 40px 70px, rgba(34, 211, 238, 0.2), transparent),
-    radial-gradient(1px 1px at 90px 40px, rgba(168, 85, 247, 0.3), transparent),
-    radial-gradient(1px 1px at 130px 80px, rgba(99, 102, 241, 0.2), transparent),
-    radial-gradient(2px 2px at 160px 30px, rgba(34, 211, 238, 0.15), transparent);
+    radial-gradient(1px 1px at 90px 40px, rgba(168, 85, 247, 0.35), transparent),
+    radial-gradient(1px 1px at 130px 80px, rgba(124, 58, 237, 0.2), transparent),
+    radial-gradient(2px 2px at 160px 30px, rgba(139, 92, 246, 0.2), transparent);
   background-size: 200px 100px;
   animation: float 20s linear infinite;
+}
+
+/* ============================================================================
+   Mermaid Diagram Overrides
+   ============================================================================ */
+
+.mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-container .node rect,
+.mermaid-container .node polygon,
+.mermaid-container .node circle {
+  cursor: pointer;
+  transition: filter 0.2s ease;
+}
+
+.mermaid-container .node:hover rect,
+.mermaid-container .node:hover polygon,
+.mermaid-container .node:hover circle {
+  filter: brightness(1.2) drop-shadow(0 0 8px rgba(124, 58, 237, 0.4));
 }

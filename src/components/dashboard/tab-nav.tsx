@@ -4,6 +4,7 @@ import { DiagramTab } from "@/types";
 import { DIAGRAM_TABS } from "@/lib/constants";
 import {
     Boxes,
+    Network,
     FolderTree,
     Users,
     GitBranch,
@@ -12,6 +13,7 @@ import {
 
 const iconMap: Record<string, React.ReactNode> = {
     Boxes: <Boxes className="w-4 h-4" />,
+    Network: <Network className="w-4 h-4" />,
     FolderTree: <FolderTree className="w-4 h-4" />,
     Users: <Users className="w-4 h-4" />,
     GitBranch: <GitBranch className="w-4 h-4" />,
@@ -33,7 +35,7 @@ export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
                     className={`
             flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
             ${activeTab === tab.id
-                            ? "bg-indigo/10 text-indigo border border-indigo/20"
+                            ? "bg-violet-500/10 text-violet-400 border border-violet-500/20 shadow-[0_0_12px_rgba(124,58,237,0.15)]"
                             : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
                         }
           `}

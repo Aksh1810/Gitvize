@@ -162,7 +162,7 @@ export interface DependencyNodeData {
 
 // --- UI Types ---
 
-export type DiagramTab = "architecture" | "files" | "contributors" | "branches" | "dependencies";
+export type DiagramTab = "architecture" | "graph" | "files" | "contributors" | "branches" | "dependencies";
 
 export interface ExampleRepo {
   owner: string;
