@@ -203,25 +203,19 @@ export function generateSimpleMermaid(
     dirGroups.forEach((files, dirName) => {
         if (dirName === "__root__") {
             // Root-level files — connect directly
-            files.slice(0, 5).forEach(file => {
+            files.forEach(file => {
                 const fileId = sanitizeId(file);
                 const fileName = file.split("/").pop() || file;
                 lines.push(`    ${fileId}["${fileName}"]`);
                 lines.push(`    ${rootId} --> ${fileId}`);
             });
-            if (files.length > 5) {
-                const moreId = sanitizeId("root_more");
-                lines.push(`    ${moreId}["... +${files.length - 5} more"]`);
-                lines.push(`    ${rootId} --> ${moreId}`);
-            }
         } else {
             const dirId = sanitizeId(dirName);
             const color = colors[colorIdx % colors.length];
             lines.push(`    subgraph ${dirId}["📁 ${dirName} (${files.length} files)"]`);
 
-            // Show up to 6 key files
-            const keyFiles = files.slice(0, 6);
-            keyFiles.forEach(file => {
+            // Show all files
+            files.forEach(file => {
                 const fileId = sanitizeId(file);
                 const fileName = file.split("/").pop() || file;
                 lines.push(`        ${fileId}["${fileName}"]`);
@@ -229,10 +223,6 @@ export function generateSimpleMermaid(
                     `        click ${fileId} "https://github.com/${repoOwner}/${repoName}/blob/main/${file}" _blank`
                 );
             });
-            if (files.length > 6) {
-                const moreId = sanitizeId(`${dirName}_more`);
-                lines.push(`        ${moreId}["... +${files.length - 6} more"]`);
-            }
 
             lines.push("    end");
             lines.push(`    ${rootId} --> ${dirId}`);

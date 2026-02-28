@@ -37,6 +37,8 @@ export default function KnowledgeGraph({
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const [draggedNode, setDraggedNode] = useState<GraphNode | null>(null);
+    const [nodeDragStart, setNodeDragStart] = useState({ x: 0, y: 0 });
     const [isRendered, setIsRendered] = useState(false);
 
     // Build graph data
@@ -285,17 +287,37 @@ export default function KnowledgeGraph({
             const my = clientY - rect.top;
             const cx = canvas.clientWidth / 2 + offset.x;
             const cy = canvas.clientHeight / 2 + offset.y;
+            // Convert mouse pixel coordinates to graph coordinate space
+            const graphX = (mx - cx) / zoom;
+            const graphY = (my - cy) / zoom;
 
             let closest: GraphNode | null = null;
             let closestDist = Infinity;
 
-            positionedNodes.forEach(node => {
-                const x = cx + (node.x || 0) * zoom;
-                const y = cy + (node.y || 0) * zoom;
-                const dist = Math.sqrt((mx - x) ** 2 + (my - y) ** 2);
-                const hitRadius = node.type === "root" ? 20 : node.type === "module" ? 15 : 10;
+            positionedNodes.forEach((node: GraphNode) => {
+                const nx = node.x || 0;
+                const ny = node.y || 0;
+                const dist = Math.sqrt((graphX - nx) ** 2 + (graphY - ny) ** 2);
 
-                if (dist < hitRadius * zoom && dist < closestDist) {
+                // Base radius in graph space
+                let hitRadius: number;
+                switch (node.type) {
+                    case "root": hitRadius = 15; break;
+                    case "module": hitRadius = 10; break;
+                    case "folder": hitRadius = 6; break;
+                    case "file": hitRadius = 4; break;
+                    default: hitRadius = 5;
+                }
+
+                // Add centrality boost (needs to match renderCanvas)
+                if (node.centrality && node.centrality > 5) {
+                    hitRadius *= 1 + Math.min(node.centrality * 0.05, 1);
+                }
+
+                // Add a generosity buffer (larger when zoomed out)
+                const generosity = 5 / zoom;
+
+                if (dist < (hitRadius + generosity) && dist < closestDist) {
                     closest = node;
                     closestDist = dist;
                 }
@@ -308,6 +330,23 @@ export default function KnowledgeGraph({
 
     const handleMouseMove = useCallback(
         (e: React.MouseEvent) => {
+            if (draggedNode) {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+
+                const cx = canvas.clientWidth / 2 + offset.x;
+                const cy = canvas.clientHeight / 2 + offset.y;
+
+                draggedNode.x = (mx - cx) / zoom;
+                draggedNode.y = (my - cy) / zoom;
+
+                renderCanvas();
+                return;
+            }
+
             if (isDragging) {
                 setOffset({
                     x: e.clientX - dragStart.x,
@@ -318,25 +357,45 @@ export default function KnowledgeGraph({
             const node = getNodeAtPosition(e.clientX, e.clientY);
             setHoveredNode(node);
             if (canvasRef.current) {
-                canvasRef.current.style.cursor = node ? "pointer" : "grab";
+                canvasRef.current.style.cursor = node ? "grab" : "default";
             }
         },
-        [isDragging, dragStart, getNodeAtPosition]
+        [isDragging, dragStart, draggedNode, zoom, offset, renderCanvas, getNodeAtPosition]
     );
 
     const handleMouseDown = useCallback(
         (e: React.MouseEvent) => {
-            setIsDragging(true);
-            setDragStart({
-                x: e.clientX - offset.x,
-                y: e.clientY - offset.y,
-            });
+            const node = getNodeAtPosition(e.clientX, e.clientY);
+            if (node) {
+                setDraggedNode(node);
+                setNodeDragStart({ x: e.clientX, y: e.clientY });
+                if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
+            } else {
+                setIsDragging(true);
+                setDragStart({
+                    x: e.clientX - offset.x,
+                    y: e.clientY - offset.y,
+                });
+                if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
+            }
         },
-        [offset]
+        [offset, getNodeAtPosition]
     );
 
     const handleMouseUp = useCallback(
         (e: React.MouseEvent) => {
+            if (canvasRef.current) canvasRef.current.style.cursor = "default";
+
+            if (draggedNode) {
+                const dx = e.clientX - nodeDragStart.x;
+                const dy = e.clientY - nodeDragStart.y;
+                if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
+                    setSelectedNode(prev => (prev?.id === draggedNode.id ? null : draggedNode));
+                }
+                setDraggedNode(null);
+                return;
+            }
+
             if (!isDragging) return;
             setIsDragging(false);
 
@@ -348,7 +407,7 @@ export default function KnowledgeGraph({
                 setSelectedNode(prev => (prev?.id === node?.id ? null : node || null));
             }
         },
-        [isDragging, dragStart, offset, getNodeAtPosition]
+        [isDragging, dragStart, offset, draggedNode, nodeDragStart, getNodeAtPosition]
     );
 
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -525,6 +584,7 @@ export default function KnowledgeGraph({
                 onMouseUp={handleMouseUp}
                 onMouseLeave={() => {
                     setIsDragging(false);
+                    setDraggedNode(null);
                     setHoveredNode(null);
                 }}
                 onWheel={handleWheel}

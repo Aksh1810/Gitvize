@@ -74,8 +74,90 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                 const { svg } = await mermaid.render(uniqueId, code);
 
                 if (!cancelled) {
+                    // Set HTML content
                     setSvgContent(svg);
                     setIsRendering(false);
+
+                    // Add drag logic after a short delay to ensure DOM is updated
+                    setTimeout(() => {
+                        const container = containerRef.current;
+                        if (!container) return;
+
+                        const svgElement = container.querySelector("svg");
+                        if (!svgElement) return;
+
+                        const nodes = svgElement.querySelectorAll(".node");
+                        let draggedNode: SVGGElement | null = null;
+                        let startPoint = { x: 0, y: 0 };
+                        let startTransform = { x: 0, y: 0 };
+
+                        // Prevent SVG default drag behavior
+                        svgElement.addEventListener("dragstart", e => e.preventDefault());
+
+                        nodes.forEach((node) => {
+                            const gNode = node as SVGGElement;
+                            gNode.style.cursor = "grab";
+
+                            gNode.addEventListener("mousedown", (e) => {
+                                // Stop propagation so canvas panning doesn't trigger
+                                e.stopPropagation();
+                                e.preventDefault();
+
+                                draggedNode = gNode;
+                                draggedNode.style.cursor = "grabbing";
+
+                                // Get current transform
+                                const transform = draggedNode.getAttribute("transform");
+                                if (transform) {
+                                    const match = transform.match(/translate\(([^,]+),([^)]+)\)/);
+                                    if (match) {
+                                        startTransform = {
+                                            x: parseFloat(match[1]),
+                                            y: parseFloat(match[2])
+                                        };
+                                    }
+                                }
+
+                                // We need to account for scale/zoom
+                                startPoint = { x: e.clientX, y: e.clientY };
+
+                                // To make dragging smooth, append node to end of SVG to bring it to front
+                                draggedNode.parentNode?.appendChild(draggedNode);
+                            });
+                        });
+
+                        // Attach move and up to the window/SVG so we don't lose it if moving fast
+                        svgElement.addEventListener("mousemove", (e) => {
+                            if (!draggedNode) return;
+
+                            // Account for scale from parent container
+                            const currentScale = scale; // Using the react state is tricky inside a closure here if it changes, 
+                            // But since the zoom handlers re-render the component, we might want to calculate the actual scale dynamically or read from a ref.
+                            // Actually, let's just get the bounding rect scale.
+                            const rect = svgElement.getBoundingClientRect();
+                            const viewBox = svgElement.viewBox.baseVal;
+
+                            // Calculate scale factor between screen pixels and viewBox pixels
+                            const scaleX = viewBox.width / rect.width;
+                            const scaleY = viewBox.height / rect.height;
+
+                            const dx = (e.clientX - startPoint.x) * scaleX;
+                            const dy = (e.clientY - startPoint.y) * scaleY;
+
+                            const newX = startTransform.x + dx;
+                            const newY = startTransform.y + dy;
+
+                            draggedNode.setAttribute("transform", `translate(${newX},${newY})`);
+                        });
+
+                        window.addEventListener("mouseup", () => {
+                            if (draggedNode) {
+                                draggedNode.style.cursor = "grab";
+                                draggedNode = null;
+                            }
+                        });
+
+                    }, 100);
                 }
             } catch (err) {
                 if (!cancelled) {
