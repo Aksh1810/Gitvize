@@ -13,7 +13,7 @@ import {
     BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 
 interface FlowWrapperProps {
     initialNodes: Node[];
@@ -32,8 +32,14 @@ export default function FlowWrapper({
     className = "",
     fitViewOptions = { padding: 0.2, maxZoom: 1.5 },
 }: FlowWrapperProps) {
-    const [nodes, , onNodesChange] = useNodesState(initialNodes);
-    const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+    // Sync state when props change (e.g., layout direction toggle or data refresh)
+    useEffect(() => {
+        setNodes(initialNodes);
+        setEdges(initialEdges);
+    }, [initialNodes, initialEdges, setNodes, setEdges]);
 
     const handleNodeClick = useCallback(
         (event: React.MouseEvent, node: Node) => {
