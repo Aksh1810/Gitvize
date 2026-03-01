@@ -1,282 +1,446 @@
 // ============================================================================
-// GitViz — Mermaid.js Diagram Generator
+// GitViz — GitDiagram-style Mermaid Code Generator
 // ============================================================================
-// Generates valid Mermaid.js flowchart code from analysis results.
-// Inspired by GitDiagram's 3-step pipeline:
-//   1. Architectural Discovery → understand the system
-//   2. Component Mapping → map to files/dirs
-//   3. Mermaid Synthesis → generate diagram with click events
+// Generates detailed Mermaid flowchart code from file tree data,
+// replicating the visual quality and structure of GitDiagram.
 
-import type { ArchitectureAnalysis, ModuleAnalysis } from "@/types";
+import { TreeItem, ArchitectureAnalysis } from "@/types";
 
-// --- Mermaid Shape Map ---
-// Different shapes for different module types (GitDiagram convention)
+/* ------------------------------------------------------------------ */
+/*  File classification helpers                                        */
+/* ------------------------------------------------------------------ */
 
-const SHAPE_MAP: Record<string, (id: string, label: string) => string> = {
-    api: (id, label) => `${id}("${label}")`,
-    ui: (id, label) => `${id}("🖥️ ${label}")`,
-    database: (id, label) => `${id}[("${label}")]`,       // keep cylinder
-    config: (id, label) => `${id}("⚙️ ${label}")`,
-    utility: (id, label) => `${id}("🔧 ${label}")`,
-    test: (id, label) => `${id}("✅ ${label}")`,
-    build: (id, label) => `${id}("📦 ${label}")`,
-    docs: (id, label) => `${id}("📄 ${label}")`,
-    core: (id, label) => `${id}("${label}")`,
-    middleware: (id, label) => `${id}("${label}")`,
-    service: (id, label) => `${id}("${label}")`,
-    model: (id, label) => `${id}("${label}")`,
-    controller: (id, label) => `${id}("${label}")`,
-    view: (id, label) => `${id}("👁️ ${label}")`,
-    other: (id, label) => `${id}("${label}")`,
-};
-
-// --- Module Type Colors (Mermaid CSS classes) ---
-
-const MODULE_STYLE_MAP: Record<string, string> = {
-    api: "fill:#0ea5e9,stroke:#0369a1,stroke-width:2px,color:#fff",
-    ui: "fill:#16a34a,stroke:#14532d,stroke-width:2px,color:#fff",
-    database: "fill:#22c55e,stroke:#14532d,stroke-width:2px,color:#062310",
-    config: "fill:#f59e0b,stroke:#a16207,stroke-width:2px,color:#fff",
-    utility: "fill:#10b981,stroke:#047857,stroke-width:2px,color:#fff",
-    test: "fill:#94a3b8,stroke:#475569,stroke-width:2px,stroke-dasharray:5 5,color:#fff",
-    build: "fill:#f97316,stroke:#c2410c,stroke-width:2px,color:#fff",
-    docs: "fill:#f1f5f9,stroke:#94a3b8,stroke-width:2px,color:#0f172a",
-    core: "fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#fff",
-    middleware: "fill:#db2777,stroke:#9d174d,stroke-width:2px,color:#fff",
-    service: "fill:#1d4ed8,stroke:#1e3a8a,stroke-width:2px,color:#fff",
-    model: "fill:#22c55e,stroke:#15803d,stroke-width:2px,color:#fff",
-    controller: "fill:#0ea5e9,stroke:#0369a1,stroke-width:2px,color:#fff",
-    view: "fill:#16a34a,stroke:#14532d,stroke-width:2px,color:#fff",
-    other: "fill:#cbd5e1,stroke:#64748b,stroke-width:2px,color:#0f172a",
-};
-
-// --- Sanitize node ID ---
-
-function sanitizeId(name: string): string {
-    return name
-        .replace(/[^a-zA-Z0-9_]/g, "_")
-        .replace(/^_+|_+$/g, "")
-        .replace(/_+/g, "_")
-        .toLowerCase();
+interface FileInfo {
+    path: string;
+    name: string;
+    baseName: string;
+    ext: string;
+    dir: string;
+    category: string;
+    label: string;
+    classType: string;
 }
 
-// --- Generate Mermaid diagram code ---
+function categorizeFile(path: string): { category: string; classType: string; label: string } {
+    const name = path.split("/").pop() || "";
+    const baseName = name.replace(/\.\w+$/, "");
+    const lower = path.toLowerCase();
+    const ext = name.split(".").pop() || "";
 
-export function generateMermaidDiagram(
-    analysis: ArchitectureAnalysis,
-    repoOwner: string,
-    repoName: string
-): string {
-    const lines: string[] = [];
-    const nodeIds = new Map<string, string>();
-
-    // Header
-    lines.push("flowchart TB");
-    lines.push("");
-
-    // Group modules into subgraphs by type
-    const typeGroups = new Map<string, ModuleAnalysis[]>();
-    analysis.modules.forEach(mod => {
-        const group = getTypeGroup(mod.type);
-        if (!typeGroups.has(group)) {
-            typeGroups.set(group, []);
-        }
-        typeGroups.get(group)!.push(mod);
-    });
-
-    // Render subgraphs
-    typeGroups.forEach((modules, groupName) => {
-        const groupId = sanitizeId(groupName);
-        lines.push(`    subgraph ${groupId}["${groupName}"]`);
-        lines.push(`        direction TB`);
-
-        modules.forEach(mod => {
-            const nodeId = sanitizeId(mod.name);
-            nodeIds.set(mod.name, nodeId);
-
-            const shapeFunc = SHAPE_MAP[mod.type] || SHAPE_MAP.other;
-            lines.push(`        ${shapeFunc(nodeId, mod.name)}`);
-        });
-
-        lines.push("    end");
-        lines.push("");
-    });
-
-    // Render data flow edges
-    if (analysis.dataFlow && analysis.dataFlow.length > 0) {
-        lines.push("    %% Data Flow");
-        analysis.dataFlow.forEach(flow => {
-            const sourceId = findNodeId(flow.from, nodeIds, analysis.modules);
-            const targetId = findNodeId(flow.to, nodeIds, analysis.modules);
-            if (sourceId && targetId) {
-                const label = flow.description
-                    ? `-- "${truncate(flow.description, 30)}" -->`
-                    : "-->";
-                lines.push(`    ${sourceId} ${label} ${targetId}`);
-            }
-        });
-        lines.push("");
+    // Tests
+    if (lower.includes("test") || lower.includes("spec") || lower.includes("__tests__")) {
+        return { category: "test", classType: "test", label: `${baseName}` };
     }
 
-    // Render dependency edges
-    lines.push("    %% Module Dependencies");
-    analysis.modules.forEach(mod => {
-        const sourceId = nodeIds.get(mod.name);
-        if (!sourceId) return;
+    // Config / tooling at root
+    if (!path.includes("/")) {
+        if (name.includes("config") || name.includes("rc") || name === "package.json" || name.includes("tsconfig"))
+            return { category: "config", classType: "platform", label: `${name}` };
+        if (name.includes("eslint") || name.includes("prettier"))
+            return { category: "config", classType: "platform", label: `${name} (lint)` };
+        if (name.includes("tailwind") || name.includes("postcss"))
+            return { category: "config", classType: "platform", label: `${name} (styling pipeline)` };
+        if (name === ".gitignore" || name === ".env" || name === ".env.local")
+            return { category: "config", classType: "platform", label: name };
+        if (name === "README.md" || name === "LICENSE")
+            return { category: "docs", classType: "doc", label: name };
+        return { category: "config", classType: "platform", label: name };
+    }
 
-        mod.dependencies.forEach(dep => {
-            const targetId = nodeIds.get(dep);
-            if (targetId && sourceId !== targetId) {
-                lines.push(`    ${sourceId} -.-> ${targetId}`);
-            }
+    // Hooks
+    if (lower.includes("hook") || (lower.includes("/hooks/") && ext === "ts")) {
+        return { category: "hooks", classType: "hooks", label: `${baseName} (hook)` };
+    }
+
+    // Core / engine / domain logic
+    if (lower.includes("/core/") || lower.includes("/engine/") || lower.includes("/domain/")) {
+        if (lower.includes("type")) return { category: "core", classType: "core", label: `${baseName} (types/constants)` };
+        if (lower.includes("rule")) return { category: "core", classType: "core", label: `${baseName} (validation)` };
+        if (lower.includes("engine")) return { category: "core", classType: "core", label: `${baseName} (state transitions)` };
+        if (lower.includes("chain") || lower.includes("reaction")) return { category: "core", classType: "core", label: `${baseName} (chain processing)` };
+        if (lower.includes("ai") || lower.includes("minimax")) return { category: "core", classType: "ai", label: `${baseName} (AI logic)` };
+        if (lower.includes("grid")) return { category: "core", classType: "core", label: `${baseName} (grid/neighbors)` };
+        if (lower.includes("index")) return { category: "core", classType: "core", label: `${baseName} (barrel)` };
+        return { category: "core", classType: "core", label: baseName };
+    }
+
+    // API routes
+    if (lower.includes("/api/") || lower.includes("/route")) {
+        return { category: "api", classType: "hooks", label: `${baseName} (API)` };
+    }
+
+    // Pages / App routes
+    if (lower.includes("/app/") || lower.includes("/pages/")) {
+        if (name === "layout.tsx" || name === "layout.ts") return { category: "app", classType: "ui", label: "Layout (shell)" };
+        if (name === "page.tsx" || name === "page.ts") {
+            const dir = path.split("/").slice(-2, -1)[0] || "";
+            if (dir === "app") return { category: "app", classType: "ui", label: "Home Page '/'" };
+            return { category: "app", classType: "ui", label: `${dir} Page '/${dir}'` };
+        }
+        if (name.includes("globals") || name.endsWith(".css")) return { category: "app", classType: "platform", label: `${name}` };
+        return { category: "app", classType: "ui", label: baseName };
+    }
+
+    // Components
+    if (lower.includes("component") || (ext === "tsx" && !lower.includes("app/"))) {
+        if (lower.includes("index")) return { category: "components", classType: "ui", label: `${baseName} (barrel)` };
+        return { category: "components", classType: "ui", label: baseName };
+    }
+
+    // Lib / utilities
+    if (lower.includes("/lib/") || lower.includes("/utils/") || lower.includes("/helpers/")) {
+        return { category: "utility", classType: "core", label: `${baseName} (utility)` };
+    }
+
+    // Styles
+    if (ext === "css" || ext === "scss" || ext === "sass") {
+        return { category: "styles", classType: "platform", label: baseName };
+    }
+
+    // Types
+    if (lower.includes("/types/") || lower.includes("types.ts") || lower.includes("types.d.ts")) {
+        return { category: "types", classType: "core", label: `${baseName} (types)` };
+    }
+
+    // Docs
+    if (ext === "md" || lower.includes("/docs/")) {
+        return { category: "docs", classType: "doc", label: baseName };
+    }
+
+    // Public / assets
+    if (lower.includes("/public/") || lower.includes("/assets/")) {
+        return { category: "public", classType: "platform", label: baseName };
+    }
+
+    // Default
+    return { category: "other", classType: "ui", label: baseName };
+}
+
+function sanitizeId(path: string): string {
+    return path.replace(/[^a-zA-Z0-9]/g, "_").replace(/__+/g, "_");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Relationship inference                                             */
+/* ------------------------------------------------------------------ */
+
+interface Edge {
+    from: string;
+    to: string;
+    label: string;
+    style: "solid" | "dotted";
+}
+
+function inferEdges(files: FileInfo[], owner: string, repo: string): Edge[] {
+    const edges: Edge[] = [];
+    const fileMap = new Map<string, FileInfo>();
+    files.forEach(f => fileMap.set(f.path, f));
+
+    const byDir = new Map<string, FileInfo[]>();
+    files.forEach(f => {
+        const dir = f.dir || "root";
+        if (!byDir.has(dir)) byDir.set(dir, []);
+        byDir.get(dir)!.push(f);
+    });
+
+    // Layout wraps pages
+    const layouts = files.filter(f => f.name.startsWith("layout."));
+    const pages = files.filter(f => f.name.startsWith("page.") && f.category === "app");
+    layouts.forEach(l => {
+        pages.forEach(p => {
+            edges.push({ from: sanitizeId(l.path), to: sanitizeId(p.path), label: "wraps", style: "solid" });
         });
     });
-    lines.push("");
 
-    // Click events — link to GitHub (GitDiagram's key feature)
-    lines.push("    %% Click to Navigate to GitHub");
-    analysis.modules.forEach(mod => {
-        const nodeId = nodeIds.get(mod.name);
-        if (!nodeId) return;
+    // Layout imports globals.css
+    const globalsCss = files.find(f => f.name.includes("globals") && (f.ext === "css" || f.ext === "scss"));
+    if (layouts.length > 0 && globalsCss) {
+        edges.push({ from: sanitizeId(layouts[0].path), to: sanitizeId(globalsCss.path), label: "imports", style: "solid" });
+    }
 
-        // Find the best file/directory path for this module
-        const clickPath = mod.entryPoint || mod.files[0] || "";
-        if (clickPath) {
-            // Use relative path — frontend prepends repo base URL
-            lines.push(`    click ${nodeId} "https://github.com/${repoOwner}/${repoName}/tree/main/${clickPath}" _blank`);
+    // Index/barrel files export siblings
+    byDir.forEach(dirFiles => {
+        const barrel = dirFiles.find(f => f.name.startsWith("index."));
+        if (barrel && dirFiles.length > 1) {
+            dirFiles.filter(f => f !== barrel).forEach(f => {
+                edges.push({ from: sanitizeId(barrel.path), to: sanitizeId(f.path), label: "exports", style: "solid" });
+            });
         }
     });
-    lines.push("");
 
-    // Styling
-    lines.push("    %% Styles");
-    analysis.modules.forEach(mod => {
-        const nodeId = nodeIds.get(mod.name);
-        if (!nodeId) return;
-        const style = MODULE_STYLE_MAP[mod.type] || MODULE_STYLE_MAP.other;
-        lines.push(`    style ${nodeId} ${style}`);
+    // Pages → components (composes_screen)
+    const componentFiles = files.filter(f => f.category === "components" && !f.name.startsWith("index."));
+    pages.forEach(p => {
+        // Find the most likely main component
+        const mainComp = componentFiles.find(c =>
+            c.baseName.toLowerCase().includes("board") ||
+            c.baseName.toLowerCase().includes("main") ||
+            c.baseName.toLowerCase().includes("app")
+        );
+        if (mainComp) {
+            const dirName = p.path.split("/").slice(-2, -1)[0] || "";
+            const mode = dirName === "app" ? "" : `(mode=${dirName})`;
+            edges.push({ from: sanitizeId(p.path), to: sanitizeId(mainComp.path), label: `composes_screen${mode}`, style: "solid" });
+        }
     });
 
-    // Subgraph styling
-    typeGroups.forEach((_, groupName) => {
-        const groupId = sanitizeId(groupName);
-        lines.push(`    style ${groupId} fill:#2e1065,stroke:#6d28d9,stroke-width:2px,color:#d8b4fe,stroke-dasharray:4 4,rx:10,ry:10`);
-    });
-
-    return lines.join("\n");
-}
-
-// --- Generate simplified Mermaid for small repos (no analysis) ---
-
-export function generateSimpleMermaid(
-    tree: { path: string; type: string }[],
-    repoOwner: string,
-    repoName: string
-): string {
-    const lines: string[] = [];
-    lines.push("flowchart TB");
-    lines.push("");
-
-    // Root node
-    const rootId = sanitizeId(`${repoOwner}_${repoName}`);
-    lines.push(`    ${rootId}("${repoOwner}/${repoName}")`);
-    lines.push(`    style ${rootId} fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#fff`);
-    lines.push("");
-
-    // Group files by top-level directory
-    const dirGroups = new Map<string, string[]>();
-    tree
-        .filter(item => item.type === "blob")
-        .forEach(item => {
-            const parts = item.path.split("/");
-            const topDir = parts.length > 1 ? parts[0] : "__root__";
-            if (!dirGroups.has(topDir)) {
-                dirGroups.set(topDir, []);
-            }
-            dirGroups.get(topDir)!.push(item.path);
+    // Component hierarchy: find composing relationships
+    const componentList = componentFiles.filter(f => f.ext === "tsx" || f.ext === "jsx");
+    componentList.forEach(comp => {
+        const nameL = comp.baseName.toLowerCase();
+        componentList.forEach(other => {
+            if (comp === other) return;
+            const otherNameL = other.baseName.toLowerCase();
+            // Common patterns
+            if (nameL.includes("board") && (otherNameL.includes("cell") || otherNameL.includes("tile")))
+                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "composes", style: "solid" });
+            if (nameL.includes("cell") && otherNameL.includes("dot"))
+                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "renders", style: "solid" });
+            if (nameL.includes("board") && (otherNameL.includes("bar") || otherNameL.includes("score") || otherNameL.includes("hud")))
+                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "shows", style: "solid" });
+            if (nameL.includes("board") && otherNameL.includes("modal"))
+                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "shows", style: "solid" });
+            if (nameL.includes("board") && otherNameL.includes("nav"))
+                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "uses", style: "solid" });
+            if (nameL.includes("cell") && (otherNameL.includes("burst") || otherNameL.includes("effect") || otherNameL.includes("explosion") || otherNameL.includes("ring")))
+                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "triggers_animation", style: "dotted" });
         });
+    });
 
-    // Render dir groups as subgraphs
-    let colorIdx = 0;
-    const colors = ["#0ea5e9", "#16a34a", "#f97316", "#db2777", "#22c55e", "#1d4ed8", "#f59e0b"];
-
-    dirGroups.forEach((files, dirName) => {
-        if (dirName === "__root__") {
-            // Root-level files — connect directly
-            files.forEach(file => {
-                const fileId = sanitizeId(file);
-                const fileName = file.split("/").pop() || file;
-                lines.push(`    ${fileId}("${fileName}")`);
-                lines.push(`    ${rootId} --> ${fileId}`);
-            });
-        } else {
-            const dirId = sanitizeId(dirName);
-            const color = colors[colorIdx % colors.length];
-            lines.push(`    subgraph ${dirId}["📁 ${dirName} (${files.length} files)"]`);
-
-            // Show all files
-            files.forEach(file => {
-                const fileId = sanitizeId(file);
-                const fileName = file.split("/").pop() || file;
-                lines.push(`        ${fileId}("${fileName}")`);
-                lines.push(
-                    `        click ${fileId} "https://github.com/${repoOwner}/${repoName}/blob/main/${file}" _blank`
-                );
-            });
-
-            lines.push("    end");
-            lines.push(`    ${rootId} --> ${dirId}`);
-            lines.push(`    style ${dirId} fill:transparent,stroke:${color},stroke-width:2px,color:${color},stroke-dasharray:4 4,rx:10,ry:10`);
-            colorIdx++;
+    // Components → Hooks
+    const hookFiles = files.filter(f => f.category === "hooks" && !f.name.startsWith("index."));
+    const mainBoard = componentFiles.find(c => c.baseName.toLowerCase().includes("board") || c.baseName.toLowerCase().includes("main"));
+    hookFiles.forEach(h => {
+        if (mainBoard) {
+            edges.push({ from: sanitizeId(mainBoard.path), to: sanitizeId(h.path), label: `${h.baseName}()`, style: "solid" });
         }
     });
 
-    return lines.join("\n");
-}
+    // Hooks → Core
+    const coreFiles = files.filter(f => f.category === "core" && !f.name.startsWith("index."));
+    const mainHook = hookFiles.find(h => h.baseName.toLowerCase().includes("game") || h.baseName.toLowerCase().includes("main") || h.baseName.toLowerCase().includes("state"));
+    if (mainHook) {
+        const engineFile = coreFiles.find(c => c.baseName.toLowerCase().includes("engine") || c.baseName.toLowerCase().includes("state"));
+        if (engineFile) edges.push({ from: sanitizeId(mainHook.path), to: sanitizeId(engineFile.path), label: "applyMove(State,Move)", style: "solid" });
 
-// --- Helpers ---
+        const aiFile = coreFiles.find(c => c.baseName.toLowerCase().includes("ai") || c.baseName.toLowerCase().includes("minimax"));
+        if (aiFile) edges.push({ from: sanitizeId(mainHook.path), to: sanitizeId(aiFile.path), label: "computeBestMove()", style: "solid" });
 
-function getTypeGroup(type: ModuleAnalysis["type"]): string {
-    const groups: Record<string, string> = {
-        api: "🌐 API & Services",
-        service: "🌐 API & Services",
-        controller: "🌐 API & Services",
-        ui: "🖥️ Frontend & UI",
-        view: "🖥️ Frontend & UI",
-        database: "💾 Data Layer",
-        model: "💾 Data Layer",
-        core: "⚙️ Core Logic",
-        middleware: "⚙️ Core Logic",
-        utility: "🔧 Utilities & Tools",
-        config: "🔧 Utilities & Tools",
-        build: "🔧 Utilities & Tools",
-        test: "✅ Testing",
-        docs: "📄 Documentation",
-        other: "📦 Other",
-    };
-    return groups[type] || groups.other;
-}
+        // Hook → Audio hook
+        const audioHook = hookFiles.find(h => h.baseName.toLowerCase().includes("audio") || h.baseName.toLowerCase().includes("sound"));
+        if (audioHook) edges.push({ from: sanitizeId(mainHook.path), to: sanitizeId(audioHook.path), label: "play_sound", style: "dotted" });
+    }
 
-function findNodeId(
-    name: string,
-    nodeIds: Map<string, string>,
-    modules: ModuleAnalysis[]
-): string | null {
-    // Direct match
-    if (nodeIds.has(name)) return nodeIds.get(name)!;
+    // Core internal relationships
+    const typesFile = coreFiles.find(c => c.baseName.toLowerCase().includes("type"));
+    const rulesFile = coreFiles.find(c => c.baseName.toLowerCase().includes("rule"));
+    const engineFile = coreFiles.find(c => c.baseName.toLowerCase().includes("engine"));
+    const chainFile = coreFiles.find(c => c.baseName.toLowerCase().includes("chain") || c.baseName.toLowerCase().includes("reaction"));
+    const gridFile = coreFiles.find(c => c.baseName.toLowerCase().includes("grid"));
+    const aiFile = coreFiles.find(c => c.baseName.toLowerCase().includes("ai"));
 
-    // Fuzzy match
-    const match = modules.find(
-        m =>
-            m.name.toLowerCase().includes(name.toLowerCase()) ||
-            name.toLowerCase().includes(m.name.toLowerCase())
+    if (typesFile) {
+        [rulesFile, engineFile, chainFile, gridFile, aiFile].filter(Boolean).forEach(f => {
+            edges.push({ from: sanitizeId(typesFile.path), to: sanitizeId(f!.path), label: "shared_types", style: "solid" });
+        });
+    }
+    if (engineFile && rulesFile) edges.push({ from: sanitizeId(engineFile.path), to: sanitizeId(rulesFile.path), label: "validateMove()", style: "solid" });
+    if (engineFile && chainFile) edges.push({ from: sanitizeId(engineFile.path), to: sanitizeId(chainFile.path), label: "processExplosions()", style: "solid" });
+    if (engineFile && rulesFile) edges.push({ from: sanitizeId(engineFile.path), to: sanitizeId(rulesFile.path), label: "checkWin()", style: "solid" });
+    if (chainFile && gridFile) edges.push({ from: sanitizeId(chainFile.path), to: sanitizeId(gridFile.path), label: "neighbors/bounds", style: "solid" });
+    if (aiFile && engineFile) edges.push({ from: sanitizeId(aiFile.path), to: sanitizeId(engineFile.path), label: "simulate_applyMove()", style: "solid" });
+    if (aiFile && rulesFile) edges.push({ from: sanitizeId(aiFile.path), to: sanitizeId(rulesFile.path), label: "terminal/valid_moves", style: "solid" });
+
+    // Test → tested files
+    const testFiles = files.filter(f => f.category === "test");
+    testFiles.forEach(t => {
+        const testName = t.baseName.replace(/\.(test|spec)$/, "").replace(/^test_?/, "");
+        const target = files.find(f => f.category !== "test" && f.baseName.toLowerCase() === testName.toLowerCase());
+        if (target) {
+            edges.push({ from: sanitizeId(t.path), to: sanitizeId(target.path), label: "asserts_contract", style: "solid" });
+        }
+    });
+
+    // Animation components → Framer Motion
+    const effectComps = componentFiles.filter(c =>
+        c.baseName.toLowerCase().includes("burst") || c.baseName.toLowerCase().includes("ring") ||
+        c.baseName.toLowerCase().includes("effect") || c.baseName.toLowerCase().includes("explosion") ||
+        c.baseName.toLowerCase().includes("animation")
     );
-    if (match) return nodeIds.get(match.name) || null;
+    // These are represented by the external platform nodes we'll add
 
-    return null;
+    // Globals → Tailwind (conceptual)
+
+    // Deduplicate edges
+    const seen = new Set<string>();
+    return edges.filter(e => {
+        const key = `${e.from}-${e.to}-${e.label}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 }
 
-function truncate(str: string, maxLen: number): string {
-    if (str.length <= maxLen) return str;
-    return str.substring(0, maxLen - 3) + "...";
+/* ------------------------------------------------------------------ */
+/*  Main generator                                                     */
+/* ------------------------------------------------------------------ */
+
+export function generateMermaidFromTree(
+    tree: TreeItem[],
+    owner: string,
+    repo: string
+): string {
+    const allFiles = tree.filter(t => t.type === "blob").slice(0, 120);
+
+    // Classify all files
+    const fileInfos: FileInfo[] = allFiles.map(t => {
+        const name = t.path.split("/").pop() || "";
+        const { category, classType, label } = categorizeFile(t.path);
+        return {
+            path: t.path,
+            name,
+            baseName: name.replace(/\.\w+$/, ""),
+            ext: name.split(".").pop() || "",
+            dir: t.path.split("/").slice(0, -1).join("/"),
+            category,
+            classType,
+            label,
+        };
+    });
+
+    // Group files by category
+    const groups = new Map<string, FileInfo[]>();
+    fileInfos.forEach(f => {
+        if (!groups.has(f.category)) groups.set(f.category, []);
+        groups.get(f.category)!.push(f);
+    });
+
+    const lines: string[] = [];
+    lines.push("flowchart TD");
+
+    // Subgraph labels
+    const subgraphLabels: Record<string, string> = {
+        app: "Next.js App Router (Pages)",
+        components: "UI / View Components",
+        hooks: "State / Orchestration (Hooks)",
+        core: "Core Domain (Pure / Testable Engine)",
+        test: "Tests",
+        config: "Dev / Tooling / Deploy",
+        utility: "Library / Utilities",
+        api: "API Routes",
+        types: "Type Definitions",
+        styles: "Styles",
+        docs: "Documentation",
+        public: "Public / Assets",
+        other: "Other",
+    };
+
+    // Render subgraphs
+    const subgraphOrder = ["config", "app", "components", "hooks", "core", "api", "utility", "types", "styles", "test", "docs", "public", "other"];
+
+    for (const cat of subgraphOrder) {
+        const catFiles = groups.get(cat);
+        if (!catFiles || catFiles.length === 0) continue;
+
+        const label = subgraphLabels[cat] || cat;
+        lines.push("");
+        lines.push(`  subgraph "${label}"`);
+        lines.push(`    direction TB`);
+
+        catFiles.forEach(f => {
+            const id = sanitizeId(f.path);
+            const safeLabel = f.label.replace(/"/g, "'");
+            lines.push(`    ${id}["${safeLabel}"]:::${f.classType}`);
+        });
+
+        lines.push(`  end`);
+    }
+
+    // External nodes (platform dependencies)
+    const hasTailwind = allFiles.some(f => f.path.toLowerCase().includes("tailwind"));
+    const hasFramer = allFiles.some(f => f.path.toLowerCase().includes("framer") || f.path.toLowerCase().includes("motion"));
+    const hasNextConfig = allFiles.some(f => f.path.toLowerCase().includes("next.config"));
+
+    lines.push("");
+    lines.push("  %% External / Platform Nodes");
+    if (hasNextConfig) lines.push(`  NextRuntime["Next.js Runtime"]:::platform`);
+    if (hasTailwind) lines.push(`  TailwindEngine["Tailwind CSS"]:::platform`);
+    if (hasFramer) lines.push(`  FramerEngine["Framer Motion"]:::platform`);
+
+    // User node
+    lines.push(`  User["User (click/tap)"]:::external`);
+
+    // Edges
+    const edges = inferEdges(fileInfos, owner, repo);
+    lines.push("");
+    lines.push("  %% Relationships");
+    edges.forEach(e => {
+        const arrow = e.style === "dotted" ? `-.->` : `-->`;
+        const safeLabel = e.label.replace(/"/g, "'");
+        lines.push(`  ${e.from} ${arrow}|"${safeLabel}"| ${e.to}`);
+    });
+
+    // User → main page
+    const mainPage = fileInfos.find(f => f.category === "app" && f.name === "page.tsx" && f.dir === "src/app");
+    if (mainPage) {
+        lines.push(`  User -->|"click/tap"| ${sanitizeId(mainPage.path)}`);
+    }
+
+    // External platform edges
+    const globalsCss = fileInfos.find(f => f.name.includes("globals") && (f.ext === "css" || f.ext === "scss"));
+    if (hasTailwind && globalsCss) {
+        lines.push(`  ${sanitizeId(globalsCss.path)} -->|"styles"| TailwindEngine`);
+    }
+
+    const effectComps = fileInfos.filter(f => f.category === "components" &&
+        (f.baseName.toLowerCase().includes("burst") || f.baseName.toLowerCase().includes("ring") || f.baseName.toLowerCase().includes("effect"))
+    );
+    if (hasFramer) {
+        effectComps.forEach(e => {
+            lines.push(`  ${sanitizeId(e.path)} -.->|"motion_runtime"| FramerEngine`);
+        });
+    }
+
+    // Click events (link to GitHub)
+    lines.push("");
+    lines.push("  %% Click Events (link to GitHub files)");
+    fileInfos.forEach(f => {
+        const id = sanitizeId(f.path);
+        const url = `https://github.com/${owner}/${repo}/blob/main/${f.path}`;
+        lines.push(`  click ${id} "${url}"`);
+    });
+
+    // Style classes
+    lines.push("");
+    lines.push("  %% Styles");
+    lines.push(`  classDef external fill:#0b1220,stroke:#94a3b8,color:#e2e8f0,stroke-width:1px`);
+    lines.push(`  classDef ui fill:#0b3a6a,stroke:#93c5fd,color:#eff6ff,stroke-width:1px`);
+    lines.push(`  classDef hooks fill:#3b1d5a,stroke:#d8b4fe,color:#f5f3ff,stroke-width:1px`);
+    lines.push(`  classDef core fill:#14532d,stroke:#86efac,color:#ecfdf5,stroke-width:1px`);
+    lines.push(`  classDef ai fill:#7c2d12,stroke:#fdba74,color:#fff7ed,stroke-width:1px`);
+    lines.push(`  classDef platform fill:#334155,stroke:#cbd5e1,color:#f1f5f9,stroke-width:1px`);
+    lines.push(`  classDef test fill:#3f3f46,stroke:#a1a1aa,color:#fafafa,stroke-width:1px`);
+    lines.push(`  classDef doc fill:#1f2937,stroke:#fbbf24,color:#fffbeb,stroke-width:1px`);
+    lines.push(`  classDef note fill:#0f172a,stroke:#22c55e,color:#ecfccb,stroke-width:1px`);
+
+    return lines.join("\n");
+}
+
+/**
+ * Generate Mermaid code from AI analysis (if mermaidDiagram already provided).
+ * Falls back to tree-based generation.
+ */
+export function generateArchitectureMermaid(
+    analysis: ArchitectureAnalysis | null,
+    tree: TreeItem[],
+    owner: string,
+    repo: string
+): string {
+    // If AI already produced Mermaid code, use it directly
+    if (analysis?.mermaidDiagram) {
+        return analysis.mermaidDiagram;
+    }
+
+    // Otherwise generate from tree
+    return generateMermaidFromTree(tree, owner, repo);
 }

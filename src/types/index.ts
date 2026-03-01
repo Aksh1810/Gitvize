@@ -75,6 +75,19 @@ export interface ModuleAnalysis {
   entryPoint?: string;
 }
 
+export interface FileNode {
+  path: string;
+  label: string;
+  group: string;
+  role: string;
+}
+
+export interface FileEdge {
+  from: string;
+  to: string;
+  label: string;
+}
+
 export interface ArchitectureAnalysis {
   techStack: string[];
   architecturePattern: string;
@@ -86,6 +99,14 @@ export interface ArchitectureAnalysis {
     to: string;
     description: string;
   }>;
+  fileNodes?: FileNode[];
+  fileEdges?: FileEdge[];
+  groups?: Array<{
+    name: string;
+    label: string;
+    color: string;
+  }>;
+  mermaidDiagram?: string;
 }
 
 export interface FileAnnotation {
