@@ -8,7 +8,6 @@ import TabNav from "@/components/dashboard/tab-nav";
 import RepoOverview from "@/components/dashboard/repo-overview";
 import PipelineStatusDisplay from "@/components/dashboard/pipeline-status";
 import ArchitectureDiagram from "@/components/diagrams/architecture-diagram";
-import KnowledgeGraph from "@/components/diagrams/knowledge-graph";
 import FileTreeGraph from "@/components/diagrams/file-tree-graph";
 import ContributorsNetwork from "@/components/diagrams/contributors-network";
 import BranchGraph from "@/components/diagrams/branch-graph";
@@ -290,7 +289,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
                                 transition={{ duration: 0.2 }}
-                                className="h-[600px] glass-card overflow-hidden rounded-xl"
+                                className="min-h-[800px] glass-card overflow-hidden rounded-xl"
                             >
                                 {activeTab === "architecture" && analysis ? (
                                     <ArchitectureDiagram
@@ -309,13 +308,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         owner={owner}
                                         repo={repo}
                                         tree={repoData.fileTree.tree}
-                                    />
-                                ) : activeTab === "graph" && repoData.fileTree ? (
-                                    <KnowledgeGraph
-                                        tree={repoData.fileTree.tree}
-                                        analysis={analysis?.architecture}
-                                        owner={owner}
-                                        repo={repo}
                                     />
                                 ) : activeTab === "files" && repoData.fileTree ? (
                                     <FileTreeGraph

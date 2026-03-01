@@ -13,41 +13,41 @@ import type { ArchitectureAnalysis, ModuleAnalysis } from "@/types";
 // Different shapes for different module types (GitDiagram convention)
 
 const SHAPE_MAP: Record<string, (id: string, label: string) => string> = {
-    api: (id, label) => `${id}[/"${label}" API/]`,
-    ui: (id, label) => `${id}["🖥️ ${label}"]`,
-    database: (id, label) => `${id}[("${label}")]`,       // cylinder
-    config: (id, label) => `${id}{{"${label}"}}`,          // hexagon
-    utility: (id, label) => `${id}["🔧 ${label}"]`,
-    test: (id, label) => `${id}["✅ ${label}"]`,
-    build: (id, label) => `${id}(["${label}"])`,           // stadium
-    docs: (id, label) => `${id}>"${label}"]`,              // asymmetric
-    core: (id, label) => `${id}[["${label}"]]`,            // subroutine
-    middleware: (id, label) => `${id}[/"${label}"/]`,      // parallelogram
-    service: (id, label) => `${id}(("${label}"))`,         // circle
-    model: (id, label) => `${id}[("${label}")]`,           // cylinder
-    controller: (id, label) => `${id}[/"${label}" Controller/]`,
-    view: (id, label) => `${id}["👁️ ${label}"]`,
-    other: (id, label) => `${id}["${label}"]`,
+    api: (id, label) => `${id}("${label}")`,
+    ui: (id, label) => `${id}("🖥️ ${label}")`,
+    database: (id, label) => `${id}[("${label}")]`,       // keep cylinder
+    config: (id, label) => `${id}("⚙️ ${label}")`,
+    utility: (id, label) => `${id}("🔧 ${label}")`,
+    test: (id, label) => `${id}("✅ ${label}")`,
+    build: (id, label) => `${id}("📦 ${label}")`,
+    docs: (id, label) => `${id}("📄 ${label}")`,
+    core: (id, label) => `${id}("${label}")`,
+    middleware: (id, label) => `${id}("${label}")`,
+    service: (id, label) => `${id}("${label}")`,
+    model: (id, label) => `${id}("${label}")`,
+    controller: (id, label) => `${id}("${label}")`,
+    view: (id, label) => `${id}("👁️ ${label}")`,
+    other: (id, label) => `${id}("${label}")`,
 };
 
 // --- Module Type Colors (Mermaid CSS classes) ---
 
 const MODULE_STYLE_MAP: Record<string, string> = {
-    api: "fill:#3b82f6,stroke:#2563eb,color:#fff",
-    ui: "fill:#a855f7,stroke:#9333ea,color:#fff",
-    database: "fill:#06b6d4,stroke:#0891b2,color:#fff",
-    config: "fill:#eab308,stroke:#ca8a04,color:#000",
-    utility: "fill:#6b7280,stroke:#4b5563,color:#fff",
-    test: "fill:#22c55e,stroke:#16a34a,color:#fff",
-    build: "fill:#f97316,stroke:#ea580c,color:#fff",
-    docs: "fill:#14b8a6,stroke:#0d9488,color:#fff",
-    core: "fill:#7c3aed,stroke:#6d28d9,color:#fff",
-    middleware: "fill:#ec4899,stroke:#db2777,color:#fff",
-    service: "fill:#8b5cf6,stroke:#7c3aed,color:#fff",
-    model: "fill:#06b6d4,stroke:#0891b2,color:#fff",
-    controller: "fill:#3b82f6,stroke:#2563eb,color:#fff",
-    view: "fill:#a855f7,stroke:#9333ea,color:#fff",
-    other: "fill:#374151,stroke:#1f2937,color:#e5e7eb",
+    api: "fill:#0ea5e9,stroke:#0369a1,stroke-width:2px,color:#fff",
+    ui: "fill:#16a34a,stroke:#14532d,stroke-width:2px,color:#fff",
+    database: "fill:#22c55e,stroke:#14532d,stroke-width:2px,color:#062310",
+    config: "fill:#f59e0b,stroke:#a16207,stroke-width:2px,color:#fff",
+    utility: "fill:#10b981,stroke:#047857,stroke-width:2px,color:#fff",
+    test: "fill:#94a3b8,stroke:#475569,stroke-width:2px,stroke-dasharray:5 5,color:#fff",
+    build: "fill:#f97316,stroke:#c2410c,stroke-width:2px,color:#fff",
+    docs: "fill:#f1f5f9,stroke:#94a3b8,stroke-width:2px,color:#0f172a",
+    core: "fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#fff",
+    middleware: "fill:#db2777,stroke:#9d174d,stroke-width:2px,color:#fff",
+    service: "fill:#1d4ed8,stroke:#1e3a8a,stroke-width:2px,color:#fff",
+    model: "fill:#22c55e,stroke:#15803d,stroke-width:2px,color:#fff",
+    controller: "fill:#0ea5e9,stroke:#0369a1,stroke-width:2px,color:#fff",
+    view: "fill:#16a34a,stroke:#14532d,stroke-width:2px,color:#fff",
+    other: "fill:#cbd5e1,stroke:#64748b,stroke-width:2px,color:#0f172a",
 };
 
 // --- Sanitize node ID ---
@@ -160,7 +160,7 @@ export function generateMermaidDiagram(
     // Subgraph styling
     typeGroups.forEach((_, groupName) => {
         const groupId = sanitizeId(groupName);
-        lines.push(`    style ${groupId} fill:transparent,stroke:#374151,stroke-width:2px,color:#9ca3af,stroke-dasharray:5`);
+        lines.push(`    style ${groupId} fill:#2e1065,stroke:#6d28d9,stroke-width:2px,color:#d8b4fe,stroke-dasharray:4 4,rx:10,ry:10`);
     });
 
     return lines.join("\n");
@@ -179,8 +179,8 @@ export function generateSimpleMermaid(
 
     // Root node
     const rootId = sanitizeId(`${repoOwner}_${repoName}`);
-    lines.push(`    ${rootId}[["${repoOwner}/${repoName}"]]`);
-    lines.push(`    style ${rootId} fill:#7c3aed,stroke:#6d28d9,color:#fff`);
+    lines.push(`    ${rootId}("${repoOwner}/${repoName}")`);
+    lines.push(`    style ${rootId} fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#fff`);
     lines.push("");
 
     // Group files by top-level directory
@@ -198,7 +198,7 @@ export function generateSimpleMermaid(
 
     // Render dir groups as subgraphs
     let colorIdx = 0;
-    const colors = ["#3b82f6", "#a855f7", "#06b6d4", "#f97316", "#22c55e", "#ec4899", "#eab308"];
+    const colors = ["#0ea5e9", "#16a34a", "#f97316", "#db2777", "#22c55e", "#1d4ed8", "#f59e0b"];
 
     dirGroups.forEach((files, dirName) => {
         if (dirName === "__root__") {
@@ -206,7 +206,7 @@ export function generateSimpleMermaid(
             files.forEach(file => {
                 const fileId = sanitizeId(file);
                 const fileName = file.split("/").pop() || file;
-                lines.push(`    ${fileId}["${fileName}"]`);
+                lines.push(`    ${fileId}("${fileName}")`);
                 lines.push(`    ${rootId} --> ${fileId}`);
             });
         } else {
@@ -218,7 +218,7 @@ export function generateSimpleMermaid(
             files.forEach(file => {
                 const fileId = sanitizeId(file);
                 const fileName = file.split("/").pop() || file;
-                lines.push(`        ${fileId}["${fileName}"]`);
+                lines.push(`        ${fileId}("${fileName}")`);
                 lines.push(
                     `        click ${fileId} "https://github.com/${repoOwner}/${repoName}/blob/main/${file}" _blank`
                 );
@@ -226,7 +226,7 @@ export function generateSimpleMermaid(
 
             lines.push("    end");
             lines.push(`    ${rootId} --> ${dirId}`);
-            lines.push(`    style ${dirId} fill:transparent,stroke:${color},stroke-width:2px,color:${color}`);
+            lines.push(`    style ${dirId} fill:transparent,stroke:${color},stroke-width:2px,color:${color},stroke-dasharray:4 4,rx:10,ry:10`);
             colorIdx++;
         }
     });
