@@ -45,12 +45,13 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                     theme: "dark",
                     securityLevel: "loose", // Required for click events (GitDiagram approach)
                     flowchart: {
-                        useMaxWidth: true,
+                        useMaxWidth: false,
                         htmlLabels: true,
                         curve: "basis",
-                        padding: 20,
-                        nodeSpacing: 50,
-                        rankSpacing: 60,
+                        padding: 16,
+                        nodeSpacing: 30,
+                        rankSpacing: 40,
+                        wrappingWidth: 200,
                     },
                     themeVariables: {
                         primaryColor: "#7c3aed",

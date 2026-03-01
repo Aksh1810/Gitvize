@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMockAnalysis } from "@/lib/ai";
+import type { AIConfig } from "@/lib/ai";
 import type { TreeItem } from "@/types";
 
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { owner, repo, tree, readme } = body as {
+        const { owner, repo, tree, readme, aiSettings } = body as {
             owner: string;
             repo: string;
             tree: TreeItem[];
             readme: string;
+            aiSettings?: { provider: string; apiKey: string; model: string };
         };
 
         if (!owner || !repo || !tree) {
@@ -19,10 +21,21 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Check if AI is configured
-        const hasAI = !!process.env.AI_API_KEY;
+        // Check if AI is configured — via client settings OR env var
+        const clientKey = aiSettings?.apiKey;
+        const envKey = process.env.AI_API_KEY;
+        const hasAI = !!(clientKey || envKey);
 
         if (hasAI) {
+            // Build AI config from client settings (preferred) or env vars
+            const aiConfig: AIConfig | undefined = clientKey
+                ? {
+                    provider: aiSettings!.provider,
+                    apiKey: clientKey,
+                    model: aiSettings!.model,
+                }
+                : undefined; // will use env var defaults
+
             // Stream AI analysis via SSE
             const { analyzeRepository } = await import("@/lib/ai");
 
@@ -57,7 +70,8 @@ export async function POST(request: NextRequest) {
                                         })}\n\n`
                                     )
                                 );
-                            }
+                            },
+                            aiConfig
                         );
 
                         controller.enqueue(

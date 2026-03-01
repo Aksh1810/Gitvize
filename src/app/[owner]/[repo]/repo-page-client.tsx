@@ -115,6 +115,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         ]);
 
         try {
+            // Load AI settings from localStorage to send to server
+            let aiSettings: { provider: string; apiKey: string; model: string } | undefined;
+            if (typeof window !== "undefined") {
+                try {
+                    const raw = localStorage.getItem("gitviz_ai_settings");
+                    if (raw) aiSettings = JSON.parse(raw);
+                } catch { /* ignore */ }
+            }
+
             const res = await fetch("/api/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -123,6 +132,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     repo,
                     tree: repoData.fileTree.tree,
                     readme: repoData.readme,
+                    aiSettings,
                 }),
             });
 

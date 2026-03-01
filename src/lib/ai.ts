@@ -7,39 +7,94 @@ import { generateMermaidFromTree } from "@/lib/mermaid-generator";
 
 // --- Provider Configuration ---
 
-const AI_PROVIDER = process.env.AI_PROVIDER ?? "openai";
-const AI_API_KEY = process.env.AI_API_KEY ?? "";
-const AI_MODEL = process.env.AI_MODEL ?? "gpt-4o";
-const AI_BASE_URL =
-    process.env.AI_BASE_URL ??
-    (AI_PROVIDER === "anthropic"
-        ? "https://api.anthropic.com/v1"
-        : "https://api.openai.com/v1");
+export interface AIConfig {
+    provider: string;
+    apiKey: string;
+    model: string;
+    baseUrl?: string;
+}
+
+function getDefaultConfig(): AIConfig {
+    const provider = process.env.AI_PROVIDER ?? "openai";
+    return {
+        provider,
+        apiKey: process.env.AI_API_KEY ?? "",
+        model: process.env.AI_MODEL ?? "gpt-4o",
+        baseUrl:
+            process.env.AI_BASE_URL ??
+            (provider === "anthropic"
+                ? "https://api.anthropic.com/v1"
+                : provider === "gemini"
+                    ? "https://generativelanguage.googleapis.com/v1beta"
+                    : "https://api.openai.com/v1"),
+    };
+}
 
 // --- Internal fetch helper ---
 
 async function aiCompletion(
     systemPrompt: string,
     userPrompt: string,
-    jsonMode: boolean = true
+    jsonMode: boolean = true,
+    config?: AIConfig
 ): Promise<string> {
-    if (!AI_API_KEY) {
+    const cfg = config ?? getDefaultConfig();
+
+    if (!cfg.apiKey) {
         throw new Error(
-            "AI_API_KEY environment variable is not set. Please configure it to use AI features."
+            "AI API key is not configured. Please set it in Settings or via AI_API_KEY env variable."
         );
     }
 
-    if (AI_PROVIDER === "anthropic") {
-        const res = await fetch(`${AI_BASE_URL}/messages`, {
+    const baseUrl = cfg.baseUrl ?? (
+        cfg.provider === "anthropic"
+            ? "https://api.anthropic.com/v1"
+            : cfg.provider === "gemini"
+                ? "https://generativelanguage.googleapis.com/v1beta"
+                : "https://api.openai.com/v1"
+    );
+
+    // --- Gemini provider ---
+    if (cfg.provider === "gemini") {
+        const res = await fetch(
+            `${baseUrl}/models/${cfg.model}:generateContent?key=${cfg.apiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [
+                        { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] },
+                    ],
+                    generationConfig: {
+                        temperature: 0.3,
+                        maxOutputTokens: 8192,
+                        ...(jsonMode ? { responseMimeType: "application/json" } : {}),
+                    },
+                }),
+            }
+        );
+
+        if (!res.ok) {
+            const body = await res.text().catch(() => "");
+            throw new Error(`Gemini API error ${res.status}: ${body}`);
+        }
+
+        const data = await res.json();
+        return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    }
+
+    // --- Anthropic provider ---
+    if (cfg.provider === "anthropic") {
+        const res = await fetch(`${baseUrl}/messages`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "x-api-key": AI_API_KEY,
+                "x-api-key": cfg.apiKey,
                 "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify({
-                model: AI_MODEL,
-                max_tokens: 4096,
+                model: cfg.model,
+                max_tokens: 8192,
                 system: systemPrompt,
                 messages: [{ role: "user", content: userPrompt }],
             }),
@@ -54,15 +109,15 @@ async function aiCompletion(
         return data.content[0].text;
     }
 
-    // OpenAI / OpenAI-compatible
-    const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
+    // --- OpenAI / OpenAI-compatible ---
+    const res = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${AI_API_KEY}`,
+            Authorization: `Bearer ${cfg.apiKey}`,
         },
         body: JSON.stringify({
-            model: AI_MODEL,
+            model: cfg.model,
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userPrompt },
@@ -204,52 +259,95 @@ Respond with JSON:
 }`;
 }
 
-const MERMAID_SYSTEM_PROMPT = `You are an expert architecture diagram designer who creates GitDiagram-quality Mermaid flowcharts. Your diagrams are detailed, visually stunning, and show the full architecture of a codebase.
+// ============================================================================
+// GitDiagram-style 3-Prompt Chain
+// ============================================================================
+//
+// Prompt 1: Architecture Explanation  (tree + readme → natural-language analysis)
+// Prompt 2: Component → File Mapping  (explanation + tree → JSON mapping)
+// Prompt 3: Mermaid Code Generation   (explanation + mapping → raw Mermaid code)
+// ============================================================================
 
-You MUST output ONLY valid Mermaid flowchart code — no JSON, no markdown fences, no explanation text. Just pure Mermaid code starting with "flowchart TD".
+const EXPLAIN_SYSTEM_PROMPT = `You are tasked with explaining to a principal software engineer how to draw the best and most accurate system design diagram / architecture of a given project.
 
-Your diagrams MUST include:
-1. Subgraphs for each architectural layer (e.g., "Next.js App Router", "UI / View Components", "State / Orchestration (Hooks)", "Core Domain (Pure / Testable)", "Tests (Vitest)", "Dev / Tooling / Deploy")
-2. Individual file nodes with descriptive labels like 'GameCell (cell interactions)' or 'useGame (state machine + AI integration)'
-3. SPECIFIC edge labels — never generic. Use: renders, composes, wraps, exports, click/tap, orchestrates, applyMove(), validateMove(), processExplosions(), styles, tests, configures, lint, animate, etc.
-4. Click events linking each node to its GitHub file URL
-5. ClassDef styles for color-coding: ui (blue), hooks (purple), core (green), ai (orange), platform (gray), test (gray), doc (yellow), external (dark)
-6. A "User" or "Player" external node showing how user input enters the system
-7. Direction annotations in subgraphs (direction TB)
-8. Both solid (-->) and dotted (-.->) edges where appropriate (dotted for optional/runtime relationships)
+Based on the file tree and README provided:
+1. Determine the project type (full-stack app, CLI tool, library, compiler, game, etc.)
+2. Identify the key architectural patterns (MVC, microservices, monorepo, component-based, etc.)
+3. List the main architectural layers and components (frontend, backend, database, services, etc.)
+4. Note configuration files, build scripts, deployment-related files
+5. Describe the data flow and how components interact
+6. Identify entry points and the user-facing surface
 
-Color scheme classDefs (MUST include at end):
+Produce a detailed natural-language explanation of how to represent this project's architecture as a diagram. Describe WHAT to draw and WHY — the components, their relationships, the groupings, and how data flows through the system. Do NOT produce any diagram code, just the explanation.`;
+
+function buildExplainPrompt(tree: TreeItem[], readme: string): string {
+    const trimmedTree = tree.slice(0, 500).map((t) => t.path);
+    return `<file_tree>\n${trimmedTree.join("\n")}\n</file_tree>\n\n<readme>\n${readme.substring(0, 4000)}\n</readme>\n\nExplain how to draw the architecture diagram for this project.`;
+}
+
+const MAPPING_SYSTEM_PROMPT = `You are mapping architectural components to their actual file paths in a repository. Given an architecture explanation and a file tree, produce a JSON mapping of component names to their file paths.
+
+For each identified component or module in the explanation, find the matching file(s) in the file tree.
+
+Respond with ONLY valid JSON in this format:
+{
+  "components": [
+    {
+      "name": "Component Name (e.g. Auth Service, GameBoard, useGame hook)",
+      "description": "One-line description of what this component does",
+      "paths": ["src/components/GameBoard.tsx"],
+      "type": "one of: ui, hook, core, api, service, config, test, doc, style, other"
+    }
+  ]
+}`;
+
+function buildMappingPrompt(
+    explanation: string,
+    tree: TreeItem[],
+    owner: string,
+    repo: string
+): string {
+    const trimmedTree = tree.slice(0, 500).map((t) => t.path);
+    return `<explanation>\n${explanation}\n</explanation>\n\n<file_tree>\n${trimmedTree.join("\n")}\n</file_tree>\n\nRepository: ${owner}/${repo}\n\nMap each architectural component from the explanation to its actual file path(s) in the file tree. Include ALL important files. Respond with JSON only.`;
+}
+
+const MERMAID_GEN_SYSTEM_PROMPT = `You are a principal software engineer creating a system design diagram using Mermaid.js.
+
+You will receive:
+1. A detailed architecture explanation
+2. A component-to-file-path mapping with click URLs
+
+You MUST output ONLY valid Mermaid code. No markdown fences, no explanation, no commentary. Just pure Mermaid code.
+
+Rules:
+- Use "flowchart TB" (top-to-bottom) for vertical, readable layout
+- Use subgraph blocks to group related components (e.g. "Frontend", "Backend", "Database", "Config")
+- Use appropriate node shapes: rectangles ["..."] for services, cylinders [("...")] for databases, rounded ("...") for processes
+- Use SPECIFIC edge labels: "renders", "fetches", "queries", "wraps", "configures", "tests", "imports" — NEVER generic "depends on"
+- Use solid arrows --> for direct dependencies and dotted -.-> for optional/runtime relationships
+- Attach click events to EVERY node: click nodeId "https://github.com/..."
+- Node IDs must be safe alphanumeric (use underscores, no dots or special chars)
+- Node labels inside ["..."] must escape any special characters
+- Include a "User" external node showing how user input enters the system
+- Add classDef styles at the end for color-coding
+
+Required classDef styles (MUST include at end of diagram):
 classDef external fill:#0b1220,stroke:#94a3b8,color:#e2e8f0,stroke-width:1px
 classDef ui fill:#0b3a6a,stroke:#93c5fd,color:#eff6ff,stroke-width:1px
 classDef hooks fill:#3b1d5a,stroke:#d8b4fe,color:#f5f3ff,stroke-width:1px
 classDef core fill:#14532d,stroke:#86efac,color:#ecfdf5,stroke-width:1px
-classDef ai fill:#7c2d12,stroke:#fdba74,color:#fff7ed,stroke-width:1px
+classDef api fill:#7c2d12,stroke:#fdba74,color:#fff7ed,stroke-width:1px
 classDef platform fill:#334155,stroke:#cbd5e1,color:#f1f5f9,stroke-width:1px
 classDef test fill:#3f3f46,stroke:#a1a1aa,color:#fafafa,stroke-width:1px
-classDef doc fill:#1f2937,stroke:#fbbf24,color:#fffbeb,stroke-width:1px
-classDef note fill:#0f172a,stroke:#22c55e,color:#ecfccb,stroke-width:1px`;
+classDef doc fill:#1f2937,stroke:#fbbf24,color:#fffbeb,stroke-width:1px`;
 
-function buildMermaidUserPrompt(
+function buildMermaidGenPrompt(
+    explanation: string,
+    componentMap: string,
     owner: string,
-    repo: string,
-    tree: TreeItem[],
-    readme: string
+    repo: string
 ): string {
-    const trimmedTree = tree.slice(0, 500).map((t) => t.path);
-
-    return `Generate a detailed GitDiagram-style Mermaid flowchart for the repository "${owner}/${repo}".
-
-## File Tree
-\`\`\`
-${trimmedTree.join("\n")}
-\`\`\`
-
-## README
-\`\`\`
-${readme.substring(0, 3000)}
-\`\`\`
-
-Generate the COMPLETE Mermaid flowchart code. Include ALL files as nodes, grouped into architectural subgraphs. Add specific edge labels and click events to GitHub URLs (https://github.com/${owner}/${repo}/blob/main/<filepath>). Output ONLY the Mermaid code, starting with "flowchart TD".`;
+    return `<explanation>\n${explanation}\n</explanation>\n\n<component_mapping>\n${componentMap}\n</component_mapping>\n\nRepository: ${owner}/${repo}\nGitHub base URL for click events: https://github.com/${owner}/${repo}/blob/main/\n\nGenerate the complete Mermaid diagram code. Use the component mapping to create click events for every node. Output ONLY the Mermaid code, starting with "flowchart TB".`;
 }
 
 // --- Pipeline Steps ---
@@ -259,14 +357,17 @@ export async function analyzeRepository(
     repo: string,
     tree: TreeItem[],
     readme: string,
-    onProgress?: (step: string, message: string) => void
+    onProgress?: (step: string, message: string) => void,
+    aiConfig?: AIConfig
 ): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[] }> {
     // Step 2: Understand
     onProgress?.("understand", "Analyzing codebase architecture with AI...");
 
     const analysisRaw = await aiCompletion(
         ANALYSIS_SYSTEM_PROMPT,
-        buildAnalysisUserPrompt(owner, repo, tree, readme)
+        buildAnalysisUserPrompt(owner, repo, tree, readme),
+        true,
+        aiConfig
     );
 
     let architecture: ArchitectureAnalysis;
@@ -276,15 +377,35 @@ export async function analyzeRepository(
         throw new Error("Failed to parse AI analysis response as JSON");
     }
 
-    // Step 3: Generate Mermaid diagram
-    onProgress?.("diagram", "Generating architecture diagram...");
-
+    // Step 3: GitDiagram-style 3-prompt chain for Mermaid generation
     try {
-        const mermaidCode = await aiCompletion(
-            MERMAID_SYSTEM_PROMPT,
-            buildMermaidUserPrompt(owner, repo, tree, readme),
-            false
+        // Prompt 1: Architecture explanation
+        onProgress?.("explain", "Analyzing architecture (step 1/3)...");
+        const explanation = await aiCompletion(
+            EXPLAIN_SYSTEM_PROMPT,
+            buildExplainPrompt(tree, readme),
+            false,
+            aiConfig
         );
+
+        // Prompt 2: Component → file path mapping
+        onProgress?.("mapping", "Mapping components to files (step 2/3)...");
+        const componentMapRaw = await aiCompletion(
+            MAPPING_SYSTEM_PROMPT,
+            buildMappingPrompt(explanation, tree, owner, repo),
+            true,
+            aiConfig
+        );
+
+        // Prompt 3: Mermaid code generation
+        onProgress?.("diagram", "Generating Mermaid diagram (step 3/3)...");
+        const mermaidCode = await aiCompletion(
+            MERMAID_GEN_SYSTEM_PROMPT,
+            buildMermaidGenPrompt(explanation, componentMapRaw, owner, repo),
+            false,
+            aiConfig
+        );
+
         // Strip markdown code fences if present
         architecture.mermaidDiagram = mermaidCode
             .replace(/^```mermaid\n?/i, "")
@@ -292,7 +413,7 @@ export async function analyzeRepository(
             .replace(/\n?```$/i, "")
             .trim();
     } catch (err) {
-        console.error("Mermaid generation failed, will use fallback:", err);
+        console.error("3-prompt Mermaid chain failed, will use fallback:", err);
     }
 
     // Step 4: Enrich
@@ -303,7 +424,9 @@ export async function analyzeRepository(
 
     const annotationRaw = await aiCompletion(
         ANNOTATION_SYSTEM_PROMPT,
-        buildAnnotationUserPrompt(filePaths, moduleNames)
+        buildAnnotationUserPrompt(filePaths, moduleNames),
+        true,
+        aiConfig
     );
 
     let annotations: FileAnnotation[];

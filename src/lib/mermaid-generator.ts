@@ -1,288 +1,289 @@
 // ============================================================================
-// GitViz — GitDiagram-style Mermaid Code Generator
+// GitViz — Universal GitDiagram-style Mermaid Code Generator
 // ============================================================================
-// Generates detailed Mermaid flowchart code from file tree data,
-// replicating the visual quality and structure of GitDiagram.
+// Generates detailed Mermaid flowchart code from ANY repository's file tree.
+// Robust character escaping, smart file selection for large repos, and
+// universal edge inference (not project-specific).
 
 import { TreeItem, ArchitectureAnalysis } from "@/types";
 
 /* ------------------------------------------------------------------ */
-/*  File classification helpers                                        */
+/*  Safe string helpers                                                */
 /* ------------------------------------------------------------------ */
 
-interface FileInfo {
-    path: string;
-    name: string;
-    baseName: string;
-    ext: string;
-    dir: string;
-    category: string;
-    label: string;
-    classType: string;
+/** Create a valid Mermaid node ID from any path */
+function safeId(path: string): string {
+    return "n_" + path.replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/_$/, "");
 }
 
-function categorizeFile(path: string): { category: string; classType: string; label: string } {
+/** Escape a string for use inside Mermaid quoted labels ["..."] */
+function safeLabel(text: string): string {
+    return text
+        .replace(/"/g, "'")
+        .replace(/[[\]{}()#&;`]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+/* ------------------------------------------------------------------ */
+/*  File classification                                                */
+/* ------------------------------------------------------------------ */
+
+type ArchLayer = "app" | "ui" | "logic" | "test" | "config" | "docs" | "other";
+
+interface ClassifiedFile {
+    path: string;
+    name: string;           // filename only
+    baseName: string;       // filename without ext
+    ext: string;
+    dir: string;            // parent directory path
+    layer: ArchLayer;
+    mermaidClass: string;   // classDef name
+    label: string;          // human-readable label for the node
+}
+
+const LAYER_META: Record<ArchLayer, { subgraphLabel: string; mermaidClass: string }> = {
+    config: { subgraphLabel: "Dev / Tooling / Config", mermaidClass: "platform" },
+    app: { subgraphLabel: "App Routes / Pages", mermaidClass: "ui" },
+    ui: { subgraphLabel: "UI / View Components", mermaidClass: "ui" },
+    logic: { subgraphLabel: "Core Logic / Hooks / Services", mermaidClass: "core" },
+    test: { subgraphLabel: "Tests", mermaidClass: "test" },
+    docs: { subgraphLabel: "Documentation", mermaidClass: "doc" },
+    other: { subgraphLabel: "Other", mermaidClass: "platform" },
+};
+
+function classifyFile(path: string): { layer: ArchLayer; roleLabel: string } {
+    const lower = path.toLowerCase();
     const name = path.split("/").pop() || "";
     const baseName = name.replace(/\.\w+$/, "");
-    const lower = path.toLowerCase();
     const ext = name.split(".").pop() || "";
 
     // Tests
-    if (lower.includes("test") || lower.includes("spec") || lower.includes("__tests__")) {
-        return { category: "test", classType: "test", label: `${baseName}` };
-    }
+    if (lower.includes("test") || lower.includes("spec") || lower.includes("__tests__") || lower.includes("__mocks__"))
+        return { layer: "test", roleLabel: baseName };
 
-    // Config / tooling at root
+    // Root-level config files (no directory)
     if (!path.includes("/")) {
-        if (name.includes("config") || name.includes("rc") || name === "package.json" || name.includes("tsconfig"))
-            return { category: "config", classType: "platform", label: `${name}` };
-        if (name.includes("eslint") || name.includes("prettier"))
-            return { category: "config", classType: "platform", label: `${name} (lint)` };
-        if (name.includes("tailwind") || name.includes("postcss"))
-            return { category: "config", classType: "platform", label: `${name} (styling pipeline)` };
-        if (name === ".gitignore" || name === ".env" || name === ".env.local")
-            return { category: "config", classType: "platform", label: name };
-        if (name === "README.md" || name === "LICENSE")
-            return { category: "docs", classType: "doc", label: name };
-        return { category: "config", classType: "platform", label: name };
+        if (ext === "md") return { layer: "docs", roleLabel: name };
+        return { layer: "config", roleLabel: name };
     }
 
-    // Hooks
-    if (lower.includes("hook") || (lower.includes("/hooks/") && ext === "ts")) {
-        return { category: "hooks", classType: "hooks", label: `${baseName} (hook)` };
-    }
-
-    // Core / engine / domain logic
-    if (lower.includes("/core/") || lower.includes("/engine/") || lower.includes("/domain/")) {
-        if (lower.includes("type")) return { category: "core", classType: "core", label: `${baseName} (types/constants)` };
-        if (lower.includes("rule")) return { category: "core", classType: "core", label: `${baseName} (validation)` };
-        if (lower.includes("engine")) return { category: "core", classType: "core", label: `${baseName} (state transitions)` };
-        if (lower.includes("chain") || lower.includes("reaction")) return { category: "core", classType: "core", label: `${baseName} (chain processing)` };
-        if (lower.includes("ai") || lower.includes("minimax")) return { category: "core", classType: "ai", label: `${baseName} (AI logic)` };
-        if (lower.includes("grid")) return { category: "core", classType: "core", label: `${baseName} (grid/neighbors)` };
-        if (lower.includes("index")) return { category: "core", classType: "core", label: `${baseName} (barrel)` };
-        return { category: "core", classType: "core", label: baseName };
-    }
-
-    // API routes
-    if (lower.includes("/api/") || lower.includes("/route")) {
-        return { category: "api", classType: "hooks", label: `${baseName} (API)` };
-    }
-
-    // Pages / App routes
+    // App routes / pages
     if (lower.includes("/app/") || lower.includes("/pages/")) {
-        if (name === "layout.tsx" || name === "layout.ts") return { category: "app", classType: "ui", label: "Layout (shell)" };
-        if (name === "page.tsx" || name === "page.ts") {
-            const dir = path.split("/").slice(-2, -1)[0] || "";
-            if (dir === "app") return { category: "app", classType: "ui", label: "Home Page '/'" };
-            return { category: "app", classType: "ui", label: `${dir} Page '/${dir}'` };
+        if (name === "layout.tsx" || name === "layout.ts" || name === "layout.js" || name === "layout.jsx")
+            return { layer: "app", roleLabel: "Layout" };
+        if (name === "page.tsx" || name === "page.ts" || name === "page.js" || name === "page.jsx") {
+            const parts = path.split("/");
+            const dir = parts.length > 2 ? parts[parts.length - 2] : "home";
+            return { layer: "app", roleLabel: dir === "app" ? "Home" : dir };
         }
-        if (name.includes("globals") || name.endsWith(".css")) return { category: "app", classType: "platform", label: `${name}` };
-        return { category: "app", classType: "ui", label: baseName };
+        return { layer: "app", roleLabel: baseName };
     }
 
-    // Components
-    if (lower.includes("component") || (ext === "tsx" && !lower.includes("app/"))) {
-        if (lower.includes("index")) return { category: "components", classType: "ui", label: `${baseName} (barrel)` };
-        return { category: "components", classType: "ui", label: baseName };
-    }
+    // Components / UI
+    if (lower.includes("/components/") || lower.includes("/component/") || lower.includes("/ui/"))
+        return { layer: "ui", roleLabel: baseName };
 
-    // Lib / utilities
-    if (lower.includes("/lib/") || lower.includes("/utils/") || lower.includes("/helpers/")) {
-        return { category: "utility", classType: "core", label: `${baseName} (utility)` };
-    }
-
-    // Styles
-    if (ext === "css" || ext === "scss" || ext === "sass") {
-        return { category: "styles", classType: "platform", label: baseName };
-    }
-
-    // Types
-    if (lower.includes("/types/") || lower.includes("types.ts") || lower.includes("types.d.ts")) {
-        return { category: "types", classType: "core", label: `${baseName} (types)` };
-    }
+    // Everything "logic": hooks, core, engine, api, lib, utils, types, services, models
+    if (
+        lower.includes("/hooks/") || lower.includes("/hook/") || name.startsWith("use") ||
+        lower.includes("/core/") || lower.includes("/engine/") || lower.includes("/domain/") ||
+        lower.includes("/models/") || lower.includes("/model/") ||
+        lower.includes("/api/") || lower.includes("/routes/") || name === "route.ts" || name === "route.js" ||
+        lower.includes("/lib/") || lower.includes("/utils/") || lower.includes("/util/") ||
+        lower.includes("/helpers/") || lower.includes("/shared/") ||
+        lower.includes("/types/") || name.includes("types.") || name.includes(".d.ts") ||
+        lower.includes("/services/") || lower.includes("/middleware/")
+    )
+        return { layer: "logic", roleLabel: baseName };
 
     // Docs
-    if (ext === "md" || lower.includes("/docs/")) {
-        return { category: "docs", classType: "doc", label: baseName };
-    }
+    if (ext === "md" || lower.includes("/docs/") || lower.includes("/doc/"))
+        return { layer: "docs", roleLabel: baseName };
 
-    // Public / assets
-    if (lower.includes("/public/") || lower.includes("/assets/")) {
-        return { category: "public", classType: "platform", label: baseName };
-    }
+    // Config directories
+    if (lower.includes("/config/") || lower.includes("/scripts/") || lower.includes("/.github/") ||
+        lower.includes("/public/") || lower.includes("/assets/") || lower.includes("/static/") ||
+        ext === "css" || ext === "scss" || ext === "sass" || lower.includes("/styles/"))
+        return { layer: "config", roleLabel: baseName };
 
-    // Default
-    return { category: "other", classType: "ui", label: baseName };
-}
+    // Source files default
+    if (ext === "tsx" || ext === "jsx") return { layer: "ui", roleLabel: baseName };
+    if (ext === "ts" || ext === "js") return { layer: "logic", roleLabel: baseName };
 
-function sanitizeId(path: string): string {
-    return path.replace(/[^a-zA-Z0-9]/g, "_").replace(/__+/g, "_");
+    return { layer: "other", roleLabel: baseName };
 }
 
 /* ------------------------------------------------------------------ */
-/*  Relationship inference                                             */
+/*  Smart file selection for large repos                               */
 /* ------------------------------------------------------------------ */
 
-interface Edge {
-    from: string;
-    to: string;
+/** Pick the most architecturally important files, capped at maxFiles */
+function selectImportantFiles(tree: TreeItem[], maxFiles: number = 60): TreeItem[] {
+    const blobs = tree.filter(t => t.type === "blob");
+
+    // Priority tiers
+    const tier1: TreeItem[] = []; // Entry points, configs
+    const tier2: TreeItem[] = []; // Source code (ts/tsx/js/jsx/py/go/rs)
+    const tier3: TreeItem[] = []; // Other files
+
+    const codeExts = new Set(["ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "rb", "vue", "svelte", "astro"]);
+    const skipExts = new Set(["png", "jpg", "jpeg", "gif", "svg", "ico", "woff", "woff2", "ttf", "eot", "mp4", "mp3", "zip", "tar", "gz", "lock"]);
+    const skipPaths = ["node_modules", ".git", "dist", "build", ".next", "coverage", "__pycache__", ".cache"];
+
+    for (const blob of blobs) {
+        const ext = blob.path.split(".").pop()?.toLowerCase() || "";
+        const lower = blob.path.toLowerCase();
+
+        // Skip binary / build artifacts
+        if (skipExts.has(ext)) continue;
+        if (skipPaths.some(p => lower.includes(p))) continue;
+
+        const name = blob.path.split("/").pop() || "";
+
+        // Tier 1: entry points, package manifests, configs
+        if (
+            name === "package.json" || name === "tsconfig.json" || name === "README.md" ||
+            name.includes("config") || name.includes("rc.") || name.includes(".config.") ||
+            name === "layout.tsx" || name === "layout.ts" ||
+            name === "page.tsx" || name === "page.ts" ||
+            name.startsWith("index.") || name.startsWith("main.") || name.startsWith("app.") ||
+            name === "route.ts" || name === "route.js"
+        ) {
+            tier1.push(blob);
+        } else if (codeExts.has(ext)) {
+            tier2.push(blob);
+        } else if (ext === "md" || ext === "json" || ext === "yaml" || ext === "yml" || ext === "css" || ext === "scss") {
+            tier3.push(blob);
+        }
+    }
+
+    // Take from each tier to fill up to maxFiles
+    const result: TreeItem[] = [];
+    const budget1 = Math.min(tier1.length, Math.ceil(maxFiles * 0.3));
+    const budget2 = Math.min(tier2.length, maxFiles - budget1);
+    const budget3 = Math.min(tier3.length, maxFiles - budget1 - budget2);
+
+    result.push(...tier1.slice(0, budget1));
+    result.push(...tier2.slice(0, budget2));
+    result.push(...tier3.slice(0, budget3));
+
+    return result.slice(0, maxFiles);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Universal edge inference                                           */
+/* ------------------------------------------------------------------ */
+
+interface MermaidEdge {
+    fromId: string;
+    toId: string;
     label: string;
-    style: "solid" | "dotted";
+    dotted: boolean;
 }
 
-function inferEdges(files: FileInfo[], owner: string, repo: string): Edge[] {
-    const edges: Edge[] = [];
-    const fileMap = new Map<string, FileInfo>();
-    files.forEach(f => fileMap.set(f.path, f));
+function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
+    const edges: MermaidEdge[] = [];
+    const seen = new Set<string>();
 
-    const byDir = new Map<string, FileInfo[]>();
-    files.forEach(f => {
-        const dir = f.dir || "root";
-        if (!byDir.has(dir)) byDir.set(dir, []);
-        byDir.get(dir)!.push(f);
-    });
-
-    // Layout wraps pages
-    const layouts = files.filter(f => f.name.startsWith("layout."));
-    const pages = files.filter(f => f.name.startsWith("page.") && f.category === "app");
-    layouts.forEach(l => {
-        pages.forEach(p => {
-            edges.push({ from: sanitizeId(l.path), to: sanitizeId(p.path), label: "wraps", style: "solid" });
-        });
-    });
-
-    // Layout imports globals.css
-    const globalsCss = files.find(f => f.name.includes("globals") && (f.ext === "css" || f.ext === "scss"));
-    if (layouts.length > 0 && globalsCss) {
-        edges.push({ from: sanitizeId(layouts[0].path), to: sanitizeId(globalsCss.path), label: "imports", style: "solid" });
+    function addEdge(from: string, to: string, label: string, dotted = false) {
+        const key = `${from}→${to}`;
+        if (seen.has(key) || from === to) return;
+        seen.add(key);
+        edges.push({ fromId: from, toId: to, label, dotted });
     }
 
-    // Index/barrel files export siblings
+    // Group by directory
+    const byDir = new Map<string, ClassifiedFile[]>();
+    files.forEach(f => {
+        if (!byDir.has(f.dir)) byDir.set(f.dir, []);
+        byDir.get(f.dir)!.push(f);
+    });
+
+    // 1. Index/barrel files export siblings
     byDir.forEach(dirFiles => {
-        const barrel = dirFiles.find(f => f.name.startsWith("index."));
+        const barrel = dirFiles.find(f => f.baseName === "index" || f.baseName === "main");
         if (barrel && dirFiles.length > 1) {
-            dirFiles.filter(f => f !== barrel).forEach(f => {
-                edges.push({ from: sanitizeId(barrel.path), to: sanitizeId(f.path), label: "exports", style: "solid" });
+            dirFiles.filter(f => f !== barrel).slice(0, 8).forEach(f => {
+                addEdge(safeId(barrel.path), safeId(f.path), "exports");
             });
         }
     });
 
-    // Pages → components (composes_screen)
-    const componentFiles = files.filter(f => f.category === "components" && !f.name.startsWith("index."));
-    pages.forEach(p => {
-        // Find the most likely main component
-        const mainComp = componentFiles.find(c =>
-            c.baseName.toLowerCase().includes("board") ||
-            c.baseName.toLowerCase().includes("main") ||
-            c.baseName.toLowerCase().includes("app")
-        );
-        if (mainComp) {
-            const dirName = p.path.split("/").slice(-2, -1)[0] || "";
-            const mode = dirName === "app" ? "" : `(mode=${dirName})`;
-            edges.push({ from: sanitizeId(p.path), to: sanitizeId(mainComp.path), label: `composes_screen${mode}`, style: "solid" });
-        }
-    });
-
-    // Component hierarchy: find composing relationships
-    const componentList = componentFiles.filter(f => f.ext === "tsx" || f.ext === "jsx");
-    componentList.forEach(comp => {
-        const nameL = comp.baseName.toLowerCase();
-        componentList.forEach(other => {
-            if (comp === other) return;
-            const otherNameL = other.baseName.toLowerCase();
-            // Common patterns
-            if (nameL.includes("board") && (otherNameL.includes("cell") || otherNameL.includes("tile")))
-                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "composes", style: "solid" });
-            if (nameL.includes("cell") && otherNameL.includes("dot"))
-                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "renders", style: "solid" });
-            if (nameL.includes("board") && (otherNameL.includes("bar") || otherNameL.includes("score") || otherNameL.includes("hud")))
-                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "shows", style: "solid" });
-            if (nameL.includes("board") && otherNameL.includes("modal"))
-                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "shows", style: "solid" });
-            if (nameL.includes("board") && otherNameL.includes("nav"))
-                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "uses", style: "solid" });
-            if (nameL.includes("cell") && (otherNameL.includes("burst") || otherNameL.includes("effect") || otherNameL.includes("explosion") || otherNameL.includes("ring")))
-                edges.push({ from: sanitizeId(comp.path), to: sanitizeId(other.path), label: "triggers_animation", style: "dotted" });
+    // 2. Layout wraps pages (Next.js / similar)
+    const layouts = files.filter(f => f.baseName === "layout" || f.baseName === "Layout");
+    const pages = files.filter(f => f.baseName === "page" || f.baseName === "Home" || f.layer === "app");
+    layouts.forEach(l => {
+        pages.filter(p => p !== l).slice(0, 5).forEach(p => {
+            addEdge(safeId(l.path), safeId(p.path), "wraps");
         });
     });
 
-    // Components → Hooks
-    const hookFiles = files.filter(f => f.category === "hooks" && !f.name.startsWith("index."));
-    const mainBoard = componentFiles.find(c => c.baseName.toLowerCase().includes("board") || c.baseName.toLowerCase().includes("main"));
-    hookFiles.forEach(h => {
-        if (mainBoard) {
-            edges.push({ from: sanitizeId(mainBoard.path), to: sanitizeId(h.path), label: `${h.baseName}()`, style: "solid" });
-        }
-    });
-
-    // Hooks → Core
-    const coreFiles = files.filter(f => f.category === "core" && !f.name.startsWith("index."));
-    const mainHook = hookFiles.find(h => h.baseName.toLowerCase().includes("game") || h.baseName.toLowerCase().includes("main") || h.baseName.toLowerCase().includes("state"));
-    if (mainHook) {
-        const engineFile = coreFiles.find(c => c.baseName.toLowerCase().includes("engine") || c.baseName.toLowerCase().includes("state"));
-        if (engineFile) edges.push({ from: sanitizeId(mainHook.path), to: sanitizeId(engineFile.path), label: "applyMove(State,Move)", style: "solid" });
-
-        const aiFile = coreFiles.find(c => c.baseName.toLowerCase().includes("ai") || c.baseName.toLowerCase().includes("minimax"));
-        if (aiFile) edges.push({ from: sanitizeId(mainHook.path), to: sanitizeId(aiFile.path), label: "computeBestMove()", style: "solid" });
-
-        // Hook → Audio hook
-        const audioHook = hookFiles.find(h => h.baseName.toLowerCase().includes("audio") || h.baseName.toLowerCase().includes("sound"));
-        if (audioHook) edges.push({ from: sanitizeId(mainHook.path), to: sanitizeId(audioHook.path), label: "play_sound", style: "dotted" });
-    }
-
-    // Core internal relationships
-    const typesFile = coreFiles.find(c => c.baseName.toLowerCase().includes("type"));
-    const rulesFile = coreFiles.find(c => c.baseName.toLowerCase().includes("rule"));
-    const engineFile = coreFiles.find(c => c.baseName.toLowerCase().includes("engine"));
-    const chainFile = coreFiles.find(c => c.baseName.toLowerCase().includes("chain") || c.baseName.toLowerCase().includes("reaction"));
-    const gridFile = coreFiles.find(c => c.baseName.toLowerCase().includes("grid"));
-    const aiFile = coreFiles.find(c => c.baseName.toLowerCase().includes("ai"));
-
-    if (typesFile) {
-        [rulesFile, engineFile, chainFile, gridFile, aiFile].filter(Boolean).forEach(f => {
-            edges.push({ from: sanitizeId(typesFile.path), to: sanitizeId(f!.path), label: "shared_types", style: "solid" });
+    // 3. Pages/routes → UI components
+    const appFiles = files.filter(f => f.layer === "app");
+    const uiFiles = files.filter(f => f.layer === "ui" && f.baseName !== "index");
+    if (appFiles.length > 0 && uiFiles.length > 0) {
+        appFiles.slice(0, 4).forEach(p => {
+            uiFiles.slice(0, 3).forEach(c => {
+                addEdge(safeId(p.path), safeId(c.path), "renders");
+            });
         });
     }
-    if (engineFile && rulesFile) edges.push({ from: sanitizeId(engineFile.path), to: sanitizeId(rulesFile.path), label: "validateMove()", style: "solid" });
-    if (engineFile && chainFile) edges.push({ from: sanitizeId(engineFile.path), to: sanitizeId(chainFile.path), label: "processExplosions()", style: "solid" });
-    if (engineFile && rulesFile) edges.push({ from: sanitizeId(engineFile.path), to: sanitizeId(rulesFile.path), label: "checkWin()", style: "solid" });
-    if (chainFile && gridFile) edges.push({ from: sanitizeId(chainFile.path), to: sanitizeId(gridFile.path), label: "neighbors/bounds", style: "solid" });
-    if (aiFile && engineFile) edges.push({ from: sanitizeId(aiFile.path), to: sanitizeId(engineFile.path), label: "simulate_applyMove()", style: "solid" });
-    if (aiFile && rulesFile) edges.push({ from: sanitizeId(aiFile.path), to: sanitizeId(rulesFile.path), label: "terminal/valid_moves", style: "solid" });
 
-    // Test → tested files
-    const testFiles = files.filter(f => f.category === "test");
+    // 4. UI components → logic (hooks, utils, core)
+    const logicFiles = files.filter(f => f.layer === "logic" && f.baseName !== "index");
+    if (uiFiles.length > 0 && logicFiles.length > 0) {
+        uiFiles.slice(0, 4).forEach(u => {
+            logicFiles.slice(0, 3).forEach(l => {
+                addEdge(safeId(u.path), safeId(l.path), "imports");
+            });
+        });
+    }
+
+    // 5. App → logic
+    if (appFiles.length > 0 && logicFiles.length > 0) {
+        appFiles.slice(0, 3).forEach(a => {
+            logicFiles.slice(0, 2).forEach(l => {
+                addEdge(safeId(a.path), safeId(l.path), "uses");
+            });
+        });
+    }
+
+    // 6. Logic internal — type/interface files feed others 
+    const typeFiles = logicFiles.filter(f => f.baseName.includes("type") || f.baseName.includes("interface"));
+    const nonTypeLogic = logicFiles.filter(f => !f.baseName.includes("type") && !f.baseName.includes("interface"));
+    if (typeFiles.length > 0 && nonTypeLogic.length > 0) {
+        nonTypeLogic.slice(0, 4).forEach(c => {
+            typeFiles.slice(0, 2).forEach(t => {
+                addEdge(safeId(t.path), safeId(c.path), "shared types");
+            });
+        });
+    }
+
+    // 7. Test → tested files (by name matching)
+    const testFiles = files.filter(f => f.layer === "test");
     testFiles.forEach(t => {
-        const testName = t.baseName.replace(/\.(test|spec)$/, "").replace(/^test_?/, "");
-        const target = files.find(f => f.category !== "test" && f.baseName.toLowerCase() === testName.toLowerCase());
+        const cleanName = t.baseName
+            .replace(/\.(test|spec)$/, "")
+            .replace(/^test[_-]?/i, "")
+            .replace(/[_-]?test$/i, "");
+        if (!cleanName) return;
+
+        const target = files.find(f =>
+            f.layer !== "test" &&
+            f.baseName.toLowerCase() === cleanName.toLowerCase()
+        );
         if (target) {
-            edges.push({ from: sanitizeId(t.path), to: sanitizeId(target.path), label: "asserts_contract", style: "solid" });
+            addEdge(safeId(t.path), safeId(target.path), "tests");
         }
     });
 
-    // Animation components → Framer Motion
-    const effectComps = componentFiles.filter(c =>
-        c.baseName.toLowerCase().includes("burst") || c.baseName.toLowerCase().includes("ring") ||
-        c.baseName.toLowerCase().includes("effect") || c.baseName.toLowerCase().includes("explosion") ||
-        c.baseName.toLowerCase().includes("animation")
-    );
-    // These are represented by the external platform nodes we'll add
-
-    // Globals → Tailwind (conceptual)
-
-    // Deduplicate edges
-    const seen = new Set<string>();
-    return edges.filter(e => {
-        const key = `${e.from}-${e.to}-${e.label}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+    // Cap total edges at 60 to keep diagram readable
+    return edges.slice(0, 60);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Main generator                                                     */
+/*  Main Mermaid generator                                             */
 /* ------------------------------------------------------------------ */
 
 export function generateMermaidFromTree(
@@ -290,129 +291,88 @@ export function generateMermaidFromTree(
     owner: string,
     repo: string
 ): string {
-    const allFiles = tree.filter(t => t.type === "blob").slice(0, 120);
+    // Select the most important files
+    const selectedTrees = selectImportantFiles(tree, 40);
 
-    // Classify all files
-    const fileInfos: FileInfo[] = allFiles.map(t => {
+    // Classify files
+    const files: ClassifiedFile[] = selectedTrees.map(t => {
         const name = t.path.split("/").pop() || "";
-        const { category, classType, label } = categorizeFile(t.path);
+        const { layer, roleLabel } = classifyFile(t.path);
+        const meta = LAYER_META[layer];
         return {
             path: t.path,
             name,
             baseName: name.replace(/\.\w+$/, ""),
             ext: name.split(".").pop() || "",
-            dir: t.path.split("/").slice(0, -1).join("/"),
-            category,
-            classType,
-            label,
+            dir: t.path.split("/").slice(0, -1).join("/") || "",
+            layer,
+            mermaidClass: meta.mermaidClass,
+            label: roleLabel,
         };
     });
 
-    // Group files by category
-    const groups = new Map<string, FileInfo[]>();
-    fileInfos.forEach(f => {
-        if (!groups.has(f.category)) groups.set(f.category, []);
-        groups.get(f.category)!.push(f);
+    // Group by layer
+    const groups = new Map<ArchLayer, ClassifiedFile[]>();
+    files.forEach(f => {
+        if (!groups.has(f.layer)) groups.set(f.layer, []);
+        groups.get(f.layer)!.push(f);
     });
 
     const lines: string[] = [];
-    lines.push("flowchart TD");
+    lines.push("flowchart LR");
 
-    // Subgraph labels
-    const subgraphLabels: Record<string, string> = {
-        app: "Next.js App Router (Pages)",
-        components: "UI / View Components",
-        hooks: "State / Orchestration (Hooks)",
-        core: "Core Domain (Pure / Testable Engine)",
-        test: "Tests",
-        config: "Dev / Tooling / Deploy",
-        utility: "Library / Utilities",
-        api: "API Routes",
-        types: "Type Definitions",
-        styles: "Styles",
-        docs: "Documentation",
-        public: "Public / Assets",
-        other: "Other",
-    };
+    // Render subgraphs in a logical order
+    const layerOrder: ArchLayer[] = ["config", "app", "ui", "logic", "test", "docs", "other"];
 
-    // Render subgraphs
-    const subgraphOrder = ["config", "app", "components", "hooks", "core", "api", "utility", "types", "styles", "test", "docs", "public", "other"];
+    for (const layer of layerOrder) {
+        const layerFiles = groups.get(layer);
+        if (!layerFiles || layerFiles.length === 0) continue;
 
-    for (const cat of subgraphOrder) {
-        const catFiles = groups.get(cat);
-        if (!catFiles || catFiles.length === 0) continue;
-
-        const label = subgraphLabels[cat] || cat;
+        const meta = LAYER_META[layer];
         lines.push("");
-        lines.push(`  subgraph "${label}"`);
+        lines.push(`  subgraph "${meta.subgraphLabel}"`);
         lines.push(`    direction TB`);
 
-        catFiles.forEach(f => {
-            const id = sanitizeId(f.path);
-            const safeLabel = f.label.replace(/"/g, "'");
-            lines.push(`    ${id}["${safeLabel}"]:::${f.classType}`);
+        layerFiles.forEach(f => {
+            const id = safeId(f.path);
+            const label = safeLabel(f.label);
+            lines.push(`    ${id}["${label}"]:::${f.mermaidClass}`);
         });
 
         lines.push(`  end`);
     }
 
-    // External nodes (platform dependencies)
-    const hasTailwind = allFiles.some(f => f.path.toLowerCase().includes("tailwind"));
-    const hasFramer = allFiles.some(f => f.path.toLowerCase().includes("framer") || f.path.toLowerCase().includes("motion"));
-    const hasNextConfig = allFiles.some(f => f.path.toLowerCase().includes("next.config"));
-
+    // External nodes
     lines.push("");
-    lines.push("  %% External / Platform Nodes");
-    if (hasNextConfig) lines.push(`  NextRuntime["Next.js Runtime"]:::platform`);
-    if (hasTailwind) lines.push(`  TailwindEngine["Tailwind CSS"]:::platform`);
-    if (hasFramer) lines.push(`  FramerEngine["Framer Motion"]:::platform`);
+    lines.push(`  User["User"]:::external`);
 
-    // User node
-    lines.push(`  User["User (click/tap)"]:::external`);
-
-    // Edges
-    const edges = inferEdges(fileInfos, owner, repo);
-    lines.push("");
-    lines.push("  %% Relationships");
-    edges.forEach(e => {
-        const arrow = e.style === "dotted" ? `-.->` : `-->`;
-        const safeLabel = e.label.replace(/"/g, "'");
-        lines.push(`  ${e.from} ${arrow}|"${safeLabel}"| ${e.to}`);
-    });
-
-    // User → main page
-    const mainPage = fileInfos.find(f => f.category === "app" && f.name === "page.tsx" && f.dir === "src/app");
-    if (mainPage) {
-        lines.push(`  User -->|"click/tap"| ${sanitizeId(mainPage.path)}`);
+    // Connect user to first app/page
+    const firstApp = files.find(f => f.layer === "app" && (f.baseName === "page" || f.baseName === "Home"));
+    if (firstApp) {
+        lines.push(`  User -->|"interaction"| ${safeId(firstApp.path)}`);
     }
 
-    // External platform edges
-    const globalsCss = fileInfos.find(f => f.name.includes("globals") && (f.ext === "css" || f.ext === "scss"));
-    if (hasTailwind && globalsCss) {
-        lines.push(`  ${sanitizeId(globalsCss.path)} -->|"styles"| TailwindEngine`);
-    }
-
-    const effectComps = fileInfos.filter(f => f.category === "components" &&
-        (f.baseName.toLowerCase().includes("burst") || f.baseName.toLowerCase().includes("ring") || f.baseName.toLowerCase().includes("effect"))
-    );
-    if (hasFramer) {
-        effectComps.forEach(e => {
-            lines.push(`  ${sanitizeId(e.path)} -.->|"motion_runtime"| FramerEngine`);
+    // Infer and render edges
+    const edges = inferEdges(files);
+    if (edges.length > 0) {
+        lines.push("");
+        edges.forEach(e => {
+            const arrow = e.dotted ? "-.->" : "-->";
+            const label = safeLabel(e.label);
+            lines.push(`  ${e.fromId} ${arrow}|"${label}"| ${e.toId}`);
         });
     }
 
-    // Click events (link to GitHub)
+    // Click events → GitHub links
     lines.push("");
-    lines.push("  %% Click Events (link to GitHub files)");
-    fileInfos.forEach(f => {
-        const id = sanitizeId(f.path);
+    files.forEach(f => {
+        const id = safeId(f.path);
         const url = `https://github.com/${owner}/${repo}/blob/main/${f.path}`;
         lines.push(`  click ${id} "${url}"`);
     });
 
-    // Style classes
+    // ClassDef styles — must be at the end
     lines.push("");
-    lines.push("  %% Styles");
     lines.push(`  classDef external fill:#0b1220,stroke:#94a3b8,color:#e2e8f0,stroke-width:1px`);
     lines.push(`  classDef ui fill:#0b3a6a,stroke:#93c5fd,color:#eff6ff,stroke-width:1px`);
     lines.push(`  classDef hooks fill:#3b1d5a,stroke:#d8b4fe,color:#f5f3ff,stroke-width:1px`);
@@ -427,8 +387,7 @@ export function generateMermaidFromTree(
 }
 
 /**
- * Generate Mermaid code from AI analysis (if mermaidDiagram already provided).
- * Falls back to tree-based generation.
+ * Pick the best Mermaid code: AI-generated if available, else fallback from tree.
  */
 export function generateArchitectureMermaid(
     analysis: ArchitectureAnalysis | null,
@@ -440,7 +399,6 @@ export function generateArchitectureMermaid(
     if (analysis?.mermaidDiagram) {
         return analysis.mermaidDiagram;
     }
-
     // Otherwise generate from tree
     return generateMermaidFromTree(tree, owner, repo);
 }
