@@ -69,8 +69,8 @@ export const MODULE_TYPE_COLORS: Record<string, string> = {
 };
 
 export const DIAGRAM_TABS = [
-    { id: "architecture" as const, label: "Architecture", icon: "Boxes" },
     { id: "files" as const, label: "File Tree", icon: "FolderTree" },
+    { id: "architecture" as const, label: "Architecture", icon: "Boxes" },
     { id: "contributors" as const, label: "Contributors", icon: "Users" },
     { id: "branches" as const, label: "Branches", icon: "GitBranch" },
     { id: "dependencies" as const, label: "Dependencies", icon: "Package" },

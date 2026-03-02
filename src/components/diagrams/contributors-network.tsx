@@ -16,6 +16,22 @@ interface ContributorsNetworkProps {
 export default function ContributorsNetwork({
     contributors,
 }: ContributorsNetworkProps) {
+    if (contributors.length === 0) {
+        return (
+            <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                    <div className="text-4xl mb-4">👥</div>
+                    <p className="text-sm text-gray-400">
+                        No contributor data available.
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                        Try adding a GitHub Personal Access Token for private repos.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     const { nodes, edges } = useMemo(() => {
         const rawNodes: Node[] = contributors.map((c, i) => ({
             id: c.login,

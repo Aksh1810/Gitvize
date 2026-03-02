@@ -12,7 +12,6 @@ import FileTreeGraph from "@/components/diagrams/file-tree-graph";
 import ContributorsNetwork from "@/components/diagrams/contributors-network";
 import BranchGraph from "@/components/diagrams/branch-graph";
 import DependencyGraph from "@/components/diagrams/dependency-graph";
-import CommitHeatmap from "@/components/charts/commit-heatmap";
 import LanguageDonut from "@/components/charts/language-donut";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -50,7 +49,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const searchParams = useSearchParams();
     const router = useRouter();
 
-    const initialTab = (searchParams.get("tab") as DiagramTab) ?? "architecture";
+    const initialTab = (searchParams.get("tab") as DiagramTab) ?? "files";
     const [activeTab, setActiveTab] = useState<DiagramTab>(initialTab);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -325,8 +324,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         owner={owner}
                                         repo={repo}
                                     />
-                                ) : activeTab === "contributors" &&
-                                    repoData.contributors.length > 0 ? (
+                                ) : activeTab === "contributors" ? (
                                     <ContributorsNetwork
                                         contributors={repoData.contributors}
                                     />
@@ -336,8 +334,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         commits={repoData.commits}
                                         defaultBranch={repoData.metadata.defaultBranch}
                                     />
-                                ) : activeTab === "dependencies" &&
-                                    dependencies.length > 0 ? (
+                                ) : activeTab === "dependencies" ? (
                                     <DependencyGraph
                                         dependencies={dependencies}
                                         projectName={repo}
@@ -355,13 +352,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     <div className="w-full lg:w-[340px] space-y-4">
                         <RepoOverview
                             metadata={repoData.metadata}
-                            readme={repoData.readme}
                             analysis={analysis?.architecture}
                         />
-
-                        {repoData.commits.length > 0 && (
-                            <CommitHeatmap commits={repoData.commits} />
-                        )}
 
                         {Object.keys(repoData.languages).length > 0 && (
                             <LanguageDonut languages={repoData.languages} />

@@ -87,18 +87,34 @@ export async function POST(request: NextRequest) {
 
                         controller.close();
                     } catch (error) {
-                        controller.enqueue(
-                            encoder.encode(
-                                `data: ${JSON.stringify({
-                                    step: "error",
-                                    status: "error",
-                                    message:
-                                        error instanceof Error
-                                            ? error.message
-                                            : "Analysis failed",
-                                })}\n\n`
-                            )
-                        );
+                        console.error("AI analysis failed, falling back to mock:", error);
+                        // Fall back to mock analysis when AI fails
+                        try {
+                            const fallback = getMockAnalysis(owner, repo, tree);
+                            controller.enqueue(
+                                encoder.encode(
+                                    `data: ${JSON.stringify({
+                                        step: "enrich",
+                                        status: "complete",
+                                        message: `AI failed (${error instanceof Error ? error.message : "unknown error"}), using fallback diagram`,
+                                        data: fallback,
+                                    })}\n\n`
+                                )
+                            );
+                        } catch {
+                            controller.enqueue(
+                                encoder.encode(
+                                    `data: ${JSON.stringify({
+                                        step: "error",
+                                        status: "error",
+                                        message:
+                                            error instanceof Error
+                                                ? error.message
+                                                : "Analysis failed",
+                                    })}\n\n`
+                                )
+                            );
+                        }
                         controller.close();
                     }
                 },

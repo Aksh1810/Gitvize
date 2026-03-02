@@ -27,6 +27,64 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const cyRef = useRef<cytoscape.Core | null>(null);
     const [selectedFile, setSelectedFile] = useState<FileNodeData | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [fileContent, setFileContent] = useState<string | null>(null);
+    const [fileLoading, setFileLoading] = useState(false);
+    const [fileError, setFileError] = useState<string | null>(null);
+
+    // Binary file extensions that shouldn't be fetched
+    const BINARY_EXTENSIONS = new Set([
+        'png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp',
+        'mp4', 'webm', 'mp3', 'wav', 'ogg',
+        'zip', 'tar', 'gz', 'rar', '7z',
+        'pdf', 'doc', 'docx', 'xls', 'xlsx',
+        'woff', 'woff2', 'ttf', 'eot', 'otf',
+        'exe', 'dll', 'so', 'dylib',
+        'lock',
+    ]);
+
+    const MAX_FILE_SIZE = 500_000; // 500KB limit for preview
+
+    const fetchFileContent = useCallback(async (file: FileNodeData) => {
+        setFileLoading(true);
+        setFileContent(null);
+        setFileError(null);
+
+        const ext = file.extension?.toLowerCase() ?? '';
+        if (BINARY_EXTENSIONS.has(ext)) {
+            setFileError(`Binary file (.${ext}) — preview not available`);
+            setFileLoading(false);
+            return;
+        }
+
+        if (file.size && file.size > MAX_FILE_SIZE) {
+            setFileError(`File too large (${formatBytes(file.size)}) — preview not available`);
+            setFileLoading(false);
+            return;
+        }
+
+        try {
+            const res = await fetch(
+                `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${file.path}`
+            );
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const text = await res.text();
+            setFileContent(text);
+        } catch (err) {
+            setFileError("Could not load file content");
+        } finally {
+            setFileLoading(false);
+        }
+    }, [owner, repo]);
+
+    // Fetch file content when a file is selected
+    useEffect(() => {
+        if (selectedFile && selectedFile.type !== 'folder') {
+            fetchFileContent(selectedFile);
+        } else {
+            setFileContent(null);
+            setFileError(null);
+        }
+    }, [selectedFile, fetchFileContent]);
 
     // Build graph elements
     const elements = useMemo(() => {
@@ -353,52 +411,84 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 </Button>
             </div>
 
-            {/* File Drawer */}
-            <Sheet open={!!selectedFile} onOpenChange={() => setSelectedFile(null)}>
-                <SheetContent className="glass-card border-l border-border/30">
-                    {selectedFile && (
-                        <>
-                            <SheetHeader>
-                                <SheetTitle className="text-sm">{selectedFile.label}</SheetTitle>
-                            </SheetHeader>
-                            <div className="mt-4 space-y-3">
-                                <div className="text-xs text-muted-foreground break-all">
-                                    <span className="font-medium text-foreground">Path:</span>{" "}
-                                    {selectedFile.path}
-                                </div>
-                                {selectedFile.extension && (
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xs text-muted-foreground">Type:</span>
-                                        <Badge
-                                            variant="outline"
-                                            className="text-[10px]"
-                                            style={{ borderColor: getFileColor(selectedFile.label) + "40", color: getFileColor(selectedFile.label) }}
-                                        >
-                                            .{selectedFile.extension}
-                                        </Badge>
-                                    </div>
-                                )}
-                                {selectedFile.size !== undefined && (
-                                    <div className="text-xs text-muted-foreground">
-                                        <span className="font-medium text-foreground">Size:</span>{" "}
-                                        {formatBytes(selectedFile.size)}
-                                    </div>
-                                )}
-                                <a
-                                    href={`https://github.com/${owner}/${repo}/blob/HEAD/${selectedFile.path}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+            {/* File Code Preview Panel */}
+            {selectedFile && (
+                <div className="absolute top-0 right-0 bottom-0 w-[480px] z-20 bg-[#0a0e1a]/95 backdrop-blur-xl border-l border-border/30 flex flex-col">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-sm font-semibold truncate">{selectedFile.label}</span>
+                            {selectedFile.extension && (
+                                <Badge
+                                    variant="outline"
+                                    className="text-[10px] shrink-0"
+                                    style={{ borderColor: getFileColor(selectedFile.label) + "40", color: getFileColor(selectedFile.label) }}
                                 >
-                                    <Button variant="outline" size="sm" className="mt-4 text-xs">
-                                        <ExternalLink className="w-3 h-3 mr-1.5" />
-                                        View on GitHub
-                                    </Button>
-                                </a>
+                                    .{selectedFile.extension}
+                                </Badge>
+                            )}
+                        </div>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="w-7 h-7 shrink-0"
+                            onClick={() => setSelectedFile(null)}
+                        >
+                            <X className="w-4 h-4" />
+                        </Button>
+                    </div>
+
+                    {/* File meta */}
+                    <div className="px-4 py-2 border-b border-border/20 text-xs text-muted-foreground space-y-1">
+                        <div className="truncate">
+                            <span className="font-medium text-foreground/80">Path:</span> {selectedFile.path}
+                        </div>
+                        {selectedFile.size !== undefined && (
+                            <div>
+                                <span className="font-medium text-foreground/80">Size:</span> {formatBytes(selectedFile.size)}
                             </div>
-                        </>
-                    )}
-                </SheetContent>
-            </Sheet>
+                        )}
+                    </div>
+
+                    {/* Code Content */}
+                    <div className="flex-1 overflow-auto">
+                        {fileLoading ? (
+                            <div className="flex items-center justify-center h-full">
+                                <div className="text-center">
+                                    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                                    <p className="text-xs text-muted-foreground">Loading file...</p>
+                                </div>
+                            </div>
+                        ) : fileError ? (
+                            <div className="flex items-center justify-center h-full">
+                                <div className="text-center px-6">
+                                    <div className="text-3xl mb-2">📄</div>
+                                    <p className="text-xs text-muted-foreground">{fileError}</p>
+                                </div>
+                            </div>
+                        ) : fileContent !== null ? (
+                            <pre className="text-[12px] leading-[1.6] font-mono">
+                                <code>
+                                    {fileContent.split('\n').map((line, i) => (
+                                        <div key={i} className="flex hover:bg-white/[0.03] group">
+                                            <span className="inline-block w-12 text-right pr-4 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
+                                                {i + 1}
+                                            </span>
+                                            <span className="flex-1 text-slate-300 whitespace-pre pr-4 break-all">
+                                                {line || ' '}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </code>
+                            </pre>
+                        ) : (
+                            <div className="flex items-center justify-center h-full">
+                                <p className="text-xs text-muted-foreground">Select a file to preview</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

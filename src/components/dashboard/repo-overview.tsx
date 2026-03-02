@@ -11,12 +11,10 @@ import {
     ExternalLink,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { RepoMetadata, ArchitectureAnalysis } from "@/types";
 
 interface RepoOverviewProps {
     metadata: RepoMetadata;
-    readme?: string;
     analysis?: ArchitectureAnalysis | null;
 }
 
@@ -29,7 +27,6 @@ const statItems = [
 
 export default function RepoOverview({
     metadata,
-    readme,
     analysis,
 }: RepoOverviewProps) {
     return (
@@ -123,20 +120,7 @@ export default function RepoOverview({
                 </div>
             )}
 
-            {/* README Preview */}
-            {readme && (
-                <div>
-                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">
-                        README
-                    </h4>
-                    <ScrollArea className="h-32">
-                        <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
-                            {readme.substring(0, 800)}
-                            {readme.length > 800 && "..."}
-                        </p>
-                    </ScrollArea>
-                </div>
-            )}
+
         </motion.div>
     );
 }

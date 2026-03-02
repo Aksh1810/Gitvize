@@ -19,6 +19,22 @@ export default function DependencyGraph({
     dependencies,
     projectName,
 }: DependencyGraphProps) {
+    if (dependencies.length === 0) {
+        return (
+            <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                    <div className="text-4xl mb-4">📦</div>
+                    <p className="text-sm text-gray-400">
+                        No dependency data found.
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                        This repo may not have a recognized manifest file (package.json, requirements.txt, etc.)
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     const { nodes, edges } = useMemo(() => {
         // Count how many other deps each package has (simplified)
         const depCounts = new Map<string, number>();

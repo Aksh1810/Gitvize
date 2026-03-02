@@ -38,6 +38,30 @@ async function aiCompletion(
     jsonMode: boolean = true,
     config?: AIConfig
 ): Promise<string> {
+    const maxRetries = 1;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            return await aiCompletionInner(systemPrompt, userPrompt, jsonMode, config);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("429") && attempt < maxRetries) {
+                const delay = 5_000; // 5s quick retry
+                console.log(`Rate limited (429), retrying in ${delay / 1000}s (attempt ${attempt + 1}/${maxRetries})...`);
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw new Error("AI completion failed after retries");
+}
+
+async function aiCompletionInner(
+    systemPrompt: string,
+    userPrompt: string,
+    jsonMode: boolean = true,
+    config?: AIConfig
+): Promise<string> {
     const cfg = config ?? getDefaultConfig();
 
     if (!cfg.apiKey) {
@@ -360,84 +384,93 @@ export async function analyzeRepository(
     onProgress?: (step: string, message: string) => void,
     aiConfig?: AIConfig
 ): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[] }> {
-    // Step 2: Understand
-    onProgress?.("understand", "Analyzing codebase architecture with AI...");
-
-    const analysisRaw = await aiCompletion(
-        ANALYSIS_SYSTEM_PROMPT,
-        buildAnalysisUserPrompt(owner, repo, tree, readme),
-        true,
-        aiConfig
-    );
-
-    let architecture: ArchitectureAnalysis;
     try {
-        architecture = JSON.parse(analysisRaw);
-    } catch {
-        throw new Error("Failed to parse AI analysis response as JSON");
-    }
+        // Step 1: Understand — analyze the codebase
+        onProgress?.("understand", "Analyzing codebase architecture with AI...");
 
-    // Step 3: GitDiagram-style 3-prompt chain for Mermaid generation
-    try {
-        // Prompt 1: Architecture explanation
-        onProgress?.("explain", "Analyzing architecture (step 1/3)...");
-        const explanation = await aiCompletion(
-            EXPLAIN_SYSTEM_PROMPT,
-            buildExplainPrompt(tree, readme),
-            false,
-            aiConfig
-        );
-
-        // Prompt 2: Component → file path mapping
-        onProgress?.("mapping", "Mapping components to files (step 2/3)...");
-        const componentMapRaw = await aiCompletion(
-            MAPPING_SYSTEM_PROMPT,
-            buildMappingPrompt(explanation, tree, owner, repo),
+        const analysisRaw = await aiCompletion(
+            ANALYSIS_SYSTEM_PROMPT,
+            buildAnalysisUserPrompt(owner, repo, tree, readme),
             true,
             aiConfig
         );
 
-        // Prompt 3: Mermaid code generation
-        onProgress?.("diagram", "Generating Mermaid diagram (step 3/3)...");
-        const mermaidCode = await aiCompletion(
-            MERMAID_GEN_SYSTEM_PROMPT,
-            buildMermaidGenPrompt(explanation, componentMapRaw, owner, repo),
-            false,
-            aiConfig
-        );
+        let architecture: ArchitectureAnalysis;
+        try {
+            architecture = JSON.parse(analysisRaw);
+        } catch {
+            throw new Error("Failed to parse AI analysis response as JSON");
+        }
 
-        // Strip markdown code fences if present
-        architecture.mermaidDiagram = mermaidCode
-            .replace(/^```mermaid\n?/i, "")
-            .replace(/^```\n?/i, "")
-            .replace(/\n?```$/i, "")
-            .trim();
+        // Step 2: GitDiagram-style 3-prompt chain for Mermaid generation
+        try {
+            // Prompt 1: Architecture explanation
+            onProgress?.("explain", "Analyzing architecture (step 1/3)...");
+            const explanation = await aiCompletion(
+                EXPLAIN_SYSTEM_PROMPT,
+                buildExplainPrompt(tree, readme),
+                false,
+                aiConfig
+            );
+
+            // Prompt 2: Component → file path mapping
+            onProgress?.("mapping", "Mapping components to files (step 2/3)...");
+            const componentMapRaw = await aiCompletion(
+                MAPPING_SYSTEM_PROMPT,
+                buildMappingPrompt(explanation, tree, owner, repo),
+                true,
+                aiConfig
+            );
+
+            // Prompt 3: Mermaid code generation
+            onProgress?.("diagram", "Generating Mermaid diagram (step 3/3)...");
+            const mermaidCode = await aiCompletion(
+                MERMAID_GEN_SYSTEM_PROMPT,
+                buildMermaidGenPrompt(explanation, componentMapRaw, owner, repo),
+                false,
+                aiConfig
+            );
+
+            // Strip markdown code fences if present
+            architecture.mermaidDiagram = mermaidCode
+                .replace(/^```mermaid\n?/i, "")
+                .replace(/^```\n?/i, "")
+                .replace(/\n?```$/i, "")
+                .trim();
+        } catch (err) {
+            console.error("3-prompt Mermaid chain failed, using fallback generator:", err);
+            // Mermaid generation failed but analysis succeeded — use fallback generator
+            architecture.mermaidDiagram = generateMermaidFromTree(tree, owner, repo);
+        }
+
+        // Step 3: Enrich — annotate files
+        onProgress?.("enrich", "Enriching file annotations...");
+
+        const filePaths = tree.filter((t) => t.type === "blob").map((t) => t.path);
+        const moduleNames = architecture.modules.map((m) => m.name);
+
+        let annotations: FileAnnotation[];
+        try {
+            const annotationRaw = await aiCompletion(
+                ANNOTATION_SYSTEM_PROMPT,
+                buildAnnotationUserPrompt(filePaths, moduleNames),
+                true,
+                aiConfig
+            );
+            const parsed = JSON.parse(annotationRaw);
+            annotations = parsed.annotations ?? [];
+        } catch {
+            // Annotation failed — return empty annotations
+            annotations = [];
+        }
+
+        return { architecture, annotations };
     } catch (err) {
-        console.error("3-prompt Mermaid chain failed, will use fallback:", err);
+        // ALL AI failed — fall back to mock analysis entirely
+        console.error("AI pipeline failed entirely, using mock analysis:", err);
+        onProgress?.("enrich", "AI unavailable, generating fallback diagram...");
+        return getMockAnalysis(owner, repo, tree);
     }
-
-    // Step 4: Enrich
-    onProgress?.("enrich", "Enriching file annotations...");
-
-    const filePaths = tree.filter((t) => t.type === "blob").map((t) => t.path);
-    const moduleNames = architecture.modules.map((m) => m.name);
-
-    const annotationRaw = await aiCompletion(
-        ANNOTATION_SYSTEM_PROMPT,
-        buildAnnotationUserPrompt(filePaths, moduleNames),
-        true,
-        aiConfig
-    );
-
-    let annotations: FileAnnotation[];
-    try {
-        const parsed = JSON.parse(annotationRaw);
-        annotations = parsed.annotations ?? [];
-    } catch {
-        annotations = [];
-    }
-
-    return { architecture, annotations };
 }
 
 // --- Mock Analysis (for development without AI key) ---
