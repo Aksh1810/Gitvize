@@ -104,13 +104,6 @@ export default function LandingPage() {
           transition={{ duration: 0.6, ease: "easeOut" }}
           className="text-center max-w-3xl mx-auto mb-12"
         >
-          <div className="inline-flex items-center gap-2 mb-6 px-4 py-1.5 rounded-full border border-indigo/20 bg-indigo/5 text-sm text-indigo">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo"></span>
-            </span>
-            AI-Powered Repository Intelligence
-          </div>
 
           <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight mb-6">
             <span className="gradient-text">Visualize</span> Any
@@ -240,15 +233,6 @@ export default function LandingPage() {
 
         {/* Footer */}
         <footer className="border-t border-border/30 py-8 text-center text-sm text-muted-foreground w-full">
-          <p>
-            Built with ❤️ using Next.js, React Flow, and AI.{" "}
-            <a
-              href="https://github.com"
-              className="text-indigo hover:underline"
-            >
-              Open Source
-            </a>
-          </p>
         </footer>
       </main>
     </div>
