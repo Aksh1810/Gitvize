@@ -86,57 +86,90 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         }
     }, [selectedFile, fetchFileContent]);
 
-    // Build graph elements
+    // Build graph elements — show all files
     const elements = useMemo(() => {
         const nodes: any[] = [];
         const edges: any[] = [];
         const addedFolders = new Set<string>();
 
-        // Root Node
+        // Count children per folder for sizing
+        const folderChildCount = new Map<string, number>();
+        tree.forEach((item) => {
+            const parts = item.path.split("/");
+            const parentPath = parts.slice(0, -1).join("/");
+            const key = parentPath || "__root__";
+            folderChildCount.set(key, (folderChildCount.get(key) || 0) + 1);
+        });
+
+        // Root Node — scale by total children
+        const rootChildren = folderChildCount.get("__root__") || 1;
         nodes.push({
             data: {
                 id: "root",
                 label: repo,
                 path: "",
                 type: "folder",
-                size: 60,
+                size: Math.min(80, 50 + rootChildren),
                 color: "#6366f1",
             },
         });
 
-        // Limit to prevent browser crash with massive repos
-        const limitedItems = tree.slice(0, 500);
+        // Helper to ensure parent folders exist
+        const ensureFolder = (folderPath: string) => {
+            if (addedFolders.has(folderPath)) return;
+            addedFolders.add(folderPath);
 
+            const parts = folderPath.split("/");
+            const label = parts[parts.length - 1];
+            const parentPath = parts.slice(0, -1).join("/");
+            const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
+
+            // Ensure parent exists first
+            if (parentPath && !addedFolders.has(parentPath)) {
+                ensureFolder(parentPath);
+            }
+
+            const childCount = folderChildCount.get(folderPath) || 0;
+            const folderSize = Math.min(55, 30 + Math.sqrt(childCount) * 4);
+
+            nodes.push({
+                data: {
+                    id: `folder:${folderPath}`,
+                    label: childCount > 5 ? `${label} (${childCount})` : label,
+                    path: folderPath,
+                    type: "folder",
+                    size: folderSize,
+                    color: "#ec4899",
+                    childCount,
+                },
+            });
+
+            edges.push({
+                data: {
+                    id: `edge:${parentId}-folder:${folderPath}`,
+                    source: parentId,
+                    target: `folder:${folderPath}`,
+                },
+            });
+        };
+
+        // Show all files (cap at 2000 to prevent browser crash)
+        const limitedItems = tree.slice(0, 2000);
         limitedItems.forEach((item) => {
-            const isFolder = item.type === "tree";
             const parts = item.path.split("/");
+            const isFolder = item.type === "tree";
             const label = parts[parts.length - 1];
             const parentPath = parts.slice(0, -1).join("/");
             const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
 
             if (isFolder) {
-                if (!addedFolders.has(item.path)) {
-                    addedFolders.add(item.path);
-                    nodes.push({
-                        data: {
-                            id: `folder:${item.path}`,
-                            label,
-                            path: item.path,
-                            type: "folder",
-                            size: 40,
-                            color: "#ec4899",
-                        },
-                    });
-
-                    edges.push({
-                        data: {
-                            id: `edge:${parentId}-folder:${item.path}`,
-                            source: parentId,
-                            target: `folder:${item.path}`,
-                        },
-                    });
-                }
+                ensureFolder(item.path);
             } else {
+                // Ensure parent folder exists
+                if (parentPath && !addedFolders.has(parentPath)) {
+                    ensureFolder(parentPath);
+                }
+
                 const ext = label.split(".").pop();
                 nodes.push({
                     data: {
@@ -145,9 +178,9 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         path: item.path,
                         type: "file",
                         extension: ext,
-                        size: item.size ? Math.max(15, Math.min(30, Math.log10(item.size) * 5)) : 15,
+                        size: item.size ? Math.max(12, Math.min(25, Math.log10(item.size) * 5)) : 12,
                         color: getFileColor(label),
-                        rawSize: item.size
+                        rawSize: item.size,
                     },
                 });
 
@@ -163,6 +196,9 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
         return { nodes, edges };
     }, [tree, repo]);
+
+    // Is this a large repo?
+    const isLargeRepo = elements.nodes.length > 80;
 
     // Compute cluster info from elements
     const clusterInfo = useMemo(() => {
@@ -194,6 +230,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             node.style('opacity', 1);
             node.style('border-width', node.data('type') === 'folder' ? 2 : 0);
             node.style('border-color', node.data('type') === 'folder' ? 'rgba(255,255,255,0.4)' : 'transparent');
+            // Reset file labels in large repos
+            if (isLargeRepo && node.data('type') === 'file') {
+                node.style('label', '');
+            }
         });
         cy.edges().style('opacity', 0.6);
 
@@ -214,13 +254,23 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             matched.style('opacity', 1);
             matched.style('border-width', 3);
             matched.style('border-color', '#facc15');
+            // Show labels on matched nodes
+            matched.forEach(node => {
+                node.style('label', node.data('label'));
+            });
             // Also highlight their edges
             matched.connectedEdges().style('opacity', 0.8);
         }
-    }, []);
+    }, [isLargeRepo]);
 
     useEffect(() => {
         if (!containerRef.current) return;
+
+        // Scale layout params based on graph size
+        const nodeCount = elements.nodes.length;
+        const repulsion = nodeCount > 200 ? 45000 : nodeCount > 100 ? 30000 : 12000;
+        const edgeLen = nodeCount > 200 ? 200 : nodeCount > 100 ? 150 : 100;
+        const gravityVal = nodeCount > 200 ? 0.1 : 0.25;
 
         // Initialize cytoscape
         const cy = cytoscape({
@@ -233,7 +283,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'background-color': 'data(color)',
                         'width': 'data(size)',
                         'height': 'data(size)',
-                        'label': 'data(label)',
+                        'label': isLargeRepo ? '' : 'data(label)',
                         'color': '#ffffff',
                         'text-valign': 'center',
                         'text-halign': 'right',
@@ -241,7 +291,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'font-size': '11px',
                         'font-family': 'monospace',
                         'text-outline-width': 1.5,
-                        'text-outline-color': '#0f172a', /* Dark slate to match dark mode */
+                        'text-outline-color': '#0f172a',
                         'text-outline-opacity': 0.8,
                     }
                 },
@@ -252,14 +302,15 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'border-color': 'rgba(255, 255, 255, 0.4)',
                         'font-weight': 'bold',
                         'font-size': '12px',
+                        'label': 'data(label)',
                     }
                 },
                 {
                     selector: 'edge',
                     style: {
-                        'width': 1.5,
-                        'line-color': '#475569',
-                        'opacity': 0.6,
+                        'width': 1,
+                        'line-color': '#334155',
+                        'opacity': 0.4,
                         'curve-style': 'bezier',
                         'control-point-step-size': 40
                     }
@@ -274,26 +325,25 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             ],
             layout: {
                 name: 'fcose',
-                // fCoSE parameters mapped from user's provided screenshot
                 quality: "default",
                 randomize: true,
                 animate: true,
                 animationDuration: 1000,
                 fit: true,
-                nodeRepulsion: 8000,
-                idealEdgeLength: 100,
+                nodeRepulsion: repulsion,
+                idealEdgeLength: edgeLen,
                 edgeElasticity: 0.45,
                 nestingFactor: 0.1,
-                gravity: 0.25,
+                gravity: gravityVal,
                 numIter: 2500,
-                tilingPaddingVertical: 10,
-                tilingPaddingHorizontal: 10,
+                tilingPaddingVertical: 20,
+                tilingPaddingHorizontal: 20,
                 gravityRangeCompound: 1.5,
                 gravityCompound: 1.0,
                 gravityRange: 3.8,
                 initialTemp: 271,
                 coolingFactor: 0.3
-            } as any, // Cast to any because fcose specific options aren't in cytoscape core types
+            } as any,
             wheelSensitivity: 0.2,
         });
 
@@ -320,13 +370,26 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             }
         });
 
-        // Cursor styles
+        // Cursor styles + hover labels
         cy.on('mouseover', 'node', (evt) => {
             if (containerRef.current) containerRef.current.style.cursor = 'pointer';
+            const node = evt.target;
+            // Show label on hover for file nodes in large repos
+            if (isLargeRepo && node.data('type') === 'file') {
+                node.style('label', node.data('label'));
+                node.style('font-size', '11px');
+                node.style('z-index', 999);
+            }
         });
 
         cy.on('mouseout', 'node', (evt) => {
             if (containerRef.current) containerRef.current.style.cursor = 'default';
+            const node = evt.target;
+            // Hide label on mouseout for file nodes in large repos
+            if (isLargeRepo && node.data('type') === 'file') {
+                node.style('label', '');
+                node.style('z-index', 0);
+            }
         });
 
         cyRef.current = cy;
@@ -334,7 +397,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         return () => {
             cy.destroy();
         };
-    }, [elements]);
+    }, [elements, isLargeRepo]);
 
     const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
     const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);

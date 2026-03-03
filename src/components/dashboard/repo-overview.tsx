@@ -40,15 +40,12 @@ export default function RepoOverview({
                 {statItems.map(({ key, icon: Icon, label }) => (
                     <div
                         key={key}
-                        className="flex items-center gap-2 p-3 rounded-lg bg-secondary/30 border border-border/30"
+                        className="flex flex-col items-center justify-center p-3 rounded-lg bg-secondary/30 border border-border/30"
                     >
-                        <Icon className="w-4 h-4 text-indigo" />
-                        <div>
-                            <div className="text-lg font-bold">
-                                {formatCount(metadata[key])}
-                            </div>
-                            <div className="text-xs text-muted-foreground">{label}</div>
+                        <div className="text-lg font-bold">
+                            {formatCount(metadata[key])}
                         </div>
+                        <div className="text-xs text-muted-foreground">{label}</div>
                     </div>
                 ))}
             </div>
@@ -62,18 +59,6 @@ export default function RepoOverview({
 
             {/* Meta */}
             <div className="flex flex-wrap items-center gap-3 mb-4 text-xs text-muted-foreground">
-                {metadata.license && (
-                    <span className="flex items-center gap-1">
-                        <Scale className="w-3 h-3" />
-                        {metadata.license}
-                    </span>
-                )}
-                {metadata.pushedAt && (
-                    <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        Last push: {new Date(metadata.pushedAt).toLocaleDateString()}
-                    </span>
-                )}
                 <a
                     href={metadata.htmlUrl}
                     target="_blank"
