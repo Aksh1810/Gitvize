@@ -205,7 +205,7 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
         const barrel = dirFiles.find(f => f.baseName === "index" || f.baseName === "main");
         if (barrel && dirFiles.length > 1) {
             dirFiles.filter(f => f !== barrel).slice(0, 8).forEach(f => {
-                addEdge(safeId(barrel.path), safeId(f.path), "exports");
+                addEdge(safeId(barrel.path), safeId(f.path), "provides");
             });
         }
     });
@@ -215,7 +215,7 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
     const pages = files.filter(f => f.baseName === "page" || f.baseName === "Home" || f.layer === "app");
     layouts.forEach(l => {
         pages.filter(p => p !== l).slice(0, 5).forEach(p => {
-            addEdge(safeId(l.path), safeId(p.path), "wraps");
+            addEdge(safeId(l.path), safeId(p.path), "contains");
         });
     });
 
@@ -225,7 +225,7 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
     if (appFiles.length > 0 && uiFiles.length > 0) {
         appFiles.slice(0, 4).forEach(p => {
             uiFiles.slice(0, 3).forEach(c => {
-                addEdge(safeId(p.path), safeId(c.path), "renders");
+                addEdge(safeId(p.path), safeId(c.path), "shows");
             });
         });
     }
@@ -235,7 +235,7 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
     if (uiFiles.length > 0 && logicFiles.length > 0) {
         uiFiles.slice(0, 4).forEach(u => {
             logicFiles.slice(0, 3).forEach(l => {
-                addEdge(safeId(u.path), safeId(l.path), "imports");
+                addEdge(safeId(u.path), safeId(l.path), "uses");
             });
         });
     }
@@ -244,7 +244,7 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
     if (appFiles.length > 0 && logicFiles.length > 0) {
         appFiles.slice(0, 3).forEach(a => {
             logicFiles.slice(0, 2).forEach(l => {
-                addEdge(safeId(a.path), safeId(l.path), "uses");
+                addEdge(safeId(a.path), safeId(l.path), "calls");
             });
         });
     }
@@ -255,7 +255,7 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
     if (typeFiles.length > 0 && nonTypeLogic.length > 0) {
         nonTypeLogic.slice(0, 4).forEach(c => {
             typeFiles.slice(0, 2).forEach(t => {
-                addEdge(safeId(t.path), safeId(c.path), "shared types");
+                addEdge(safeId(t.path), safeId(c.path), "defines types for");
             });
         });
     }
@@ -274,7 +274,7 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
             f.baseName.toLowerCase() === cleanName.toLowerCase()
         );
         if (target) {
-            addEdge(safeId(t.path), safeId(target.path), "tests");
+            addEdge(safeId(t.path), safeId(target.path), "verifies");
         }
     });
 
@@ -292,7 +292,7 @@ export function generateMermaidFromTree(
     repo: string
 ): string {
     // Select the most important files
-    const selectedTrees = selectImportantFiles(tree, 40);
+    const selectedTrees = selectImportantFiles(tree, 25);
 
     // Classify files
     const files: ClassifiedFile[] = selectedTrees.map(t => {
@@ -349,14 +349,14 @@ export function generateMermaidFromTree(
     // Connect user to first app/page
     const firstApp = files.find(f => f.layer === "app" && (f.baseName === "page" || f.baseName === "Home"));
     if (firstApp) {
-        lines.push(`  User -->|"interaction"| ${safeId(firstApp.path)}`);
+        lines.push(`  User -->|"visits"| ${safeId(firstApp.path)}`);
     }
 
     // Infer and render edges
     const edges = inferEdges(files);
     if (edges.length > 0) {
         lines.push("");
-        edges.forEach(e => {
+        edges.slice(0, 20).forEach(e => {
             const arrow = e.dotted ? "-.->" : "-->";
             const label = safeLabel(e.label);
             lines.push(`  ${e.fromId} ${arrow}|"${label}"| ${e.toId}`);

@@ -48,9 +48,9 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                         useMaxWidth: false,
                         htmlLabels: true,
                         curve: "basis",
-                        padding: 16,
-                        nodeSpacing: 30,
-                        rankSpacing: 40,
+                        padding: 24,
+                        nodeSpacing: 60,
+                        rankSpacing: 80,
                         wrappingWidth: 200,
                     },
                     themeVariables: {
@@ -209,13 +209,13 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
         setScale(prev => {
-            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            const delta = e.deltaY > 0 ? -0.04 : 0.04;
             return Math.max(0.2, Math.min(3, prev + delta));
         });
     }, []);
 
-    const zoomIn = () => setScale(prev => Math.min(3, prev + 0.2));
-    const zoomOut = () => setScale(prev => Math.max(0.2, prev - 0.2));
+    const zoomIn = () => setScale(prev => Math.min(3, prev + 0.15));
+    const zoomOut = () => setScale(prev => Math.max(0.2, prev - 0.15));
     const resetView = () => {
         setScale(1);
         setPosition({ x: 0, y: 0 });
@@ -372,7 +372,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                     style={{
                         transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
                         transformOrigin: "center center",
-                        transition: isDragging ? "none" : "transform 0.1s ease-out",
+                        transition: isDragging ? "none" : "transform 0.25s ease-out",
                     }}
                     dangerouslySetInnerHTML={{ __html: svgContent }}
                 />

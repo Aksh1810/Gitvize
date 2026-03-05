@@ -1,30 +1,26 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
-import { type Node, type Edge, MarkerType } from "@xyflow/react";
-import FlowWrapper from "./flow-wrapper";
-import CommitNode from "./nodes/commit-node";
-import type { Branch, Commit, CommitNodeData } from "@/types";
-import { GitCommit, X, User, Calendar, GitBranch } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useState, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+    GitBranch,
+    GitCommit,
+    User,
+    Calendar,
+    ChevronDown,
+    ChevronUp,
+    Search,
+    X,
+    ArrowUpDown,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-
-const nodeTypes = { commit: CommitNode };
+import { Button } from "@/components/ui/button";
+import type { Branch, Commit } from "@/types";
 
 const branchColors = [
-    "#6366f1",
-    "#22d3ee",
-    "#a855f7",
-    "#10b981",
-    "#f59e0b",
-    "#ef4444",
-    "#ec4899",
-    "#3b82f6",
+    "#6366f1", "#22d3ee", "#a855f7", "#10b981",
+    "#f59e0b", "#ef4444", "#ec4899", "#3b82f6",
 ];
-
-function getBranchColor(branch: string, index: number): string {
-    return branchColors[index % branchColors.length];
-}
 
 interface BranchGraphProps {
     branches: Branch[];
@@ -32,208 +28,310 @@ interface BranchGraphProps {
     defaultBranch: string;
 }
 
+function timeAgo(dateStr: string): string {
+    const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+    if (seconds < 60) return "just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months}mo ago`;
+    return `${Math.floor(months / 12)}y ago`;
+}
+
+function groupCommitsByDate(commits: Commit[]): Map<string, Commit[]> {
+    const groups = new Map<string, Commit[]>();
+    commits.forEach((c) => {
+        const date = new Date(c.date).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+        });
+        if (!groups.has(date)) groups.set(date, []);
+        groups.get(date)!.push(c);
+    });
+    return groups;
+}
+
 export default function BranchGraph({
     branches,
     commits,
     defaultBranch,
 }: BranchGraphProps) {
-    const [selectedCommit, setSelectedCommit] = useState<CommitNodeData | null>(null);
+    const [showAllBranches, setShowAllBranches] = useState(false);
+    const [selectedCommit, setSelectedCommit] = useState<Commit | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [sortBy, setSortBy] = useState<"newest" | "oldest" | "author">("newest");
 
-    const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
-        const d = node.data as unknown as CommitNodeData;
-        if (d.sha) {
-            setSelectedCommit(d);
-        }
-    }, []);
+    const nonDefaultBranches = branches.filter((b) => !b.isDefault);
+    const visibleBranches = showAllBranches
+        ? nonDefaultBranches
+        : nonDefaultBranches.slice(0, 6);
 
-    const { nodes, edges } = useMemo(() => {
-        const rawNodes: Node[] = [];
-        const rawEdges: Edge[] = [];
+    const filteredCommits = useMemo(() => {
+        let result = [...commits];
 
-        const defaultBranchIdx = branches.findIndex((b) => b.isDefault);
-        const mainColor = branchColors[0];
-
-        // Main branch commits as horizontal spine
-        const mainCommits = commits.slice(0, 30);
-        mainCommits.forEach((commit, i) => {
-            rawNodes.push({
-                id: `commit:${commit.sha}`,
-                type: "commit",
-                position: { x: i * 70, y: 200 },
-                data: {
-                    sha: commit.sha,
-                    message: commit.message,
-                    authorName: commit.authorName,
-                    authorAvatar: commit.authorAvatar,
-                    date: commit.date,
-                    branch: defaultBranch,
-                    color: mainColor,
-                } satisfies CommitNodeData & { color: string },
-            });
-
-            if (i > 0) {
-                rawEdges.push({
-                    id: `edge:${mainCommits[i - 1].sha}-${commit.sha}`,
-                    source: `commit:${mainCommits[i - 1].sha}`,
-                    target: `commit:${commit.sha}`,
-                    style: { stroke: mainColor, strokeWidth: 2 },
-                    markerEnd: { type: MarkerType.ArrowClosed, color: mainColor },
-                });
-            }
-        });
-
-        // Branch labels as nodes diverging from the spine
-        const nonDefaultBranches = branches.filter((b) => !b.isDefault).slice(0, 10);
-
-        nonDefaultBranches.forEach((branch, bIdx) => {
-            const color = getBranchColor(branch.name, bIdx + 1);
-            const attachIdx = Math.min(bIdx * 3 + 2, mainCommits.length - 1);
-            const yOffset = bIdx % 2 === 0 ? -120 : 120;
-
-            // Branch label node
-            const branchNodeId = `branch:${branch.name}`;
-            rawNodes.push({
-                id: branchNodeId,
-                type: "commit",
-                position: {
-                    x: attachIdx * 70 + 35,
-                    y: 200 + yOffset,
-                },
-                data: {
-                    sha: branch.sha.substring(0, 7),
-                    message: branch.name,
-                    authorName: "",
-                    authorAvatar: null,
-                    date: "",
-                    branch: branch.name,
-                    color,
-                } satisfies CommitNodeData & { color: string },
-            });
-
-            // Edge from main branch to feature branch
-            if (mainCommits[attachIdx]) {
-                rawEdges.push({
-                    id: `edge:main-${branch.name}`,
-                    source: `commit:${mainCommits[attachIdx].sha}`,
-                    target: branchNodeId,
-                    style: { stroke: color, strokeWidth: 1.5, strokeDasharray: "5,5" },
-                });
-            }
-        });
-
-        // Default branch label
-        rawNodes.push({
-            id: "branch-label:default",
-            type: "commit",
-            position: { x: -80, y: 200 },
-            data: {
-                sha: "",
-                message: defaultBranch,
-                authorName: "",
-                authorAvatar: null,
-                date: "",
-                branch: defaultBranch,
-                color: mainColor,
-            } satisfies CommitNodeData & { color: string },
-        });
-
-        if (mainCommits.length > 0) {
-            rawEdges.push({
-                id: "edge:label-first",
-                source: "branch-label:default",
-                target: `commit:${mainCommits[0].sha}`,
-                style: { stroke: mainColor, strokeWidth: 2 },
-                markerEnd: { type: MarkerType.ArrowClosed, color: mainColor },
-            });
+        // Filter
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase();
+            result = result.filter(
+                (c) =>
+                    c.message.toLowerCase().includes(q) ||
+                    c.authorName.toLowerCase().includes(q) ||
+                    c.sha.toLowerCase().includes(q)
+            );
         }
 
-        return { nodes: rawNodes, edges: rawEdges };
-    }, [branches, commits, defaultBranch]);
+        // Sort
+        if (sortBy === "oldest") {
+            result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        } else if (sortBy === "newest") {
+            result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        } else if (sortBy === "author") {
+            result.sort((a, b) => a.authorName.localeCompare(b.authorName));
+        }
+
+        return result;
+    }, [commits, searchQuery, sortBy]);
+
+    const groupedCommits = useMemo(
+        () => groupCommitsByDate(filteredCommits),
+        [filteredCommits]
+    );
 
     return (
-        <div className="relative w-full h-full">
-            <FlowWrapper
-                initialNodes={nodes}
-                initialEdges={edges}
-                nodeTypes={nodeTypes}
-                onNodeClick={handleNodeClick}
-                fitViewOptions={{ padding: 0.3, maxZoom: 2 }}
-            />
+        <div className="w-full h-full overflow-auto custom-scrollbar">
+            <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
 
-            {/* Commit Info Panel */}
-            {selectedCommit && (
-                <div className="absolute top-4 right-4 z-20 w-[320px] bg-[#0a0e1a]/95 backdrop-blur-xl border border-border/30 rounded-xl overflow-hidden">
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
+                {/* Branches Section */}
+                <div className="glass-card p-5">
+                    <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                            <GitCommit className="w-4 h-4 text-indigo-400" />
-                            <span className="text-sm font-semibold">Commit Info</span>
+                            <GitBranch className="w-4 h-4 text-indigo-400" />
+                            <h3 className="text-sm font-semibold">Branches</h3>
+                            <Badge variant="secondary" className="text-[10px]">
+                                {branches.length}
+                            </Badge>
                         </div>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="w-7 h-7"
-                            onClick={() => setSelectedCommit(null)}
-                        >
-                            <X className="w-4 h-4" />
-                        </Button>
+                        {nonDefaultBranches.length > 6 && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-xs h-7"
+                                onClick={() => setShowAllBranches(!showAllBranches)}
+                            >
+                                {showAllBranches ? (
+                                    <>Show less <ChevronUp className="w-3 h-3 ml-1" /></>
+                                ) : (
+                                    <>+{nonDefaultBranches.length - 6} more <ChevronDown className="w-3 h-3 ml-1" /></>
+                                )}
+                            </Button>
+                        )}
                     </div>
 
-                    {/* Content */}
-                    <div className="px-4 py-3 space-y-3">
-                        {/* SHA */}
-                        <div>
-                            <code className="text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded font-mono">
-                                {selectedCommit.sha.substring(0, 7)}
-                            </code>
+                    <div className="flex flex-wrap gap-2">
+                        {/* Default branch */}
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium"
+                            style={{
+                                borderColor: branchColors[0],
+                                background: `${branchColors[0]}15`,
+                                color: branchColors[0],
+                            }}
+                        >
+                            <GitBranch className="w-3 h-3" />
+                            {defaultBranch}
+                            <Badge variant="outline" className="text-[9px] ml-1 border-current px-1 py-0">
+                                default
+                            </Badge>
                         </div>
 
-                        {/* Message */}
-                        <p className="text-sm text-foreground leading-relaxed">
-                            {selectedCommit.message}
-                        </p>
-
-                        {/* Author */}
-                        {selectedCommit.authorName && (
-                            <div className="flex items-center gap-2">
-                                {selectedCommit.authorAvatar ? (
-                                    <img
-                                        src={selectedCommit.authorAvatar}
-                                        alt={selectedCommit.authorName}
-                                        className="w-5 h-5 rounded-full"
-                                    />
-                                ) : (
-                                    <User className="w-4 h-4 text-muted-foreground" />
-                                )}
-                                <span className="text-xs text-muted-foreground">
-                                    {selectedCommit.authorName}
-                                </span>
-                            </div>
-                        )}
-
-                        {/* Date */}
-                        {selectedCommit.date && (
-                            <div className="flex items-center gap-2">
-                                <Calendar className="w-4 h-4 text-muted-foreground" />
-                                <span className="text-xs text-muted-foreground">
-                                    {new Date(selectedCommit.date).toLocaleString()}
-                                </span>
-                            </div>
-                        )}
-
-                        {/* Branch */}
-                        {selectedCommit.branch && (
-                            <div className="flex items-center gap-2">
-                                <GitBranch className="w-4 h-4 text-muted-foreground" />
-                                <Badge variant="outline" className="text-[10px]">
-                                    {selectedCommit.branch}
-                                </Badge>
-                            </div>
-                        )}
+                        {/* Other branches */}
+                        {visibleBranches.map((branch, i) => {
+                            const color = branchColors[(i + 1) % branchColors.length];
+                            return (
+                                <div
+                                    key={branch.name}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs"
+                                    style={{
+                                        borderColor: `${color}40`,
+                                        background: `${color}10`,
+                                        color: color,
+                                    }}
+                                >
+                                    <GitBranch className="w-3 h-3" />
+                                    {branch.name}
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
-            )}
+
+                {/* Commits Header */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <GitCommit className="w-4 h-4 text-muted-foreground" />
+                        <h3 className="text-sm font-semibold">Commits</h3>
+                        <Badge variant="secondary" className="text-[10px]">
+                            {commits.length}
+                        </Badge>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        {/* Sort dropdown */}
+                        <div className="relative flex items-center">
+                            <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
+                            <select
+                                value={sortBy}
+                                onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "author")}
+                                className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors appearance-none cursor-pointer text-foreground"
+                            >
+                                <option value="newest">Newest first</option>
+                                <option value="oldest">Oldest first</option>
+                                <option value="author">Author A–Z</option>
+                            </select>
+                        </div>
+
+                        {/* Search */}
+                        <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                            <input
+                                type="text"
+                                placeholder="Search commits..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="h-8 w-[200px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors"
+                            />
+                            {searchQuery && (
+                                <button
+                                    onClick={() => setSearchQuery("")}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Commit Timeline */}
+                <div className="relative">
+                    {/* Vertical timeline line */}
+                    <div className="absolute left-[19px] top-0 bottom-0 w-px bg-border/40" />
+
+                    {filteredCommits.length === 0 ? (
+                        <div className="text-center py-12 text-sm text-muted-foreground">
+                            No commits match your search.
+                        </div>
+                    ) : (
+                        Array.from(groupedCommits.entries()).map(([date, dayCommits]) => (
+                            <div key={date} className="mb-6">
+                                {/* Date header */}
+                                <div className="flex items-center gap-3 mb-3 ml-1">
+                                    <div className="w-[10px] h-[10px] rounded-full bg-muted-foreground/30 border-2 border-background z-10" />
+                                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                        {date}
+                                    </span>
+                                </div>
+
+                                {/* Day's commits */}
+                                <div className="space-y-1 ml-10">
+                                    {dayCommits.map((commit) => (
+                                        <motion.div
+                                            key={commit.sha}
+                                            initial={{ opacity: 0, x: -8 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            className={`group relative flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${selectedCommit?.sha === commit.sha
+                                                ? "bg-indigo-500/10 border border-indigo-500/20"
+                                                : "hover:bg-secondary/30 border border-transparent"
+                                                }`}
+                                            onClick={() =>
+                                                setSelectedCommit(
+                                                    selectedCommit?.sha === commit.sha ? null : commit
+                                                )
+                                            }
+                                        >
+                                            {/* Timeline dot connector */}
+                                            <div className="absolute -left-[30px] top-4 w-[20px] h-px bg-border/30" />
+                                            <div
+                                                className="absolute -left-[34px] top-[12px] w-[8px] h-[8px] rounded-full border-2 z-10"
+                                                style={{
+                                                    borderColor: branchColors[0],
+                                                    background: selectedCommit?.sha === commit.sha ? branchColors[0] : "#0a0e1a",
+                                                }}
+                                            />
+
+                                            {/* Author avatar */}
+                                            {commit.authorAvatar ? (
+                                                <img
+                                                    src={commit.authorAvatar}
+                                                    alt={commit.authorName}
+                                                    className="w-7 h-7 rounded-full shrink-0 mt-0.5"
+                                                />
+                                            ) : (
+                                                <div className="w-7 h-7 rounded-full bg-secondary/50 flex items-center justify-center shrink-0 mt-0.5">
+                                                    <User className="w-3.5 h-3.5 text-muted-foreground" />
+                                                </div>
+                                            )}
+
+                                            {/* Commit content */}
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm text-foreground leading-snug truncate group-hover:text-white transition-colors">
+                                                    {commit.message}
+                                                </p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className="text-[11px] text-muted-foreground">
+                                                        {commit.authorName}
+                                                    </span>
+                                                    <span className="text-[10px] text-muted-foreground/50">•</span>
+                                                    <span className="text-[11px] text-muted-foreground/70">
+                                                        {timeAgo(commit.date)}
+                                                    </span>
+                                                </div>
+
+                                                {/* Expanded details */}
+                                                <AnimatePresence>
+                                                    {selectedCommit?.sha === commit.sha && (
+                                                        <motion.div
+                                                            initial={{ height: 0, opacity: 0 }}
+                                                            animate={{ height: "auto", opacity: 1 }}
+                                                            exit={{ height: 0, opacity: 0 }}
+                                                            transition={{ duration: 0.2 }}
+                                                            className="overflow-hidden"
+                                                        >
+                                                            <div className="mt-2 pt-2 border-t border-border/20 space-y-1.5">
+                                                                <div className="flex items-center gap-2">
+                                                                    <Calendar className="w-3 h-3 text-muted-foreground" />
+                                                                    <span className="text-[11px] text-muted-foreground">
+                                                                        {new Date(commit.date).toLocaleString()}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <GitBranch className="w-3 h-3 text-muted-foreground" />
+                                                                    <Badge variant="outline" className="text-[9px]">
+                                                                        {defaultBranch}
+                                                                    </Badge>
+                                                                </div>
+                                                            </div>
+                                                        </motion.div>
+                                                    )}
+                                                </AnimatePresence>
+                                            </div>
+
+                                            {/* SHA badge */}
+                                            <code className="text-[10px] text-indigo-400/70 bg-indigo-500/10 px-1.5 py-0.5 rounded font-mono shrink-0 mt-1">
+                                                {commit.sha}
+                                            </code>
+                                        </motion.div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
         </div>
     );
 }
-
