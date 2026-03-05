@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { type Node, type Edge, MarkerType } from "@xyflow/react";
 import FlowWrapper from "./flow-wrapper";
 import CommitNode from "./nodes/commit-node";
 import type { Branch, Commit, CommitNodeData } from "@/types";
+import { GitCommit, X, User, Calendar, GitBranch } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 const nodeTypes = { commit: CommitNode };
 
@@ -34,6 +37,15 @@ export default function BranchGraph({
     commits,
     defaultBranch,
 }: BranchGraphProps) {
+    const [selectedCommit, setSelectedCommit] = useState<CommitNodeData | null>(null);
+
+    const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+        const d = node.data as unknown as CommitNodeData;
+        if (d.sha) {
+            setSelectedCommit(d);
+        }
+    }, []);
+
     const { nodes, edges } = useMemo(() => {
         const rawNodes: Node[] = [];
         const rawEdges: Edge[] = [];
@@ -139,11 +151,89 @@ export default function BranchGraph({
     }, [branches, commits, defaultBranch]);
 
     return (
-        <FlowWrapper
-            initialNodes={nodes}
-            initialEdges={edges}
-            nodeTypes={nodeTypes}
-            fitViewOptions={{ padding: 0.3, maxZoom: 2 }}
-        />
+        <div className="relative w-full h-full">
+            <FlowWrapper
+                initialNodes={nodes}
+                initialEdges={edges}
+                nodeTypes={nodeTypes}
+                onNodeClick={handleNodeClick}
+                fitViewOptions={{ padding: 0.3, maxZoom: 2 }}
+            />
+
+            {/* Commit Info Panel */}
+            {selectedCommit && (
+                <div className="absolute top-4 right-4 z-20 w-[320px] bg-[#0a0e1a]/95 backdrop-blur-xl border border-border/30 rounded-xl overflow-hidden">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
+                        <div className="flex items-center gap-2">
+                            <GitCommit className="w-4 h-4 text-indigo-400" />
+                            <span className="text-sm font-semibold">Commit Info</span>
+                        </div>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="w-7 h-7"
+                            onClick={() => setSelectedCommit(null)}
+                        >
+                            <X className="w-4 h-4" />
+                        </Button>
+                    </div>
+
+                    {/* Content */}
+                    <div className="px-4 py-3 space-y-3">
+                        {/* SHA */}
+                        <div>
+                            <code className="text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded font-mono">
+                                {selectedCommit.sha.substring(0, 7)}
+                            </code>
+                        </div>
+
+                        {/* Message */}
+                        <p className="text-sm text-foreground leading-relaxed">
+                            {selectedCommit.message}
+                        </p>
+
+                        {/* Author */}
+                        {selectedCommit.authorName && (
+                            <div className="flex items-center gap-2">
+                                {selectedCommit.authorAvatar ? (
+                                    <img
+                                        src={selectedCommit.authorAvatar}
+                                        alt={selectedCommit.authorName}
+                                        className="w-5 h-5 rounded-full"
+                                    />
+                                ) : (
+                                    <User className="w-4 h-4 text-muted-foreground" />
+                                )}
+                                <span className="text-xs text-muted-foreground">
+                                    {selectedCommit.authorName}
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Date */}
+                        {selectedCommit.date && (
+                            <div className="flex items-center gap-2">
+                                <Calendar className="w-4 h-4 text-muted-foreground" />
+                                <span className="text-xs text-muted-foreground">
+                                    {new Date(selectedCommit.date).toLocaleString()}
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Branch */}
+                        {selectedCommit.branch && (
+                            <div className="flex items-center gap-2">
+                                <GitBranch className="w-4 h-4 text-muted-foreground" />
+                                <Badge variant="outline" className="text-[10px]">
+                                    {selectedCommit.branch}
+                                </Badge>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }
+
