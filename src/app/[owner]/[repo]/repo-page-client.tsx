@@ -333,6 +333,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         branches={repoData.branches}
                                         commits={repoData.commits}
                                         defaultBranch={repoData.metadata.defaultBranch}
+                                        owner={owner}
+                                        repo={repo}
                                     />
                                 ) : activeTab === "dependencies" ? (
                                     <DependencyGraph

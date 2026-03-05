@@ -160,35 +160,22 @@ export async function fetchCommits(
     branch?: string,
     token?: string | null
 ): Promise<Commit[]> {
-    const allCommits: Commit[] = [];
-    const maxPages = 3; // Fetch up to 300 commits (3 pages × 100)
-
-    for (let page = 1; page <= maxPages; page++) {
-        const params = branch
-            ? `?sha=${branch}&per_page=100&page=${page}`
-            : `?per_page=100&page=${page}`;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = await ghFetch<any[]>(
-            `/repos/${owner}/${repo}/commits${params}`,
-            token
-        );
-
-        const commits = data.map((c) => ({
-            sha: c.sha.substring(0, 7),
-            message: c.commit.message.split("\n")[0],
-            authorName: c.commit.author.name,
-            authorLogin: c.author?.login ?? null,
-            authorAvatar: c.author?.avatar_url ?? null,
-            date: c.commit.author.date,
-        }));
-
-        allCommits.push(...commits);
-
-        // Stop if we got fewer than 100 (last page)
-        if (data.length < 100) break;
-    }
-
-    return allCommits;
+    const params = branch
+        ? `?sha=${branch}&per_page=100&page=1`
+        : `?per_page=100&page=1`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await ghFetch<any[]>(
+        `/repos/${owner}/${repo}/commits${params}`,
+        token
+    );
+    return data.map((c) => ({
+        sha: c.sha.substring(0, 7),
+        message: c.commit.message.split("\n")[0],
+        authorName: c.commit.author.name,
+        authorLogin: c.author?.login ?? null,
+        authorAvatar: c.author?.avatar_url ?? null,
+        date: c.commit.author.date,
+    }));
 }
 
 // --- Languages ---
