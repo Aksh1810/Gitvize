@@ -12,7 +12,7 @@ function DependencyNode({ data }: NodeProps) {
 
     return (
         <>
-            <Handle type="target" position={Position.Top} className="!bg-transparent !border-0 !w-2 !h-2" />
+            <Handle type="target" position={Position.Left} className="!bg-transparent !border-0 !w-2 !h-2" />
             <div
                 className="node-glow rounded-xl flex flex-col items-center justify-center cursor-pointer p-3"
                 style={{
@@ -38,7 +38,7 @@ function DependencyNode({ data }: NodeProps) {
                     <span className="text-[9px] text-muted-foreground">{d.version}</span>
                 )}
             </div>
-            <Handle type="source" position={Position.Bottom} className="!bg-transparent !border-0 !w-2 !h-2" />
+            <Handle type="source" position={Position.Right} className="!bg-transparent !border-0 !w-2 !h-2" />
         </>
     );
 }
