@@ -36,12 +36,6 @@ export default function DependencyGraph({
     }
 
     const { nodes, edges } = useMemo(() => {
-        // Count how many other deps each package has (simplified)
-        const depCounts = new Map<string, number>();
-        dependencies.forEach((d) => {
-            depCounts.set(d.name, (depCounts.get(d.name) ?? 0) + 1);
-        });
-
         const rawNodes: Node[] = [];
         const rawEdges: Edge[] = [];
 
@@ -59,49 +53,110 @@ export default function DependencyGraph({
             } satisfies DependencyNodeData & { color: string },
         });
 
-        // Limit to top 40 deps for readability
-        const limitedDeps = dependencies.slice(0, 40);
+        // Group dependencies by direct vs dev
+        const directDeps = dependencies.filter((d) => d.isDirect);
+        const devDeps = dependencies.filter((d) => !d.isDirect);
 
-        limitedDeps.forEach((dep) => {
+        // Create group nodes if both types exist
+        const hasGroups = directDeps.length > 0 && devDeps.length > 0;
+
+        if (hasGroups) {
+            // "Dependencies" group node
             rawNodes.push({
-                id: `dep:${dep.name}`,
+                id: "group:direct",
                 type: "dependency",
                 position: { x: 0, y: 0 },
                 data: {
-                    name: dep.name,
-                    version: dep.version,
-                    isDirect: dep.isDirect,
-                    dependentCount: depCounts.get(dep.name) ?? 1,
-                    color: dep.isDirect ? "#6366f1" : "#64748b",
+                    name: `Dependencies (${directDeps.length})`,
+                    version: "",
+                    isDirect: true,
+                    dependentCount: directDeps.length,
+                    color: "#6366f1",
                 } satisfies DependencyNodeData & { color: string },
             });
-
             rawEdges.push({
-                id: `edge:project-${dep.name}`,
+                id: "edge:project-direct",
                 source: "project",
-                target: `dep:${dep.name}`,
-                style: {
-                    stroke: dep.isDirect
-                        ? "rgba(99, 102, 241, 0.3)"
-                        : "rgba(148, 163, 184, 0.15)",
-                    strokeWidth: dep.isDirect ? 2 : 1,
-                    strokeDasharray: dep.isDirect ? undefined : "5,5",
-                },
-                markerEnd: {
-                    type: MarkerType.ArrowClosed,
-                    color: dep.isDirect
-                        ? "rgba(99, 102, 241, 0.5)"
-                        : "rgba(148, 163, 184, 0.3)",
-                },
+                target: "group:direct",
+                style: { stroke: "rgba(99, 102, 241, 0.4)", strokeWidth: 2 },
+                markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(99, 102, 241, 0.5)" },
             });
-        });
+
+            // "Dev Dependencies" group node
+            rawNodes.push({
+                id: "group:dev",
+                type: "dependency",
+                position: { x: 0, y: 0 },
+                data: {
+                    name: `Dev Dependencies (${devDeps.length})`,
+                    version: "",
+                    isDirect: false,
+                    dependentCount: devDeps.length,
+                    color: "#64748b",
+                } satisfies DependencyNodeData & { color: string },
+            });
+            rawEdges.push({
+                id: "edge:project-dev",
+                source: "project",
+                target: "group:dev",
+                style: { stroke: "rgba(148, 163, 184, 0.3)", strokeWidth: 1.5, strokeDasharray: "5,5" },
+                markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(148, 163, 184, 0.3)" },
+            });
+        }
+
+        // Add individual deps — limit per group for readability
+        const maxDirect = 40;
+        const maxDev = 30;
+
+        const addDeps = (deps: ParsedDependency[], parentId: string, max: number) => {
+            deps.slice(0, max).forEach((dep) => {
+                rawNodes.push({
+                    id: `dep:${dep.name}`,
+                    type: "dependency",
+                    position: { x: 0, y: 0 },
+                    data: {
+                        name: dep.name,
+                        version: dep.version,
+                        isDirect: dep.isDirect,
+                        dependentCount: 1,
+                        color: dep.isDirect ? "#6366f1" : "#64748b",
+                    } satisfies DependencyNodeData & { color: string },
+                });
+
+                rawEdges.push({
+                    id: `edge:${parentId}-${dep.name}`,
+                    source: parentId,
+                    target: `dep:${dep.name}`,
+                    style: {
+                        stroke: dep.isDirect
+                            ? "rgba(99, 102, 241, 0.25)"
+                            : "rgba(148, 163, 184, 0.12)",
+                        strokeWidth: 1,
+                    },
+                    markerEnd: {
+                        type: MarkerType.ArrowClosed,
+                        color: dep.isDirect
+                            ? "rgba(99, 102, 241, 0.4)"
+                            : "rgba(148, 163, 184, 0.25)",
+                    },
+                });
+            });
+        };
+
+        if (hasGroups) {
+            addDeps(directDeps, "group:direct", maxDirect);
+            addDeps(devDeps, "group:dev", maxDev);
+        } else {
+            // All deps are the same type, connect directly to project
+            addDeps(dependencies, "project", 60);
+        }
 
         return getLayoutedElements(rawNodes, rawEdges, {
-            direction: "TB",
-            nodeWidth: 150,
-            nodeHeight: 70,
-            rankSep: 80,
-            nodeSep: 30,
+            direction: "LR",
+            nodeWidth: 200,
+            nodeHeight: 60,
+            rankSep: 150,
+            nodeSep: 50,
         });
     }, [dependencies, projectName]);
 

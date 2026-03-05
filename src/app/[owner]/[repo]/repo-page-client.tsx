@@ -290,7 +290,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                 <div className="flex flex-col lg:flex-row gap-4 p-4">
                     {/* Main diagram area */}
-                    <div className="flex-1 min-h-[600px]">
+                    <div className="flex-1 h-[calc(100vh-140px)]">
                         <AnimatePresence mode="wait">
                             <motion.div
                                 key={activeTab}
@@ -298,7 +298,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
                                 transition={{ duration: 0.2 }}
-                                className="min-h-[800px] glass-card overflow-hidden rounded-xl"
+                                className="h-full glass-card overflow-hidden rounded-xl overscroll-contain"
                             >
                                 {activeTab === "architecture" && analysis ? (
                                     <ArchitectureDiagram

@@ -49,7 +49,7 @@ export default function FlowWrapper({
     );
 
     return (
-        <div className={`w-full h-[800px] ${className}`}>
+        <div className={`w-full h-full ${className}`}>
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
