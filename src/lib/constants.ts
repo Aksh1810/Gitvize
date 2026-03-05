@@ -16,38 +16,45 @@ export const EXAMPLE_REPOS: ExampleRepo[] = [
 ];
 
 export const FILE_EXTENSION_COLORS: Record<string, string> = {
-    ts: "#3178c6",
-    tsx: "#3178c6",
-    js: "#f7df1e",
-    jsx: "#f7df1e",
-    py: "#3776ab",
-    rb: "#cc342d",
-    go: "#00add8",
-    rs: "#dea584",
-    java: "#b07219",
-    kt: "#a97bff",
-    swift: "#fa7343",
-    c: "#555555",
-    cpp: "#f34b7d",
-    h: "#555555",
-    cs: "#178600",
-    php: "#4f5d95",
-    html: "#e34c26",
-    css: "#563d7c",
-    scss: "#c6538c",
-    json: "#292929",
-    yaml: "#cb171e",
-    yml: "#cb171e",
-    md: "#083fa1",
-    sql: "#e38c00",
-    sh: "#89e051",
-    bash: "#89e051",
-    dockerfile: "#384d54",
-    toml: "#9c4221",
-    xml: "#0060ac",
-    svg: "#ff9900",
-    vue: "#41b883",
-    svelte: "#ff3e00",
+    ts: "#2196F3",       // dodger blue
+    tsx: "#AB47BC",      // medium purple
+    js: "#FFEB3B",       // bright yellow
+    jsx: "#FF9800",      // vivid orange
+    py: "#26C6DA",       // turquoise
+    rb: "#F44336",       // pure red
+    go: "#00BFA5",       // mint
+    rs: "#FF7043",       // coral
+    java: "#7E57C2",     // deep lavender
+    kt: "#EC407A",       // hot pink
+    swift: "#FFA726",    // tangerine
+    c: "#66BB6A",        // grass green
+    cpp: "#EF5350",      // vermillion
+    h: "#29B6F6",        // light sky
+    cs: "#8BC34A",       // lime green
+    php: "#5C6BC0",      // slate blue
+    html: "#E91E63",     // magenta
+    css: "#CE93D8",      // orchid
+    scss: "#F06292",     // flamingo
+    json: "#FDD835",     // sunflower
+    yaml: "#FF5252",     // strawberry
+    yml: "#FF5252",      // strawberry
+    md: "#4FC3F7",       // baby blue
+    sql: "#FFCA28",      // gold
+    sh: "#69F0AE",       // neon green
+    bash: "#69F0AE",     // neon green
+    dockerfile: "#00ACC1", // dark teal
+    toml: "#D84315",     // rust
+    xml: "#42A5F5",      // cornflower
+    svg: "#FFD54F",      // butter
+    vue: "#00E676",      // emerald
+    svelte: "#FF1744",   // scarlet
+    graphql: "#D500F9",  // electric purple
+    proto: "#00B8D4",    // pacific blue
+    tf: "#651FFF",       // royal violet
+    zig: "#F9A825",      // marigold 
+    lock: "#90A4AE",     // steel
+    env: "#AA00FF",      // neon purple
+    txt: "#BDBDBD",      // silver
 };
 
 export const MODULE_TYPE_COLORS: Record<string, string> = {

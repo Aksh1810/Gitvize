@@ -10,6 +10,34 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, Maximize2, ZoomIn, ZoomOut, Search, X } from "lucide-react";
+import Prism from "prismjs";
+import "prismjs/themes/prism-tomorrow.css";
+import "prismjs/components/prism-javascript";
+import "prismjs/components/prism-typescript";
+import "prismjs/components/prism-jsx";
+import "prismjs/components/prism-tsx";
+import "prismjs/components/prism-python";
+import "prismjs/components/prism-css";
+import "prismjs/components/prism-json";
+import "prismjs/components/prism-markdown";
+import "prismjs/components/prism-bash";
+import "prismjs/components/prism-go";
+import "prismjs/components/prism-rust";
+import "prismjs/components/prism-sql";
+import "prismjs/components/prism-yaml";
+import "prismjs/components/prism-java";
+import "prismjs/components/prism-c";
+import "prismjs/components/prism-cpp";
+
+// Map file extensions to Prism language keys
+const extToPrismLang: Record<string, string> = {
+    ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
+    py: "python", css: "css", scss: "css", html: "markup",
+    json: "json", md: "markdown", sh: "bash", bash: "bash",
+    go: "go", rs: "rust", sql: "sql", yaml: "yaml", yml: "yaml",
+    java: "java", c: "c", cpp: "cpp", h: "c",
+    xml: "markup", svg: "markup",
+};
 
 // Register the fcose layout extension
 if (typeof window !== "undefined") {
@@ -530,18 +558,36 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                 </div>
                             </div>
                         ) : fileContent !== null ? (
-                            <pre className="text-[12px] leading-[1.6] font-mono">
+                            <pre className="text-[12px] leading-[1.6] font-mono" style={{ background: "transparent" }}>
                                 <code>
-                                    {fileContent.split('\n').map((line, i) => (
-                                        <div key={i} className="flex hover:bg-white/[0.03] group">
-                                            <span className="inline-block w-12 text-right pr-4 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
-                                                {i + 1}
-                                            </span>
-                                            <span className="flex-1 text-slate-300 whitespace-pre pr-4 break-all">
-                                                {line || ' '}
-                                            </span>
-                                        </div>
-                                    ))}
+                                    {(() => {
+                                        const ext = selectedFile.extension?.toLowerCase() ?? "";
+                                        const lang = extToPrismLang[ext];
+                                        const grammar = lang && Prism.languages[lang];
+                                        const highlighted = grammar
+                                            ? Prism.highlight(fileContent!, grammar, lang)
+                                            : null;
+                                        const lines = highlighted
+                                            ? highlighted.split("\n")
+                                            : fileContent!.split("\n");
+                                        return lines.map((line, i) => (
+                                            <div key={i} className="flex hover:bg-white/[0.03] group">
+                                                <span className="inline-block w-12 text-right pr-4 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
+                                                    {i + 1}
+                                                </span>
+                                                {highlighted ? (
+                                                    <span
+                                                        className="flex-1 whitespace-pre pr-4 break-all"
+                                                        dangerouslySetInnerHTML={{ __html: line || " " }}
+                                                    />
+                                                ) : (
+                                                    <span className="flex-1 text-slate-300 whitespace-pre pr-4 break-all">
+                                                        {line || " "}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ));
+                                    })()}
                                 </code>
                             </pre>
                         ) : (

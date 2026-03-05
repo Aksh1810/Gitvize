@@ -6,8 +6,6 @@ import {
     GitFork,
     Eye,
     AlertCircle,
-    Scale,
-    Clock,
     ExternalLink,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +14,8 @@ import type { RepoMetadata, ArchitectureAnalysis } from "@/types";
 interface RepoOverviewProps {
     metadata: RepoMetadata;
     analysis?: ArchitectureAnalysis | null;
+    owner: string;
+    repo: string;
 }
 
 const statItems = [
@@ -25,16 +25,43 @@ const statItems = [
     { key: "openIssues", icon: AlertCircle, label: "Issues" },
 ] as const;
 
+// Languages already shown in the donut chart — filter these from tech stack
+const languageNames = new Set([
+    "typescript", "javascript", "python", "go", "rust", "java",
+    "c", "c++", "c#", "ruby", "php", "swift", "kotlin", "scala",
+    "dart", "r", "perl", "lua", "shell", "html", "css",
+]);
+
 export default function RepoOverview({
     metadata,
     analysis,
+    owner,
+    repo,
 }: RepoOverviewProps) {
+    // Filter tech stack to only show frameworks/tools, not raw languages
+    const filteredTechStack = analysis?.techStack?.filter(
+        (tech) => !languageNames.has(tech.toLowerCase())
+    ) || [];
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="glass-card p-6 max-w-3xl"
         >
+            {/* Repo Name with GitHub link */}
+            <a
+                href={metadata.htmlUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 mb-4 group"
+            >
+                <span className="text-base font-semibold text-foreground group-hover:text-indigo transition-colors">
+                    {owner}/{repo}
+                </span>
+                <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-indigo transition-colors" />
+            </a>
+
             {/* Stats Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
                 {statItems.map(({ key, icon: Icon, label }) => (
@@ -57,19 +84,6 @@ export default function RepoOverview({
                 </p>
             )}
 
-            {/* Meta */}
-            <div className="flex flex-wrap items-center gap-3 mb-4 text-xs text-muted-foreground">
-                <a
-                    href={metadata.htmlUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-indigo hover:underline"
-                >
-                    <ExternalLink className="w-3 h-3" />
-                    View on GitHub
-                </a>
-            </div>
-
             {/* Topics */}
             {metadata.topics.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-4">
@@ -85,14 +99,14 @@ export default function RepoOverview({
                 </div>
             )}
 
-            {/* Tech Stack (AI) */}
-            {analysis?.techStack && analysis.techStack.length > 0 && (
+            {/* Tech Stack (frameworks/tools only) */}
+            {filteredTechStack.length > 0 && (
                 <div className="mb-4">
                     <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">
                         Tech Stack
                     </h4>
                     <div className="flex flex-wrap gap-1.5">
-                        {analysis.techStack.map((tech) => (
+                        {filteredTechStack.map((tech) => (
                             <Badge
                                 key={tech}
                                 variant="outline"
@@ -105,7 +119,6 @@ export default function RepoOverview({
                 </div>
             )}
 
-
         </motion.div>
     );
 }
@@ -115,3 +128,4 @@ function formatCount(num: number): string {
     if (num >= 1000) return `${(num / 1000).toFixed(1)}k`;
     return num.toString();
 }
+

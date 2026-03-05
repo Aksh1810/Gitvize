@@ -42,10 +42,12 @@ export default function LanguageDonut({ languages }: LanguageDonutProps) {
                                 cy="50%"
                                 innerRadius={30}
                                 outerRadius={55}
-                                paddingAngle={2}
+                                paddingAngle={4}
                                 dataKey="value"
                                 animationBegin={0}
                                 animationDuration={800}
+                                stroke="#0a0e1a"
+                                strokeWidth={2}
                             >
                                 {data.map((entry) => (
                                     <Cell key={entry.name} fill={entry.color} />
