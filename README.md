@@ -1,36 +1,129 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🔮 GitViz
 
-## Getting Started
+**Visualize any GitHub repository's architecture, file structure, dependencies, and commit history — instantly.**
 
-First, run the development server:
+GitViz turns any public GitHub repo URL into interactive, beautiful visualizations. Just paste a `github.com/owner/repo` link and explore.
+
+## ✨ Features
+
+### 📐 Architecture Diagram
+
+- Auto-generated **Mermaid flowcharts** showing how files relate to each other
+- Files grouped into layers: App Routes, UI Components, Logic/Core, Config, Tests, Docs
+- Draggable nodes, pan/zoom, export to PNG, and copy Mermaid code
+- Click any node to jump to the file on GitHub
+
+### 🌳 File Tree
+
+- Interactive **Cytoscape.js** force-directed graph of the repository's file structure
+- Nodes colored by file type with distinct, bright colors per extension
+- Click any file to preview its code with **Prism.js syntax highlighting** (16+ languages)
+- Search files by name with real-time filtering
+- Cluster info overlay showing file type breakdown
+
+### 📦 Dependencies
+
+- Parses `package.json` to visualize **npm dependencies** as a graph
+- Solid lines = production dependencies, dotted lines = dev dependencies
+- Left-to-right layout with a clear legend
+
+### 🕐 Commits & Branches
+
+- Scrollable **timeline view** of all commits, grouped by date
+- Author avatars, commit messages, relative timestamps, and SHA badges
+- Click any commit to expand and see full date + branch info
+- **Sort by**: Newest first, Oldest first, or Author A–Z
+- **Search** commits by message, author, or SHA
+- **Paginated loading**: loads 100 commits at a time with "Load more" and **"Load all"** buttons
+- Rate limit notification if GitHub API limit is reached
+- Branch cards showing all branches with color-coded pills
+
+### 📊 Repository Overview (Sidebar)
+
+- Repo name as a clickable GitHub hyperlink
+- **Language donut chart** with separated segments (Recharts)
+- **Tech stack** showing only frameworks & tools (not raw languages)
+- Contributor avatars and star/fork counts
+
+## 🛠 Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | [Next.js 16](https://nextjs.org/) (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS 4 |
+| UI Components | Radix UI / shadcn/ui |
+| Animations | Framer Motion |
+| Architecture Diagrams | Mermaid.js |
+| File Tree Graph | Cytoscape.js + fcose layout |
+| Dependency Graph | React Flow (@xyflow/react) + Dagre |
+| Charts | Recharts |
+| Syntax Highlighting | Prism.js |
+| Icons | Lucide React |
+| Data Source | GitHub REST API |
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- npm / yarn / pnpm
+
+### Installation
+
+```bash
+git clone https://github.com/Aksh1810/Gitviz.git
+cd Gitviz
+npm install
+```
+
+### Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Paste any GitHub repository URL (e.g. `https://github.com/facebook/react`)
+2. GitViz fetches the repo's file tree, branches, commits, and dependencies
+3. Switch between tabs: **Architecture**, **File Tree**, **Branches**, **Dependencies**, **Contributors**
 
-## Learn More
+### Environment Variables (Optional)
 
-To learn more about Next.js, take a look at the following resources:
+```env
+GITHUB_TOKEN=ghp_your_token_here
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Adding a GitHub Personal Access Token increases your API rate limit from 60 to 5,000 requests/hour — useful for large repos with thousands of commits.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 📁 Project Structure
 
-## Deploy on Vercel
+```
+src/
+├── app/                    # Next.js App Router pages
+│   ├── page.tsx            # Landing page with URL input
+│   └── [owner]/[repo]/     # Dynamic repo visualization page
+├── components/
+│   ├── charts/             # Language donut chart
+│   ├── dashboard/          # Repo overview sidebar, tab nav, header
+│   ├── diagrams/           # Architecture, file tree, branch, dependency graphs
+│   └── ui/                 # Reusable UI components (shadcn/ui)
+├── lib/
+│   ├── github.ts           # GitHub API client (fetch tree, commits, branches)
+│   ├── ai.ts               # Architecture analysis & tech stack inference
+│   ├── mermaid-generator.ts # Auto-generates Mermaid code from file tree
+│   ├── constants.ts        # File extension colors, module type colors
+│   └── file-icons.ts       # File color & icon mapping
+└── types/                  # TypeScript type definitions
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 📄 License
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT
+
+---
+
+Built by [Aksh1810](https://github.com/Aksh1810)
