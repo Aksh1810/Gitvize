@@ -23,6 +23,16 @@ export default function LanguageDonut({ languages }: LanguageDonutProps) {
             color: getLanguageColor(name),
         }));
 
+    // Give every language a minimum visible slice in the chart (3%)
+    const minShare = 3;
+    const chartData = data.map((d) => {
+        const realPct = (d.value / total) * 100;
+        return {
+            ...d,
+            chartValue: Math.max(realPct, minShare),
+        };
+    });
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -33,23 +43,23 @@ export default function LanguageDonut({ languages }: LanguageDonutProps) {
                 Languages
             </h3>
             <div className="flex items-center gap-4">
-                <div className="w-[120px] h-[120px]">
+                <div className="w-[120px] h-[120px] shrink-0">
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <Pie
-                                data={data}
+                                data={chartData}
                                 cx="50%"
                                 cy="50%"
                                 innerRadius={30}
                                 outerRadius={55}
                                 paddingAngle={4}
-                                dataKey="value"
+                                dataKey="chartValue"
                                 animationBegin={0}
                                 animationDuration={800}
                                 stroke="#0a0e1a"
                                 strokeWidth={2}
                             >
-                                {data.map((entry) => (
+                                {chartData.map((entry) => (
                                     <Cell key={entry.name} fill={entry.color} />
                                 ))}
                             </Pie>
@@ -70,8 +80,8 @@ export default function LanguageDonut({ languages }: LanguageDonutProps) {
                         </PieChart>
                     </ResponsiveContainer>
                 </div>
-                <div className="flex-1 space-y-1.5">
-                    {data.slice(0, 6).map((lang) => (
+                <div className="flex-1 space-y-1.5 max-h-[140px] overflow-y-auto custom-scrollbar">
+                    {data.map((lang) => (
                         <div key={lang.name} className="flex items-center gap-2">
                             <div
                                 className="w-2 h-2 rounded-full shrink-0"
