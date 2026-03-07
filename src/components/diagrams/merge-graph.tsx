@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     GitPullRequest,
@@ -10,8 +10,7 @@ import {
     User,
     ChevronDown,
     Loader2,
-    ZoomIn,
-    ZoomOut,
+    ArrowRight,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,16 +54,10 @@ export default function MergeGraph({
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(initialPRs.length >= 10);
     const [selectedPR, setSelectedPR] = useState<MergedPR | null>(null);
-    const [scale, setScale] = useState(1);
-    const [panX, setPanX] = useState(0);
-    const containerRef = useRef<HTMLDivElement>(null);
-    const canvasRef = useRef<HTMLDivElement>(null);
-    const isDragging = useRef(false);
-    const lastMouse = useRef({ x: 0, y: 0 });
 
-    // Sort PRs oldest → newest for left-to-right layout
+    // Sort PRs newest first for top-to-bottom display
     const sortedPRs = useMemo(
-        () => [...allPRs].sort((a, b) => new Date(a.mergedAt).getTime() - new Date(b.mergedAt).getTime()),
+        () => [...allPRs].sort((a, b) => new Date(b.mergedAt).getTime() - new Date(a.mergedAt).getTime()),
         [allPRs]
     );
 
@@ -78,20 +71,17 @@ export default function MergeGraph({
         return map;
     }, [sortedPRs]);
 
-    // Group PRs by month for the heatmap
-    const monthlyActivity = useMemo(() => {
-        const groups = new Map<string, number>();
-        allPRs.forEach((pr) => {
+    // Group by month for date separators
+    const groupedPRs = useMemo(() => {
+        const groups = new Map<string, MergedPR[]>();
+        sortedPRs.forEach((pr) => {
             const d = new Date(pr.mergedAt);
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-            groups.set(key, (groups.get(key) ?? 0) + 1);
+            const key = d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(pr);
         });
-        return Array.from(groups.entries())
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([month, count]) => ({ month, count }));
-    }, [allPRs]);
-
-    const maxMonthlyCount = Math.max(...monthlyActivity.map((m) => m.count), 1);
+        return groups;
+    }, [sortedPRs]);
 
     // Load more PRs
     const loadMorePRs = useCallback(async () => {
@@ -128,35 +118,6 @@ export default function MergeGraph({
         }
     }, [currentPage, owner, repo]);
 
-    // Pan handlers
-    const handleMouseDown = useCallback((e: React.MouseEvent) => {
-        isDragging.current = true;
-        lastMouse.current = { x: e.clientX, y: e.clientY };
-    }, []);
-
-    const handleMouseMove = useCallback((e: React.MouseEvent) => {
-        if (!isDragging.current) return;
-        const dx = e.clientX - lastMouse.current.x;
-        setPanX((prev) => prev + dx);
-        lastMouse.current = { x: e.clientX, y: e.clientY };
-    }, []);
-
-    const handleMouseUp = useCallback(() => {
-        isDragging.current = false;
-    }, []);
-
-    // Zoom
-    const handleWheel = useCallback((e: React.WheelEvent) => {
-        e.preventDefault();
-        setScale((prev) => Math.max(0.3, Math.min(2, prev + (e.deltaY > 0 ? -0.05 : 0.05))));
-    }, []);
-
-    // Layout constants
-    const NODE_SPACING = 160;
-    const MAIN_Y = 120;
-    const BRANCH_Y = 240;
-    const graphWidth = Math.max(sortedPRs.length * NODE_SPACING + 200, 800);
-
     if (allPRs.length === 0) {
         return (
             <div className="flex items-center justify-center h-full">
@@ -173,274 +134,206 @@ export default function MergeGraph({
 
     return (
         <div className="w-full h-full flex flex-col">
+            {/* Scrollable merge timeline */}
+            <div className="flex-1 overflow-auto custom-scrollbar">
+                <div className="max-w-3xl mx-auto px-6 py-6">
 
-            {/* Activity heatmap bar */}
-            {monthlyActivity.length > 1 && (
-                <div className="shrink-0 px-4 pt-3 pb-2 border-b border-border/10">
-                    <div className="flex items-center gap-2 mb-2">
-                        <GitMerge className="w-3 h-3 text-muted-foreground" />
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Merge activity</span>
-                    </div>
-                    <div className="flex items-end gap-[2px] h-[28px]">
-                        {monthlyActivity.map(({ month, count }) => {
-                            const height = Math.max(4, (count / maxMonthlyCount) * 28);
-                            const [year, mo] = month.split("-");
-                            return (
-                                <div
-                                    key={month}
-                                    className="group relative flex-1 min-w-[4px] max-w-[20px] cursor-default"
-                                >
-                                    <div
-                                        className="w-full rounded-sm bg-indigo-500/40 hover:bg-indigo-500/70 transition-colors"
-                                        style={{ height: `${height}px` }}
-                                    />
-                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-20">
-                                        <div className="glass-card px-2 py-1 text-[10px] whitespace-nowrap">
-                                            {new Date(`${year}-${mo}-01`).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
-                                            : {count} merge{count !== 1 ? "s" : ""}
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
-
-            {/* Git graph canvas */}
-            <div
-                ref={containerRef}
-                className="flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing select-none"
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-                onWheel={handleWheel}
-            >
-                <div
-                    ref={canvasRef}
-                    className="absolute top-0 left-0 h-full transition-transform duration-75"
-                    style={{
-                        transform: `translateX(${panX}px) scale(${scale})`,
-                        transformOrigin: "left center",
-                        width: `${graphWidth}px`,
-                    }}
-                >
-                    {/* Main branch spine */}
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: "visible" }}>
-                        {/* Main horizontal line */}
-                        <line
-                            x1={60}
-                            y1={MAIN_Y}
-                            x2={graphWidth - 40}
-                            y2={MAIN_Y}
-                            stroke="rgba(99, 102, 241, 0.3)"
-                            strokeWidth={3}
-                            strokeLinecap="round"
-                        />
-
-                        {/* Branch fork/merge curves */}
-                        {sortedPRs.map((pr, i) => {
-                            const x = 100 + i * NODE_SPACING;
-                            const color = branchColorMap.get(pr.headBranch) ?? "#6366f1";
-
-                            return (
-                                <g key={pr.number}>
-                                    {/* Fork down from main */}
-                                    <path
-                                        d={`M ${x} ${MAIN_Y} C ${x} ${MAIN_Y + 40}, ${x - 30} ${BRANCH_Y - 40}, ${x - 30} ${BRANCH_Y}`}
-                                        stroke={color}
-                                        strokeWidth={2}
-                                        fill="none"
-                                        strokeOpacity={0.3}
-                                    />
-                                    {/* Merge back up to main */}
-                                    <path
-                                        d={`M ${x - 30} ${BRANCH_Y} C ${x - 30} ${BRANCH_Y - 40}, ${x + 40} ${MAIN_Y + 40}, ${x + 40} ${MAIN_Y}`}
-                                        stroke={color}
-                                        strokeWidth={2}
-                                        fill="none"
-                                        strokeOpacity={0.3}
-                                    />
-                                </g>
-                            );
-                        })}
-                    </svg>
-
-                    {/* Main branch label */}
-                    <div
-                        className="absolute flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium border"
-                        style={{
-                            left: 10,
-                            top: MAIN_Y - 14,
-                            borderColor: "rgba(99, 102, 241, 0.3)",
-                            background: "rgba(99, 102, 241, 0.1)",
-                            color: "#6366f1",
-                        }}
-                    >
-                        <GitBranch className="w-3 h-3" />
-                        {defaultBranch}
+                    {/* Stats bar */}
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="flex items-center gap-2">
+                            <GitMerge className="w-4 h-4 text-indigo-400" />
+                            <span className="text-sm font-semibold">Merge History</span>
+                            <Badge variant="secondary" className="text-[10px]">
+                                {allPRs.length} PRs
+                            </Badge>
+                        </div>
+                        <div className="flex-1" />
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/50">
+                            <GitBranch className="w-3 h-3" />
+                            <span>into</span>
+                            <code className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[10px]">
+                                {defaultBranch}
+                            </code>
+                        </div>
                     </div>
 
-                    {/* Merge points on main line */}
-                    {sortedPRs.map((pr, i) => {
-                        const x = 100 + i * NODE_SPACING + 40;
-                        return (
-                            <div
-                                key={`main-${pr.number}`}
-                                className="absolute w-3 h-3 rounded-full border-2 bg-[#0a0e1a] cursor-pointer hover:scale-150 transition-transform"
-                                style={{
-                                    left: x - 6,
-                                    top: MAIN_Y - 6,
-                                    borderColor: branchColorMap.get(pr.headBranch) ?? "#6366f1",
-                                }}
-                                onClick={() => setSelectedPR(selectedPR?.number === pr.number ? null : pr)}
-                            />
-                        );
-                    })}
+                    {/* Timeline */}
+                    <div className="relative">
+                        {/* Vertical spine */}
+                        <div className="absolute left-[23px] top-0 bottom-0 w-[2px] bg-gradient-to-b from-indigo-500/30 via-indigo-500/15 to-transparent" />
 
-                    {/* Branch nodes (the feature branch circles with info) */}
-                    {sortedPRs.map((pr, i) => {
-                        const x = 100 + i * NODE_SPACING - 30;
-                        const color = branchColorMap.get(pr.headBranch) ?? "#6366f1";
-                        const isSelected = selectedPR?.number === pr.number;
-
-                        return (
-                            <motion.div
-                                key={pr.number}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: Math.min(i * 0.03, 1) }}
-                                className={`absolute cursor-pointer group`}
-                                style={{
-                                    left: x - 50,
-                                    top: BRANCH_Y - 20,
-                                    width: 120,
-                                }}
-                                onClick={() => setSelectedPR(isSelected ? null : pr)}
-                            >
-                                {/* Branch dot */}
-                                <div className="flex flex-col items-center">
-                                    <div
-                                        className="w-4 h-4 rounded-full border-2 mb-2 group-hover:scale-125 transition-transform"
-                                        style={{
-                                            borderColor: color,
-                                            background: isSelected ? color : "#0a0e1a",
-                                        }}
-                                    />
-
-                                    {/* Branch name */}
-                                    <div
-                                        className="px-2 py-0.5 rounded text-[9px] font-mono truncate max-w-full text-center"
-                                        style={{
-                                            background: `${color}15`,
-                                            color: color,
-                                            border: `1px solid ${color}30`,
-                                        }}
-                                    >
-                                        {pr.headBranch.length > 16
-                                            ? pr.headBranch.slice(0, 15) + "…"
-                                            : pr.headBranch}
-                                    </div>
-
-                                    {/* Author avatar */}
-                                    {pr.authorAvatar && (
-                                        <img
-                                            src={pr.authorAvatar}
-                                            alt={pr.authorLogin}
-                                            className="w-5 h-5 rounded-full mt-1.5 ring-1 ring-border/20"
-                                        />
-                                    )}
-
-                                    {/* Time label */}
-                                    <span className="text-[9px] text-muted-foreground/50 mt-1">
-                                        {timeAgo(pr.mergedAt)}
+                        {Array.from(groupedPRs.entries()).map(([monthLabel, prs]) => (
+                            <div key={monthLabel} className="mb-6">
+                                {/* Month separator */}
+                                <div className="flex items-center gap-3 mb-4 ml-0.5">
+                                    <div className="w-[12px] h-[12px] rounded-full border-2 border-indigo-500/40 bg-[#0a0e1a] z-10" />
+                                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                                        {monthLabel}
                                     </span>
+                                    <div className="flex-1 h-px bg-border/10" />
+                                    <span className="text-[10px] text-muted-foreground/40">{prs.length} merges</span>
                                 </div>
-                            </motion.div>
-                        );
-                    })}
-                </div>
 
-                {/* Zoom controls */}
-                <div className="absolute bottom-4 right-4 flex items-center gap-1">
-                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setScale((s) => Math.min(2, s + 0.15))}>
-                        <ZoomIn className="w-3 h-3" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setScale((s) => Math.max(0.3, s - 0.15))}>
-                        <ZoomOut className="w-3 h-3" />
-                    </Button>
-                    <span className="text-[10px] text-muted-foreground ml-1">{Math.round(scale * 100)}%</span>
+                                {/* PR cards */}
+                                <div className="space-y-2 ml-0">
+                                    {prs.map((pr, idx) => {
+                                        const color = branchColorMap.get(pr.headBranch) ?? "#6366f1";
+                                        const isSelected = selectedPR?.number === pr.number;
+
+                                        return (
+                                            <motion.div
+                                                key={pr.number}
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                transition={{ delay: Math.min(idx * 0.03, 0.5) }}
+                                                className="relative flex items-start gap-3 ml-1"
+                                            >
+                                                {/* Merge dot on spine */}
+                                                <div className="relative shrink-0 mt-3">
+                                                    <div
+                                                        className="w-[10px] h-[10px] rounded-full border-2 z-10 relative cursor-pointer hover:scale-150 transition-transform"
+                                                        style={{
+                                                            borderColor: color,
+                                                            background: isSelected ? color : "#0a0e1a",
+                                                        }}
+                                                        onClick={() => setSelectedPR(isSelected ? null : pr)}
+                                                    />
+                                                    {/* Horizontal connector */}
+                                                    <div
+                                                        className="absolute top-[4px] left-[10px] h-[2px] w-[14px]"
+                                                        style={{ background: `${color}30` }}
+                                                    />
+                                                </div>
+
+                                                {/* PR card */}
+                                                <div
+                                                    className={`flex-1 rounded-lg p-3 cursor-pointer transition-all group ${isSelected
+                                                            ? "border bg-secondary/20"
+                                                            : "hover:bg-secondary/10 border border-transparent"
+                                                        }`}
+                                                    style={{
+                                                        borderColor: isSelected ? `${color}30` : undefined,
+                                                    }}
+                                                    onClick={() => setSelectedPR(isSelected ? null : pr)}
+                                                >
+                                                    {/* Top row: branch badge + time */}
+                                                    <div className="flex items-center gap-2 mb-1.5">
+                                                        <div
+                                                            className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono"
+                                                            style={{
+                                                                background: `${color}12`,
+                                                                color: color,
+                                                                border: `1px solid ${color}25`,
+                                                            }}
+                                                        >
+                                                            <GitBranch className="w-2.5 h-2.5" />
+                                                            {pr.headBranch.length > 30
+                                                                ? pr.headBranch.slice(0, 29) + "…"
+                                                                : pr.headBranch}
+                                                        </div>
+                                                        <ArrowRight className="w-3 h-3 text-muted-foreground/30" />
+                                                        <code className="text-[9px] text-muted-foreground/50 font-mono">
+                                                            {pr.baseBranch}
+                                                        </code>
+                                                        <div className="flex-1" />
+                                                        <span className="text-[10px] text-muted-foreground/40">
+                                                            {timeAgo(pr.mergedAt)}
+                                                        </span>
+                                                    </div>
+
+                                                    {/* PR title */}
+                                                    <div className="flex items-center gap-2">
+                                                        <GitMerge className="w-3.5 h-3.5 shrink-0 text-purple-400/60" />
+                                                        <span className="text-sm text-foreground truncate group-hover:text-white transition-colors">
+                                                            {pr.title}
+                                                        </span>
+                                                        <Badge variant="outline" className="text-[9px] shrink-0 opacity-50">
+                                                            #{pr.number}
+                                                        </Badge>
+                                                    </div>
+
+                                                    {/* Author row */}
+                                                    <div className="flex items-center gap-2 mt-2">
+                                                        {pr.authorAvatar ? (
+                                                            <img
+                                                                src={pr.authorAvatar}
+                                                                alt={pr.authorLogin}
+                                                                className="w-5 h-5 rounded-full ring-1 ring-border/20"
+                                                            />
+                                                        ) : (
+                                                            <div className="w-5 h-5 rounded-full bg-secondary/50 flex items-center justify-center">
+                                                                <User className="w-3 h-3 text-muted-foreground" />
+                                                            </div>
+                                                        )}
+                                                        <span className="text-[11px] text-muted-foreground">
+                                                            {pr.authorLogin}
+                                                        </span>
+                                                        {pr.mergedByLogin && pr.mergedByLogin !== pr.authorLogin && (
+                                                            <>
+                                                                <span className="text-[10px] text-muted-foreground/30">•</span>
+                                                                <span className="text-[10px] text-muted-foreground/50">
+                                                                    merged by {pr.mergedByLogin}
+                                                                </span>
+                                                            </>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Expanded details */}
+                                                    <AnimatePresence>
+                                                        {isSelected && (
+                                                            <motion.div
+                                                                initial={{ height: 0, opacity: 0 }}
+                                                                animate={{ height: "auto", opacity: 1 }}
+                                                                exit={{ height: 0, opacity: 0 }}
+                                                                transition={{ duration: 0.2 }}
+                                                                className="overflow-hidden"
+                                                            >
+                                                                <div className="mt-3 pt-3 border-t border-border/10 flex items-center gap-3">
+                                                                    <span className="text-[11px] text-muted-foreground">
+                                                                        {new Date(pr.mergedAt).toLocaleString()}
+                                                                    </span>
+                                                                    <div className="flex-1" />
+                                                                    <a
+                                                                        href={pr.htmlUrl}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] bg-secondary/30 border border-border/20 hover:bg-secondary/50 transition-colors"
+                                                                        onClick={(e) => e.stopPropagation()}
+                                                                    >
+                                                                        <ExternalLink className="w-3 h-3" />
+                                                                        View on GitHub
+                                                                    </a>
+                                                                </div>
+                                                            </motion.div>
+                                                        )}
+                                                    </AnimatePresence>
+                                                </div>
+                                            </motion.div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+
+                        {/* End marker */}
+                        {!hasMore && allPRs.length > 0 && (
+                            <div className="flex items-center gap-3 ml-0.5 pt-2 pb-4">
+                                <div className="w-[12px] h-[12px] rounded-full bg-muted-foreground/15 border-2 border-background z-10" />
+                                <span className="text-[11px] text-muted-foreground/40">
+                                    All {allPRs.length} merged PRs loaded
+                                </span>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
-
-            {/* Selected PR detail panel */}
-            <AnimatePresence>
-                {selectedPR && (
-                    <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="shrink-0 overflow-hidden border-t border-border/20"
-                    >
-                        <div className="px-6 py-4 bg-secondary/10">
-                            <div className="max-w-4xl mx-auto flex items-start gap-4">
-                                {selectedPR.authorAvatar && (
-                                    <img
-                                        src={selectedPR.authorAvatar}
-                                        alt={selectedPR.authorLogin}
-                                        className="w-10 h-10 rounded-full ring-2 ring-border/20 shrink-0"
-                                    />
-                                )}
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-sm font-semibold truncate">{selectedPR.title}</span>
-                                        <Badge variant="outline" className="text-[9px] shrink-0">
-                                            #{selectedPR.number}
-                                        </Badge>
-                                    </div>
-                                    <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
-                                        <span className="flex items-center gap-1">
-                                            <User className="w-3 h-3" />
-                                            {selectedPR.authorLogin}
-                                        </span>
-                                        <span>→</span>
-                                        <span className="flex items-center gap-1">
-                                            <GitBranch className="w-3 h-3" />
-                                            <code className="text-[10px] px-1 py-0.5 rounded bg-secondary/30">{selectedPR.headBranch}</code>
-                                            → <code className="text-[10px] px-1 py-0.5 rounded bg-secondary/30">{selectedPR.baseBranch}</code>
-                                        </span>
-                                        <span>•</span>
-                                        <span>{new Date(selectedPR.mergedAt).toLocaleDateString()}</span>
-                                        {selectedPR.mergedByLogin && (
-                                            <>
-                                                <span>•</span>
-                                                <span>merged by {selectedPR.mergedByLogin}</span>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                                <a
-                                    href={selectedPR.htmlUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-secondary/30 border border-border/20 hover:bg-secondary/50 transition-colors"
-                                >
-                                    <ExternalLink className="w-3 h-3" />
-                                    View on GitHub
-                                </a>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
 
             {/* Load more bar */}
             {hasMore && (
                 <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-2.5">
-                    <div className="max-w-4xl mx-auto flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">
-                            <GitPullRequest className="w-3 h-3 inline mr-1" />
+                    <div className="max-w-3xl mx-auto flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                            <GitPullRequest className="w-3.5 h-3.5" />
                             {allPRs.length} merged PRs loaded
                         </span>
                         <Button
