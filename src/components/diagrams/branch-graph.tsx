@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import MergeGraph from "./merge-graph";
+import GitRailGraph from "./git-rail-graph";
 import type { Branch, Commit, MergedPR } from "@/types";
 
 const branchColors = [
@@ -240,7 +240,7 @@ export default function BranchGraph({
 
             {view === "graph" ? (
                 <div className="flex-1 overflow-hidden">
-                    <MergeGraph
+                    <GitRailGraph
                         mergedPRs={mergedPRs}
                         defaultBranch={defaultBranch}
                         owner={owner}
