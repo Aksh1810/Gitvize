@@ -104,51 +104,138 @@ function GraphView({ contributors }: { contributors: Contributor[] }) {
     const { nodes, edges } = useMemo(() => {
         const count = Math.min(contributors.length, 30);
         const sorted = contributors.slice(0, count);
+        const maxContrib = sorted[0]?.contributions ?? 1;
 
-        const rawNodes: Node[] = sorted.map((c) => ({
-            id: c.login,
-            type: "contributor",
-            position: { x: 0, y: 0 },
-            data: {
-                login: c.login,
-                avatarUrl: c.avatarUrl,
-                contributions: c.contributions,
-                htmlUrl: c.htmlUrl,
-                color: "rgba(34, 211, 238, 0.5)",
-            } satisfies ContributorNodeData & { color: string },
-        }));
+        // Color palette per tier
+        const tierColors = [
+            "#f59e0b", // 1st — gold
+            "#22d3ee", // 2-3 — cyan
+            "#22d3ee",
+            "#6366f1", // 4-6 — indigo
+            "#6366f1",
+            "#6366f1",
+            "#a855f7", // 7-10 — purple
+            "#a855f7",
+            "#a855f7",
+            "#a855f7",
+        ];
 
-        // Connect contributors with similar contribution levels
-        const rawEdges: Edge[] = [];
-        const top = sorted.slice(0, 15);
+        // Calculate node sizes: top contributor = 90px, smallest = 40px
+        const getSize = (contributions: number) => {
+            const ratio = contributions / maxContrib;
+            return Math.max(40, Math.round(ratio * 90));
+        };
 
-        for (let i = 0; i < top.length; i++) {
-            for (let j = i + 1; j < top.length; j++) {
-                const ratio =
-                    Math.min(top[i].contributions, top[j].contributions) /
-                    Math.max(top[i].contributions, top[j].contributions);
+        // Position nodes in concentric rings
+        const rawNodes: Node[] = [];
+        const centerX = 400;
+        const centerY = 300;
 
-                if (ratio > 0.3 || (i < 3 && j < 3)) {
-                    rawEdges.push({
-                        id: `${top[i].login}-${top[j].login}`,
-                        source: top[i].login,
-                        target: top[j].login,
-                        style: {
-                            stroke: `rgba(34, 211, 238, ${Math.min(ratio * 0.3, 0.2)})`,
-                            strokeWidth: Math.max(1, ratio * 3),
-                        },
-                    });
-                }
-            }
+        // Place #1 at center
+        if (sorted.length > 0) {
+            rawNodes.push({
+                id: sorted[0].login,
+                type: "contributor",
+                position: { x: centerX - 45, y: centerY - 50 },
+                data: {
+                    login: sorted[0].login,
+                    avatarUrl: sorted[0].avatarUrl,
+                    contributions: sorted[0].contributions,
+                    htmlUrl: sorted[0].htmlUrl,
+                    color: tierColors[0],
+                    size: getSize(sorted[0].contributions),
+                    rank: 1,
+                } satisfies ContributorNodeData & { color: string; size: number; rank: number },
+            });
         }
 
-        return getLayoutedElements(rawNodes, rawEdges, {
-            direction: "TB",
-            nodeWidth: 130,
-            nodeHeight: 110,
-            rankSep: 150,
-            nodeSep: 100,
+        // Ring 1: positions 2-7 (up to 6 nodes)
+        const ring1 = sorted.slice(1, 7);
+        const ring1Radius = 180;
+        ring1.forEach((c, i) => {
+            const angle = (2 * Math.PI * i) / ring1.length - Math.PI / 2;
+            const size = getSize(c.contributions);
+            rawNodes.push({
+                id: c.login,
+                type: "contributor",
+                position: {
+                    x: centerX + Math.cos(angle) * ring1Radius - size / 2,
+                    y: centerY + Math.sin(angle) * ring1Radius - size / 2,
+                },
+                data: {
+                    login: c.login,
+                    avatarUrl: c.avatarUrl,
+                    contributions: c.contributions,
+                    htmlUrl: c.htmlUrl,
+                    color: tierColors[Math.min(i + 1, tierColors.length - 1)],
+                    size,
+                    rank: i + 2,
+                } satisfies ContributorNodeData & { color: string; size: number; rank: number },
+            });
         });
+
+        // Ring 2: positions 8-19 (up to 12 nodes)
+        const ring2 = sorted.slice(7, 19);
+        const ring2Radius = 330;
+        ring2.forEach((c, i) => {
+            const angle = (2 * Math.PI * i) / ring2.length - Math.PI / 2 + Math.PI / ring2.length;
+            const size = getSize(c.contributions);
+            rawNodes.push({
+                id: c.login,
+                type: "contributor",
+                position: {
+                    x: centerX + Math.cos(angle) * ring2Radius - size / 2,
+                    y: centerY + Math.sin(angle) * ring2Radius - size / 2,
+                },
+                data: {
+                    login: c.login,
+                    avatarUrl: c.avatarUrl,
+                    contributions: c.contributions,
+                    htmlUrl: c.htmlUrl,
+                    color: "#8b5cf6",
+                    size,
+                    rank: i + 8,
+                } satisfies ContributorNodeData & { color: string; size: number; rank: number },
+            });
+        });
+
+        // Ring 3: positions 20-30
+        const ring3 = sorted.slice(19, 30);
+        const ring3Radius = 470;
+        ring3.forEach((c, i) => {
+            const angle = (2 * Math.PI * i) / ring3.length - Math.PI / 2;
+            const size = getSize(c.contributions);
+            rawNodes.push({
+                id: c.login,
+                type: "contributor",
+                position: {
+                    x: centerX + Math.cos(angle) * ring3Radius - size / 2,
+                    y: centerY + Math.sin(angle) * ring3Radius - size / 2,
+                },
+                data: {
+                    login: c.login,
+                    avatarUrl: c.avatarUrl,
+                    contributions: c.contributions,
+                    htmlUrl: c.htmlUrl,
+                    color: "#64748b",
+                    size,
+                    rank: i + 20,
+                } satisfies ContributorNodeData & { color: string; size: number; rank: number },
+            });
+        });
+
+        // Subtle connecting lines from center to ring 1 only
+        const rawEdges: Edge[] = ring1.map((c) => ({
+            id: `${sorted[0].login}-${c.login}`,
+            source: sorted[0].login,
+            target: c.login,
+            style: {
+                stroke: "rgba(34, 211, 238, 0.08)",
+                strokeWidth: 1,
+            },
+        }));
+
+        return { nodes: rawNodes, edges: rawEdges };
     }, [contributors]);
 
     return (
@@ -156,7 +243,7 @@ function GraphView({ contributors }: { contributors: Contributor[] }) {
             initialNodes={nodes}
             initialEdges={edges}
             nodeTypes={nodeTypes}
-            fitViewOptions={{ padding: 0.3, maxZoom: 1.2 }}
+            fitViewOptions={{ padding: 0.2, maxZoom: 1.5 }}
         />
     );
 }

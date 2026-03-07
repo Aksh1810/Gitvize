@@ -60,6 +60,19 @@ export interface Commit {
   branch?: string;
 }
 
+export interface MergedPR {
+  number: number;
+  title: string;
+  headBranch: string;
+  baseBranch: string;
+  mergedAt: string;
+  authorLogin: string;
+  authorAvatar: string | null;
+  mergedByLogin: string | null;
+  mergedByAvatar: string | null;
+  htmlUrl: string;
+}
+
 export interface LanguageStats {
   [language: string]: number;
 }

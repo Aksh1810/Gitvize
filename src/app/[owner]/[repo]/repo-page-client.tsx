@@ -22,6 +22,7 @@ import type {
     Contributor,
     Branch,
     Commit,
+    MergedPR,
     LanguageStats,
     ArchitectureAnalysis,
     FileAnnotation,
@@ -43,6 +44,7 @@ interface RepoData {
     readme: string;
     languages: LanguageStats;
     dependencyFiles: Array<{ filename: string; content: string }>;
+    mergedPRs: MergedPR[];
 }
 
 export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
@@ -335,6 +337,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         defaultBranch={repoData.metadata.defaultBranch}
                                         owner={owner}
                                         repo={repo}
+                                        mergedPRs={repoData.mergedPRs}
                                     />
                                 ) : activeTab === "dependencies" ? (
                                     <DependencyGraph

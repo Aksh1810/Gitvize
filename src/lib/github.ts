@@ -8,6 +8,7 @@ import type {
     Contributor,
     Branch,
     Commit,
+    MergedPR,
     LanguageStats,
 } from "@/types";
 
@@ -178,6 +179,36 @@ export async function fetchCommits(
     }));
 }
 
+// --- Merged Pull Requests ---
+
+export async function fetchMergedPRs(
+    owner: string,
+    repo: string,
+    page: number = 1,
+    token?: string | null
+): Promise<MergedPR[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await ghFetch<any[]>(
+        `/repos/${owner}/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=50&page=${page}`,
+        token
+    );
+
+    return data
+        .filter((pr) => pr.merged_at !== null)
+        .map((pr) => ({
+            number: pr.number,
+            title: pr.title,
+            headBranch: pr.head.ref,
+            baseBranch: pr.base.ref,
+            mergedAt: pr.merged_at,
+            authorLogin: pr.user?.login ?? "unknown",
+            authorAvatar: pr.user?.avatar_url ?? null,
+            mergedByLogin: pr.merged_by?.login ?? null,
+            mergedByAvatar: pr.merged_by?.avatar_url ?? null,
+            htmlUrl: pr.html_url,
+        }));
+}
+
 // --- Languages ---
 
 export async function fetchLanguages(
@@ -254,7 +285,7 @@ export async function fetchAllRepoData(
         fetchLanguages(owner, repo, token).catch(() => ({})),
     ]);
 
-    const [fileTree, branches, commits, readme, dependencyFiles] =
+    const [fileTree, branches, commits, readme, dependencyFiles, mergedPRs] =
         await Promise.all([
             fetchFileTree(owner, repo, metadata.defaultBranch, token).catch(
                 () => null
@@ -267,6 +298,7 @@ export async function fetchAllRepoData(
             ),
             fetchReadme(owner, repo, token).catch(() => ""),
             fetchDependencyFiles(owner, repo, token).catch(() => []),
+            fetchMergedPRs(owner, repo, 1, token).catch(() => []),
         ]);
 
     return {
@@ -278,5 +310,6 @@ export async function fetchAllRepoData(
         readme,
         languages,
         dependencyFiles,
+        mergedPRs,
     };
 }
