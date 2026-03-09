@@ -280,11 +280,18 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <Navbar
                 owner={owner}
                 repo={repo}
-                onRegenerate={() => {
-                    setAnalysis(null);
-                    runAnalysis();
+                onExport={() => {
+                    const dataStr = JSON.stringify(repoData, null, 2);
+                    const blob = new Blob([dataStr], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `${owner}-${repo}-gitviz.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
                 }}
-                isRegenerating={isAnalyzing}
             />
 
             <div className="max-w-[1800px] mx-auto">

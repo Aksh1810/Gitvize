@@ -4,11 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
     GitBranch,
-    RefreshCw,
     Download,
     Share2,
-    ExternalLink,
-    Lock,
+    Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -16,19 +14,13 @@ import { toast } from "sonner";
 interface NavbarProps {
     owner: string;
     repo: string;
-    onRegenerate?: () => void;
-    isRegenerating?: boolean;
     onExport?: () => void;
-    onPrivateRepo?: () => void;
 }
 
 export default function Navbar({
     owner,
     repo,
-    onRegenerate,
-    isRegenerating,
     onExport,
-    onPrivateRepo,
 }: NavbarProps) {
     const router = useRouter();
 
@@ -74,29 +66,6 @@ export default function Navbar({
                     <Button
                         variant="ghost"
                         size="sm"
-                        onClick={onPrivateRepo}
-                        className="text-muted-foreground hover:text-foreground hidden sm:flex"
-                    >
-                        <Lock className="w-4 h-4 mr-1.5" />
-                        Private
-                    </Button>
-
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onRegenerate}
-                        disabled={isRegenerating}
-                        className="text-muted-foreground hover:text-foreground"
-                    >
-                        <RefreshCw
-                            className={`w-4 h-4 mr-1.5 ${isRegenerating ? "animate-spin" : ""}`}
-                        />
-                        <span className="hidden sm:inline">Regenerate</span>
-                    </Button>
-
-                    <Button
-                        variant="ghost"
-                        size="sm"
                         onClick={onExport}
                         className="text-muted-foreground hover:text-foreground"
                     >
@@ -115,7 +84,7 @@ export default function Navbar({
                     </Button>
 
                     <a
-                        href={`https://github.com/${owner}/${repo}`}
+                        href="https://github.com/Aksh1810/Gitviz"
                         target="_blank"
                         rel="noopener noreferrer"
                     >
@@ -124,8 +93,8 @@ export default function Navbar({
                             size="sm"
                             className="text-muted-foreground hover:text-foreground"
                         >
-                            <ExternalLink className="w-4 h-4 mr-1.5" />
-                            <span className="hidden sm:inline">GitHub</span>
+                            <Star className="w-4 h-4 mr-1.5" />
+                            <span className="hidden sm:inline">Star GitViz</span>
                         </Button>
                     </a>
                 </div>

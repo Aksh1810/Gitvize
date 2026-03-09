@@ -72,7 +72,7 @@ export default function BranchGraph({
     repo,
     mergedPRs,
 }: BranchGraphProps) {
-    const [view, setView] = useState<"graph" | "timeline">("graph");
+    const [view, setView] = useState<"graph" | "timeline">(mergedPRs.length === 0 ? "timeline" : "graph");
     const [showAllBranches, setShowAllBranches] = useState(false);
     const [selectedCommit, setSelectedCommit] = useState<Commit | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
