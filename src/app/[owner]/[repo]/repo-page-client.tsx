@@ -365,7 +365,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         <RepoOverview
                             metadata={repoData.metadata}
                             analysis={analysis?.architecture}
-                            owner={owner}
                             repo={repo}
                         />
 

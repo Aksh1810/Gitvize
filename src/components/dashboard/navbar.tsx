@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
     GitBranch,
     Download,
@@ -22,8 +21,6 @@ export default function Navbar({
     repo,
     onExport,
 }: NavbarProps) {
-    const router = useRouter();
-
     const handleShare = () => {
         const url = `${window.location.origin}/${owner}/${repo}`;
         navigator.clipboard.writeText(url).then(() => {
@@ -51,12 +48,14 @@ export default function Navbar({
 
                 {/* Breadcrumb */}
                 <div className="flex items-center gap-1.5 text-sm">
-                    <button
-                        onClick={() => router.push(`/${owner}`)}
+                    <a
+                        href={`https://github.com/${owner}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-muted-foreground hover:text-foreground transition-colors"
                     >
                         {owner}
-                    </button>
+                    </a>
                     <span className="text-muted-foreground/50">/</span>
                     <span className="text-foreground font-medium">{repo}</span>
                 </div>
