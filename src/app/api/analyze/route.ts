@@ -12,7 +12,10 @@ export async function POST(request: NextRequest) {
             tree: TreeItem[];
             readme: string;
             aiSettings?: { provider: string; apiKey: string; model: string };
+            forceFallback?: boolean;
         };
+
+        const forceFallback = Boolean((body as { forceFallback?: boolean }).forceFallback);
 
         if (!owner || !repo || !tree) {
             return NextResponse.json(
@@ -21,10 +24,22 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Check if AI is configured — via client settings OR env var
+        // Check if AI is configured — via client settings, GEMINI key, or generic env var
         const clientKey = aiSettings?.apiKey;
+        const geminiKey = process.env.GEMINI_API_KEY;
+        const geminiKeys = process.env.GEMINI_API_KEYS;
         const envKey = process.env.AI_API_KEY;
-        const hasAI = !!(clientKey || envKey);
+        const hasAI = !!(clientKey || geminiKey || geminiKeys || envKey);
+
+        if (forceFallback) {
+            const result = getMockAnalysis(owner, repo, tree);
+            return NextResponse.json({
+                ...result,
+                generatedAt: new Date().toISOString(),
+                mock: true,
+                source: "fallback",
+            });
+        }
 
         if (hasAI) {
             // Build AI config from client settings (preferred) or env vars
@@ -79,7 +94,9 @@ export async function POST(request: NextRequest) {
                                 `data: ${JSON.stringify({
                                     step: "enrich",
                                     status: "complete",
-                                    message: "Analysis complete",
+                                    message: result.source === "ai"
+                                        ? "Analysis complete"
+                                        : `AI fallback: ${result.fallbackReason ?? "AI unavailable, using fallback diagram"}`,
                                     data: result,
                                 })}\n\n`
                             )
@@ -135,6 +152,7 @@ export async function POST(request: NextRequest) {
                 ...result,
                 generatedAt: new Date().toISOString(),
                 mock: true,
+                source: "fallback",
             });
         }
     } catch (error) {

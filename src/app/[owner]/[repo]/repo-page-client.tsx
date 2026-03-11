@@ -15,6 +15,8 @@ import DependencyGraph from "@/components/diagrams/dependency-graph";
 import LanguageDonut from "@/components/charts/language-donut";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
+import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
 import type {
     DiagramTab,
     RepoMetadata,
@@ -104,9 +106,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         }
     }, [owner, repo, getToken]);
 
-    // Run AI analysis
+    // Run AI analysis — always attempt AI on each load/refresh.
     const runAnalysis = useCallback(async () => {
         if (!repoData?.fileTree) return;
+
+        const cached = getCachedDiagram(owner, repo);
 
         setIsAnalyzing(true);
         setPipelineSteps([
@@ -140,9 +144,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             const contentType = res.headers.get("content-type");
 
             if (contentType?.includes("text/event-stream")) {
-                // Handle SSE streaming
+                // Handle SSE streaming (AI mode)
                 const reader = res.body?.getReader();
                 const decoder = new TextDecoder();
+                let analysisResult: {
+                    architecture: ArchitectureAnalysis;
+                    annotations: FileAnnotation[];
+                    source?: "ai" | "fallback";
+                    fallbackReason?: string;
+                } | null = null;
 
                 if (reader) {
                     let buffer = "";
@@ -165,6 +175,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                     );
 
                                     if (event.data) {
+                                        analysisResult = event.data;
                                         setAnalysis(event.data);
                                     }
                                 } catch {
@@ -174,20 +185,48 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         }
                     }
                 }
+
+                // Cache result for failure recovery and notify source.
+                if (analysisResult) {
+                    const source = analysisResult.source ?? "ai";
+                    if (source === "ai") {
+                        cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "ai");
+                        toast.success("AI architecture generated", {
+                            description: "Generated a fresh diagram for this repository",
+                        });
+                    } else {
+                        cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback");
+                        toast.warning("AI fallback diagram", {
+                            description: analysisResult.fallbackReason
+                                ? analysisResult.fallbackReason.slice(0, 180)
+                                : "AI unavailable, generated fallback diagram",
+                        });
+                    }
+                }
             } else {
                 // Handle JSON response (mock mode)
                 const data = await res.json();
                 if (data.error) throw new Error(data.error);
 
+                const result = {
+                    architecture: data.architecture,
+                    annotations: data.annotations,
+                };
+
                 setPipelineSteps([
                     { step: "ingest", status: "complete", message: "Data ingested" },
                     { step: "understand", status: "complete", message: "Analysis complete" },
-                    { step: "enrich", status: "complete", message: data.mock ? "Mock analysis (no AI key)" : "Enrichment complete" },
+                    { step: "enrich", status: "complete", message: data.mock ? "Fallback diagram (no AI)" : "Enrichment complete" },
                 ]);
-                setAnalysis({
-                    architecture: data.architecture,
-                    annotations: data.annotations,
-                });
+                setAnalysis(result);
+
+                // Cache even fallback so revisits are instant
+                cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai");
+                if (!data.mock) {
+                    toast.success("AI architecture generated", {
+                        description: "Generated a fresh diagram for this repository",
+                    });
+                }
             }
         } catch (err) {
             setPipelineSteps((prev) =>
@@ -197,6 +236,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         : s
                 )
             );
+            // If AI failed, try serving from cache
+            if (cached) {
+                setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
+                toast.warning("AI analysis failed, showing cached diagram");
+            }
         } finally {
             setIsAnalyzing(false);
         }
