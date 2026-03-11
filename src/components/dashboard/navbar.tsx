@@ -6,6 +6,7 @@ import {
     Download,
     Share2,
     Star,
+    Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -14,12 +15,14 @@ interface NavbarProps {
     owner: string;
     repo: string;
     onExport?: () => void;
+    onAISettings?: () => void;
 }
 
 export default function Navbar({
     owner,
     repo,
     onExport,
+    onAISettings,
 }: NavbarProps) {
     const handleShare = () => {
         const url = `${window.location.origin}/${owner}/${repo}`;
@@ -62,6 +65,16 @@ export default function Navbar({
 
                 {/* Actions */}
                 <div className="flex items-center gap-1.5">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onAISettings}
+                        className="text-muted-foreground hover:text-foreground"
+                    >
+                        <Sparkles className="w-4 h-4 mr-1.5" />
+                        <span className="hidden sm:inline">AI Key</span>
+                    </Button>
+
                     <Button
                         variant="ghost"
                         size="sm"

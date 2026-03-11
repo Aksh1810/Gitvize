@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "@/components/dashboard/navbar";
 import TabNav from "@/components/dashboard/tab-nav";
 import RepoOverview from "@/components/dashboard/repo-overview";
+import AISettingsModal, { loadAISettings } from "@/components/dashboard/ai-settings-modal";
 import PipelineStatusDisplay from "@/components/dashboard/pipeline-status";
 import ArchitectureDiagram from "@/components/diagrams/architecture-diagram";
 import FileTreeGraph from "@/components/diagrams/file-tree-graph";
@@ -70,6 +71,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         { step: "enrich", status: "pending", message: "Waiting..." },
     ]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [aiSettingsOpen, setAISettingsOpen] = useState(false);
+    const [hasUserAIKey, setHasUserAIKey] = useState(false);
 
     // Get PAT from localStorage
     const getToken = useCallback((): string | null => {
@@ -106,8 +109,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         }
     }, [owner, repo, getToken]);
 
-    // Run AI analysis — always attempt AI on each load/refresh.
-    const runAnalysis = useCallback(async () => {
+    const runAnalysis = useCallback(async (mode: "smart" | "premium" = "smart") => {
         if (!repoData?.fileTree) return;
 
         const cached = getCachedDiagram(owner, repo);
@@ -133,6 +135,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    mode,
                     owner,
                     repo,
                     tree: repoData.fileTree.tree,
@@ -144,7 +147,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             const contentType = res.headers.get("content-type");
 
             if (contentType?.includes("text/event-stream")) {
-                // Handle SSE streaming (AI mode)
+                // Handle SSE streaming (premium AI mode)
                 const reader = res.body?.getReader();
                 const decoder = new TextDecoder();
                 let analysisResult: {
@@ -152,6 +155,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     annotations: FileAnnotation[];
                     source?: "ai" | "fallback";
                     fallbackReason?: string;
+                    mode?: "smart" | "premium";
                 } | null = null;
 
                 if (reader) {
@@ -191,20 +195,27 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     const source = analysisResult.source ?? "ai";
                     if (source === "ai") {
                         cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "ai");
-                        toast.success("AI architecture generated", {
+                        toast.success("Premium AI diagram generated", {
                             description: "Generated a fresh diagram for this repository",
                         });
                     } else {
-                        cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback");
-                        toast.warning("AI fallback diagram", {
-                            description: analysisResult.fallbackReason
-                                ? analysisResult.fallbackReason.slice(0, 180)
-                                : "AI unavailable, generated fallback diagram",
-                        });
+                        if (cached) {
+                            setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
+                            toast.warning("Premium AI unavailable", {
+                                description: "Showing cached diagram",
+                            });
+                        } else {
+                            cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback");
+                            toast.warning("Premium AI unavailable", {
+                                description: analysisResult.fallbackReason
+                                    ? analysisResult.fallbackReason.slice(0, 180)
+                                    : "Showing smart diagram",
+                            });
+                        }
                     }
                 }
             } else {
-                // Handle JSON response (mock mode)
+                // Handle JSON response (smart mode or premium fallback mode)
                 const data = await res.json();
                 if (data.error) throw new Error(data.error);
 
@@ -215,17 +226,22 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                 setPipelineSteps([
                     { step: "ingest", status: "complete", message: "Data ingested" },
-                    { step: "understand", status: "complete", message: "Analysis complete" },
-                    { step: "enrich", status: "complete", message: data.mock ? "Fallback diagram (no AI)" : "Enrichment complete" },
+                    { step: "understand", status: "complete", message: data.mode === "smart" ? "Smart analysis complete" : "Analysis complete" },
+                    { step: "enrich", status: "complete", message: data.mode === "smart" ? "Smart diagram ready" : (data.mock ? "Fallback diagram (no AI)" : "Enrichment complete") },
                 ]);
                 setAnalysis(result);
 
-                // Cache even fallback so revisits are instant
-                cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai");
-                if (!data.mock) {
-                    toast.success("AI architecture generated", {
-                        description: "Generated a fresh diagram for this repository",
+                if (data.mode === "smart") {
+                    toast.success("Smart diagram generated", {
+                        description: "Default architecture mode (no key required)",
                     });
+                } else {
+                    cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai");
+                    if (!data.mock) {
+                        toast.success("Premium AI diagram generated", {
+                            description: "Generated a fresh diagram for this repository",
+                        });
+                    }
                 }
             }
         } catch (err) {
@@ -237,7 +253,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 )
             );
             // If AI failed, try serving from cache
-            if (cached) {
+            if (mode === "premium" && cached) {
                 setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
                 toast.warning("AI analysis failed, showing cached diagram");
             }
@@ -251,12 +267,17 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         fetchData();
     }, [fetchData]);
 
-    // Auto-run analysis when data loads
+    // Auto-run smart analysis when data loads
     useEffect(() => {
         if (repoData && !analysis && !isAnalyzing) {
-            runAnalysis();
+            runAnalysis("smart");
         }
     }, [repoData, analysis, isAnalyzing, runAnalysis]);
+
+    useEffect(() => {
+        const settings = loadAISettings();
+        setHasUserAIKey(Boolean(settings?.apiKey));
+    }, [aiSettingsOpen]);
 
     // Tab change updates URL
     const handleTabChange = useCallback(
@@ -324,6 +345,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <Navbar
                 owner={owner}
                 repo={repo}
+                onAISettings={() => setAISettingsOpen(true)}
                 onExport={() => {
                     const dataStr = JSON.stringify(repoData, null, 2);
                     const blob = new Blob([dataStr], { type: "application/json" });
@@ -353,6 +375,23 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 transition={{ duration: 0.2 }}
                                 className="h-full glass-card overflow-hidden rounded-xl overscroll-contain"
                             >
+                                {activeTab === "architecture" && (
+                                    <div className="flex items-center justify-end gap-2 px-3 py-2 border-b border-border/20">
+                                        <button
+                                            onClick={() => {
+                                                if (!hasUserAIKey) {
+                                                    setAISettingsOpen(true);
+                                                    toast.info("Add your API key for premium diagrams");
+                                                    return;
+                                                }
+                                                runAnalysis("premium");
+                                            }}
+                                            className="text-xs px-3 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                                        >
+                                            Generate Premium Diagram
+                                        </button>
+                                    </div>
+                                )}
                                 {activeTab === "architecture" && analysis ? (
                                     <ArchitectureDiagram
                                         analysis={analysis.architecture}
@@ -423,6 +462,17 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     </div>
                 </div>
             </div>
+
+            <AISettingsModal
+                open={aiSettingsOpen}
+                onOpenChange={setAISettingsOpen}
+                onSave={() => {
+                    setHasUserAIKey(true);
+                    toast.success("AI key saved", {
+                        description: "You can now generate premium architecture diagrams",
+                    });
+                }}
+            />
         </div>
     );
 }

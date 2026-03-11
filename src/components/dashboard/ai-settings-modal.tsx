@@ -112,7 +112,14 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
         onOpenChange(false);
     };
 
-    const isValid = apiKey.length > 10;
+    const isValid = (() => {
+        const key = apiKey.trim();
+        if (key.length < 12) return false;
+        if (provider === "gemini") return key.startsWith("AIza");
+        if (provider === "openai") return key.startsWith("sk-");
+        if (provider === "anthropic") return key.startsWith("sk-ant-");
+        return true;
+    })();
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -123,7 +130,8 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                         AI Settings
                     </DialogTitle>
                     <DialogDescription>
-                        Choose your LLM provider and enter your API key to generate intelligent architecture diagrams.
+                        Smart architecture diagrams work by default without any key.
+                        Add your API key only if you want Premium AI diagram generation.
                         Your key is stored locally in your browser only.
                     </DialogDescription>
                 </DialogHeader>
