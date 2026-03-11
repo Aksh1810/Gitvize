@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
             repo: string;
             tree: TreeItem[];
             readme: string;
-            aiSettings?: { provider: string; apiKey: string; model: string };
+            aiSettings?: { provider: string; apiKey: string; model?: string };
             forceFallback?: boolean;
             mode?: "smart" | "premium";
         };
@@ -62,7 +62,11 @@ export async function POST(request: NextRequest) {
                 ? {
                     provider: aiSettings!.provider,
                     apiKey: clientKey,
-                    model: aiSettings!.model,
+                    model: aiSettings!.model ?? (aiSettings!.provider === "gemini"
+                        ? "gemini-2.0-flash"
+                        : aiSettings!.provider === "anthropic"
+                            ? "claude-3-5-sonnet-20241022"
+                            : "gpt-4o-mini"),
                 }
                 : undefined; // will use env var defaults
 

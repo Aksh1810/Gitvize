@@ -375,23 +375,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 transition={{ duration: 0.2 }}
                                 className="h-full glass-card overflow-hidden rounded-xl overscroll-contain"
                             >
-                                {activeTab === "architecture" && (
-                                    <div className="flex items-center justify-end gap-2 px-3 py-2 border-b border-border/20">
-                                        <button
-                                            onClick={() => {
-                                                if (!hasUserAIKey) {
-                                                    setAISettingsOpen(true);
-                                                    toast.info("Add your API key for premium diagrams");
-                                                    return;
-                                                }
-                                                runAnalysis("premium");
-                                            }}
-                                            className="text-xs px-3 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-colors"
-                                        >
-                                            Generate Premium Diagram
-                                        </button>
-                                    </div>
-                                )}
                                 {activeTab === "architecture" && analysis ? (
                                     <ArchitectureDiagram
                                         analysis={analysis.architecture}
@@ -453,6 +436,27 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                         {Object.keys(repoData.languages).length > 0 && (
                             <LanguageDonut languages={repoData.languages} />
+                        )}
+
+                        {activeTab === "architecture" && (
+                            <div className="glass-card p-3 border border-border/40">
+                                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                                    Premium Diagram
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        if (!hasUserAIKey) {
+                                            setAISettingsOpen(true);
+                                            toast.info("Add your API key for premium diagrams");
+                                            return;
+                                        }
+                                        runAnalysis("premium");
+                                    }}
+                                    className="w-full text-xs px-3 py-2 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                                >
+                                    Generate Premium Diagram
+                                </button>
+                            </div>
                         )}
 
                         {/* Pipeline Status (compact) */}
