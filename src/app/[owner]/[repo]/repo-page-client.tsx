@@ -232,9 +232,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 setAnalysis(result);
 
                 if (data.mode === "smart") {
-                    toast.success("Smart diagram generated", {
-                        description: "Default architecture mode (no key required)",
-                    });
+                    // Keep smart-mode generation silent on first load to avoid noisy UI.
                 } else {
                     cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai");
                     if (!data.mock) {
