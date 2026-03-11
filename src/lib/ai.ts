@@ -14,12 +14,53 @@ export interface AIConfig {
     baseUrl?: string;
 }
 
+function getGeminiKeyPool(): string[] {
+    const keys = new Set<string>();
+
+    const csv = process.env.GEMINI_API_KEYS ?? "";
+    csv
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean)
+        .forEach((k) => keys.add(k));
+
+    const single = process.env.GEMINI_API_KEY?.trim();
+    if (single) keys.add(single);
+
+    return Array.from(keys);
+}
+
+function shouldTryNextGeminiKey(message: string): boolean {
+    const msg = message.toLowerCase();
+    return (
+        msg.includes("429") ||
+        msg.includes("403") ||
+        msg.includes("resource_exhausted") ||
+        msg.includes("rate") ||
+        msg.includes("quota") ||
+        msg.includes("api key") ||
+        msg.includes("invalid")
+    );
+}
+
+let geminiRequestCursor = 0;
+
+function getRoundRobinGeminiPool(basePool: string[]): string[] {
+    if (basePool.length <= 1) return basePool;
+    const start = geminiRequestCursor % basePool.length;
+    geminiRequestCursor = (geminiRequestCursor + 1) % basePool.length;
+    return [...basePool.slice(start), ...basePool.slice(0, start)];
+}
+
 function getDefaultConfig(): AIConfig {
-    const provider = process.env.AI_PROVIDER ?? "openai";
+    // Prefer dedicated Gemini key pool, then generic AI key.
+    const geminiKey = getGeminiKeyPool()[0];
+    const genericKey = process.env.AI_API_KEY;
+    const provider = geminiKey ? "gemini" : (process.env.AI_PROVIDER ?? "openai");
     return {
         provider,
-        apiKey: process.env.AI_API_KEY ?? "",
-        model: process.env.AI_MODEL ?? "gpt-4o",
+        apiKey: geminiKey || genericKey || "",
+        model: geminiKey ? "gemini-2.0-flash" : (process.env.AI_MODEL ?? "gpt-4o"),
         baseUrl:
             process.env.AI_BASE_URL ??
             (provider === "anthropic"
@@ -38,10 +79,67 @@ async function aiCompletion(
     jsonMode: boolean = true,
     config?: AIConfig
 ): Promise<string> {
+    const cfg = config ?? getDefaultConfig();
+
+    // Gemini: rotate keys when using server-side env keys.
+    if (cfg.provider === "gemini") {
+        const basePool = config?.apiKey
+            ? [config.apiKey]
+            : getGeminiKeyPool().length > 0
+                ? getGeminiKeyPool()
+                : cfg.apiKey
+                    ? [cfg.apiKey]
+                    : [];
+
+        const pool = getRoundRobinGeminiPool(basePool);
+
+        if (pool.length === 0) {
+            throw new Error("Gemini API key is not configured. Set GEMINI_API_KEY or GEMINI_API_KEYS.");
+        }
+
+        let lastErr: unknown = null;
+
+        for (let keyIdx = 0; keyIdx < pool.length; keyIdx++) {
+            const key = pool[keyIdx];
+            const maxRetries = 1;
+
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    return await aiCompletionInner(systemPrompt, userPrompt, jsonMode, {
+                        ...cfg,
+                        provider: "gemini",
+                        apiKey: key,
+                    });
+                } catch (err) {
+                    lastErr = err;
+                    const msg = err instanceof Error ? err.message : String(err);
+
+                    if (msg.includes("429") && attempt < maxRetries) {
+                        const delay = 5_000;
+                        console.log(`Gemini rate limited (429), retrying same key in ${delay / 1000}s...`);
+                        await new Promise((r) => setTimeout(r, delay));
+                        continue;
+                    }
+
+                    if (shouldTryNextGeminiKey(msg) && keyIdx < pool.length - 1) {
+                        console.warn(`Gemini key ${keyIdx + 1}/${pool.length} failed; trying next key.`);
+                        break;
+                    }
+
+                    throw err;
+                }
+            }
+        }
+
+        throw (lastErr instanceof Error
+            ? lastErr
+            : new Error("Gemini completion failed across all configured keys"));
+    }
+
     const maxRetries = 1;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            return await aiCompletionInner(systemPrompt, userPrompt, jsonMode, config);
+            return await aiCompletionInner(systemPrompt, userPrompt, jsonMode, cfg);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             if (msg.includes("429") && attempt < maxRetries) {
@@ -383,7 +481,7 @@ export async function analyzeRepository(
     readme: string,
     onProgress?: (step: string, message: string) => void,
     aiConfig?: AIConfig
-): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[] }> {
+): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[]; source: "ai" | "fallback"; fallbackReason?: string }> {
     try {
         // Step 1: Understand — analyze the codebase
         onProgress?.("understand", "Analyzing codebase architecture with AI...");
@@ -464,12 +562,16 @@ export async function analyzeRepository(
             annotations = [];
         }
 
-        return { architecture, annotations };
+        return { architecture, annotations, source: "ai" };
     } catch (err) {
         // ALL AI failed — fall back to mock analysis entirely
         console.error("AI pipeline failed entirely, using mock analysis:", err);
         onProgress?.("enrich", "AI unavailable, generating fallback diagram...");
-        return getMockAnalysis(owner, repo, tree);
+        return {
+            ...getMockAnalysis(owner, repo, tree),
+            source: "fallback",
+            fallbackReason: err instanceof Error ? err.message : String(err),
+        };
     }
 }
 

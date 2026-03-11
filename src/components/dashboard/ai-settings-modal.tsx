@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Check, Eye, EyeOff, Sparkles } from "lucide-react";
+import { Eye, EyeOff, Sparkles } from "lucide-react";
 
 export interface AISettings {
     provider: "openai" | "anthropic" | "gemini";
@@ -21,38 +21,25 @@ export interface AISettings {
     model: string;
 }
 
-const PROVIDERS = [
-    {
-        id: "openai" as const,
-        name: "OpenAI",
-        description: "GPT-4o, GPT-4o-mini",
-        defaultModel: "gpt-4o-mini",
-        models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-        keyPrefix: "sk-",
-        keyPlaceholder: "sk-...",
-        docsUrl: "https://platform.openai.com/api-keys",
-    },
-    {
-        id: "anthropic" as const,
-        name: "Anthropic",
-        description: "Claude 3.5 Sonnet, Haiku",
-        defaultModel: "claude-3-5-sonnet-20241022",
-        models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
-        keyPrefix: "sk-ant-",
-        keyPlaceholder: "sk-ant-...",
-        docsUrl: "https://console.anthropic.com/settings/keys",
-    },
-    {
-        id: "gemini" as const,
-        name: "Google Gemini",
-        description: "Gemini 2.0 Flash, Pro",
-        defaultModel: "gemini-2.0-flash",
-        models: ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"],
-        keyPrefix: "AI",
-        keyPlaceholder: "AIza...",
-        docsUrl: "https://aistudio.google.com/app/apikey",
-    },
-];
+const PROVIDER_DOCS = {
+    openai: "https://platform.openai.com/api-keys",
+    anthropic: "https://console.anthropic.com/settings/keys",
+    gemini: "https://aistudio.google.com/app/apikey",
+} as const;
+
+function inferProviderAndModel(apiKey: string): { provider: AISettings["provider"]; model: string } | null {
+    const key = apiKey.trim();
+    if (key.startsWith("AIza")) {
+        return { provider: "gemini", model: "gemini-2.0-flash" };
+    }
+    if (key.startsWith("sk-ant-")) {
+        return { provider: "anthropic", model: "claude-3-5-sonnet-20241022" };
+    }
+    if (key.startsWith("sk-")) {
+        return { provider: "openai", model: "gpt-4o-mini" };
+    }
+    return null;
+}
 
 const STORAGE_KEY = "gitviz_ai_settings";
 
@@ -82,91 +69,65 @@ interface AISettingsModalProps {
 }
 
 export default function AISettingsModal({ open, onOpenChange, onSave }: AISettingsModalProps) {
-    const [provider, setProvider] = useState<AISettings["provider"]>("openai");
     const [apiKey, setApiKey] = useState("");
-    const [model, setModel] = useState("gpt-4o-mini");
     const [showKey, setShowKey] = useState(false);
 
     // Load saved settings on mount
     useEffect(() => {
         const saved = loadAISettings();
         if (saved) {
-            setProvider(saved.provider);
             setApiKey(saved.apiKey);
-            setModel(saved.model);
         }
     }, [open]);
 
-    const selectedProvider = PROVIDERS.find((p) => p.id === provider)!;
-
-    const handleProviderChange = (id: AISettings["provider"]) => {
-        setProvider(id);
-        const prov = PROVIDERS.find((p) => p.id === id)!;
-        setModel(prov.defaultModel);
-    };
+    const inferred = inferProviderAndModel(apiKey);
 
     const handleSave = () => {
-        const settings: AISettings = { provider, apiKey, model };
+        if (!inferred) return;
+        const settings: AISettings = {
+            provider: inferred.provider,
+            apiKey,
+            model: inferred.model,
+        };
         saveAISettings(settings);
         onSave(settings);
         onOpenChange(false);
     };
 
-    const isValid = apiKey.length > 10;
+    const isValid = (() => {
+        const key = apiKey.trim();
+        return key.length >= 12 && inferred !== null;
+    })();
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="glass-card border-border/50 sm:max-w-[520px]">
+            <DialogContent className="bg-slate-950/95 border-border/80 shadow-2xl sm:max-w-[560px]">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-lg">
                         <Sparkles className="w-5 h-5 text-indigo-400" />
                         AI Settings
                     </DialogTitle>
                     <DialogDescription>
-                        Choose your LLM provider and enter your API key to generate intelligent architecture diagrams.
+                        Smart architecture diagrams work by default without any key.
+                        Add your API key only if you want Premium AI diagram generation.
                         Your key is stored locally in your browser only.
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-5 py-2">
-                    {/* Provider Selection */}
-                    <div className="space-y-2">
-                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            Provider
-                        </Label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {PROVIDERS.map((p) => (
-                                <button
-                                    key={p.id}
-                                    onClick={() => handleProviderChange(p.id)}
-                                    className={`relative rounded-lg border p-3 text-left transition-all hover:bg-secondary/30 ${provider === p.id
-                                            ? "border-indigo-500/50 bg-indigo-500/10"
-                                            : "border-border/40 bg-secondary/10"
-                                        }`}
-                                >
-                                    {provider === p.id && (
-                                        <Check className="absolute top-2 right-2 w-3.5 h-3.5 text-indigo-400" />
-                                    )}
-                                    <div className="text-sm font-semibold text-foreground">{p.name}</div>
-                                    <div className="text-[10px] text-muted-foreground mt-0.5">{p.description}</div>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
                     {/* API Key */}
-                    <div className="space-y-2">
+                    <div className="space-y-2 rounded-lg border border-border/50 bg-slate-900/70 p-3">
                         <div className="flex items-center justify-between">
                             <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                                 API Key
                             </Label>
                             <a
-                                href={selectedProvider.docsUrl}
+                                href="https://aistudio.google.com/app/apikey"
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[10px] text-indigo-400 hover:underline"
                             >
-                                Get a key →
+                                Get a key (Gemini) →
                             </a>
                         </div>
                         <div className="relative">
@@ -174,8 +135,8 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                                 type={showKey ? "text" : "password"}
                                 value={apiKey}
                                 onChange={(e) => setApiKey(e.target.value)}
-                                placeholder={selectedProvider.keyPlaceholder}
-                                className="pr-10 bg-secondary/20 border-border/40 font-mono text-sm"
+                                placeholder="Paste your API key (AIza... / sk-... / sk-ant-...)"
+                                className="pr-10 bg-slate-950/80 border-border/70 font-mono text-sm"
                             />
                             <button
                                 type="button"
@@ -185,27 +146,34 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                         </div>
+                        <p className="text-[11px] text-muted-foreground">
+                            Provider and model are auto-selected from your key prefix.
+                        </p>
                     </div>
 
-                    {/* Model Selection */}
+                    {/* Inferred Provider/Model */}
                     <div className="space-y-2">
                         <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            Model
+                            Auto-Detected
                         </Label>
-                        <div className="flex flex-wrap gap-2">
-                            {selectedProvider.models.map((m) => (
-                                <button
-                                    key={m}
-                                    onClick={() => setModel(m)}
-                                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition-all ${model === m
-                                            ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"
-                                            : "bg-secondary/20 text-muted-foreground border border-border/30 hover:bg-secondary/40"
-                                        }`}
+                        {inferred ? (
+                            <div className="rounded-lg border border-border/60 bg-slate-900/80 px-3 py-2 text-xs">
+                                <div className="text-foreground font-medium">Provider: {inferred.provider}</div>
+                                <div className="text-muted-foreground mt-1">Model: {inferred.model}</div>
+                                <a
+                                    href={PROVIDER_DOCS[inferred.provider]}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="mt-1 inline-block text-[11px] text-indigo-400 hover:underline"
                                 >
-                                    {m}
-                                </button>
-                            ))}
-                        </div>
+                                    Manage {inferred.provider} keys →
+                                </a>
+                            </div>
+                        ) : (
+                            <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-300">
+                                Key prefix not recognized yet. Use one of: `AIza`, `sk-ant-`, or `sk-`.
+                            </div>
+                        )}
                     </div>
 
                     {/* Status */}

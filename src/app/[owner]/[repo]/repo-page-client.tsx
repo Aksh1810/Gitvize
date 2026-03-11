@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "@/components/dashboard/navbar";
 import TabNav from "@/components/dashboard/tab-nav";
 import RepoOverview from "@/components/dashboard/repo-overview";
+import AISettingsModal, { loadAISettings } from "@/components/dashboard/ai-settings-modal";
 import PipelineStatusDisplay from "@/components/dashboard/pipeline-status";
 import ArchitectureDiagram from "@/components/diagrams/architecture-diagram";
 import FileTreeGraph from "@/components/diagrams/file-tree-graph";
@@ -15,6 +16,8 @@ import DependencyGraph from "@/components/diagrams/dependency-graph";
 import LanguageDonut from "@/components/charts/language-donut";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
+import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
 import type {
     DiagramTab,
     RepoMetadata,
@@ -68,6 +71,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         { step: "enrich", status: "pending", message: "Waiting..." },
     ]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [aiSettingsOpen, setAISettingsOpen] = useState(false);
+    const [hasUserAIKey, setHasUserAIKey] = useState(false);
 
     // Get PAT from localStorage
     const getToken = useCallback((): string | null => {
@@ -104,9 +109,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         }
     }, [owner, repo, getToken]);
 
-    // Run AI analysis
-    const runAnalysis = useCallback(async () => {
+    const runAnalysis = useCallback(async (mode: "smart" | "premium" = "smart") => {
         if (!repoData?.fileTree) return;
+
+        const cached = getCachedDiagram(owner, repo);
 
         setIsAnalyzing(true);
         setPipelineSteps([
@@ -129,6 +135,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    mode,
                     owner,
                     repo,
                     tree: repoData.fileTree.tree,
@@ -140,9 +147,16 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             const contentType = res.headers.get("content-type");
 
             if (contentType?.includes("text/event-stream")) {
-                // Handle SSE streaming
+                // Handle SSE streaming (premium AI mode)
                 const reader = res.body?.getReader();
                 const decoder = new TextDecoder();
+                let analysisResult: {
+                    architecture: ArchitectureAnalysis;
+                    annotations: FileAnnotation[];
+                    source?: "ai" | "fallback";
+                    fallbackReason?: string;
+                    mode?: "smart" | "premium";
+                } | null = null;
 
                 if (reader) {
                     let buffer = "";
@@ -165,6 +179,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                     );
 
                                     if (event.data) {
+                                        analysisResult = event.data;
                                         setAnalysis(event.data);
                                     }
                                 } catch {
@@ -174,20 +189,58 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         }
                     }
                 }
+
+                // Cache result for failure recovery and notify source.
+                if (analysisResult) {
+                    const source = analysisResult.source ?? "ai";
+                    if (source === "ai") {
+                        cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "ai");
+                        toast.success("Premium AI diagram generated", {
+                            description: "Generated a fresh diagram for this repository",
+                        });
+                    } else {
+                        if (cached) {
+                            setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
+                            toast.warning("Premium AI unavailable", {
+                                description: "Showing cached diagram",
+                            });
+                        } else {
+                            cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback");
+                            toast.warning("Premium AI unavailable", {
+                                description: analysisResult.fallbackReason
+                                    ? analysisResult.fallbackReason.slice(0, 180)
+                                    : "Showing smart diagram",
+                            });
+                        }
+                    }
+                }
             } else {
-                // Handle JSON response (mock mode)
+                // Handle JSON response (smart mode or premium fallback mode)
                 const data = await res.json();
                 if (data.error) throw new Error(data.error);
 
-                setPipelineSteps([
-                    { step: "ingest", status: "complete", message: "Data ingested" },
-                    { step: "understand", status: "complete", message: "Analysis complete" },
-                    { step: "enrich", status: "complete", message: data.mock ? "Mock analysis (no AI key)" : "Enrichment complete" },
-                ]);
-                setAnalysis({
+                const result = {
                     architecture: data.architecture,
                     annotations: data.annotations,
-                });
+                };
+
+                setPipelineSteps([
+                    { step: "ingest", status: "complete", message: "Data ingested" },
+                    { step: "understand", status: "complete", message: data.mode === "smart" ? "Smart analysis complete" : "Analysis complete" },
+                    { step: "enrich", status: "complete", message: data.mode === "smart" ? "Smart diagram ready" : (data.mock ? "Fallback diagram (no AI)" : "Enrichment complete") },
+                ]);
+                setAnalysis(result);
+
+                if (data.mode === "smart") {
+                    // Keep smart-mode generation silent on first load to avoid noisy UI.
+                } else {
+                    cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai");
+                    if (!data.mock) {
+                        toast.success("Premium AI diagram generated", {
+                            description: "Generated a fresh diagram for this repository",
+                        });
+                    }
+                }
             }
         } catch (err) {
             setPipelineSteps((prev) =>
@@ -197,6 +250,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         : s
                 )
             );
+            // If AI failed, try serving from cache
+            if (mode === "premium" && cached) {
+                setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
+                toast.warning("AI analysis failed, showing cached diagram");
+            }
         } finally {
             setIsAnalyzing(false);
         }
@@ -207,12 +265,17 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         fetchData();
     }, [fetchData]);
 
-    // Auto-run analysis when data loads
+    // Auto-run smart analysis when data loads
     useEffect(() => {
         if (repoData && !analysis && !isAnalyzing) {
-            runAnalysis();
+            runAnalysis("smart");
         }
     }, [repoData, analysis, isAnalyzing, runAnalysis]);
+
+    useEffect(() => {
+        const settings = loadAISettings();
+        setHasUserAIKey(Boolean(settings?.apiKey));
+    }, [aiSettingsOpen]);
 
     // Tab change updates URL
     const handleTabChange = useCallback(
@@ -280,6 +343,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <Navbar
                 owner={owner}
                 repo={repo}
+                onAISettings={() => setAISettingsOpen(true)}
                 onExport={() => {
                     const dataStr = JSON.stringify(repoData, null, 2);
                     const blob = new Blob([dataStr], { type: "application/json" });
@@ -372,6 +436,27 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             <LanguageDonut languages={repoData.languages} />
                         )}
 
+                        {activeTab === "architecture" && (
+                            <div className="glass-card p-3 border border-border/40">
+                                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                                    Premium Diagram
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        if (!hasUserAIKey) {
+                                            setAISettingsOpen(true);
+                                            toast.info("Add your API key for premium diagrams");
+                                            return;
+                                        }
+                                        runAnalysis("premium");
+                                    }}
+                                    className="w-full text-xs px-3 py-2 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                                >
+                                    Generate Premium Diagram
+                                </button>
+                            </div>
+                        )}
+
                         {/* Pipeline Status (compact) */}
                         {isAnalyzing && (
                             <PipelineStatusDisplay steps={pipelineSteps} />
@@ -379,6 +464,17 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     </div>
                 </div>
             </div>
+
+            <AISettingsModal
+                open={aiSettingsOpen}
+                onOpenChange={setAISettingsOpen}
+                onSave={() => {
+                    setHasUserAIKey(true);
+                    toast.success("AI key saved", {
+                        description: "You can now generate premium architecture diagrams",
+                    });
+                }}
+            />
         </div>
     );
 }

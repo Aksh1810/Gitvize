@@ -6,13 +6,18 @@ import type { TreeItem } from "@/types";
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { owner, repo, tree, readme, aiSettings } = body as {
+        const { owner, repo, tree, readme, aiSettings, mode } = body as {
             owner: string;
             repo: string;
             tree: TreeItem[];
             readme: string;
-            aiSettings?: { provider: string; apiKey: string; model: string };
+            aiSettings?: { provider: string; apiKey: string; model?: string };
+            forceFallback?: boolean;
+            mode?: "smart" | "premium";
         };
+
+        const forceFallback = Boolean((body as { forceFallback?: boolean }).forceFallback);
+        const requestedMode = mode ?? "smart";
 
         if (!owner || !repo || !tree) {
             return NextResponse.json(
@@ -21,18 +26,47 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Check if AI is configured — via client settings OR env var
+        // Check if AI is configured — via client settings, GEMINI key, or generic env var
         const clientKey = aiSettings?.apiKey;
+        const geminiKey = process.env.GEMINI_API_KEY;
+        const geminiKeys = process.env.GEMINI_API_KEYS;
         const envKey = process.env.AI_API_KEY;
-        const hasAI = !!(clientKey || envKey);
+        const hasAI = !!(clientKey || geminiKey || geminiKeys || envKey);
 
-        if (hasAI) {
+        // Smart mode is deterministic and does not call external AI APIs.
+        if (requestedMode === "smart") {
+            const result = getMockAnalysis(owner, repo, tree);
+            return NextResponse.json({
+                ...result,
+                generatedAt: new Date().toISOString(),
+                mock: true,
+                source: "smart",
+                mode: "smart",
+            });
+        }
+
+        if (forceFallback) {
+            const result = getMockAnalysis(owner, repo, tree);
+            return NextResponse.json({
+                ...result,
+                generatedAt: new Date().toISOString(),
+                mock: true,
+                source: "fallback",
+                mode: "premium",
+            });
+        }
+
+        if (requestedMode === "premium" && hasAI) {
             // Build AI config from client settings (preferred) or env vars
             const aiConfig: AIConfig | undefined = clientKey
                 ? {
                     provider: aiSettings!.provider,
                     apiKey: clientKey,
-                    model: aiSettings!.model,
+                    model: aiSettings!.model ?? (aiSettings!.provider === "gemini"
+                        ? "gemini-2.0-flash"
+                        : aiSettings!.provider === "anthropic"
+                            ? "claude-3-5-sonnet-20241022"
+                            : "gpt-4o-mini"),
                 }
                 : undefined; // will use env var defaults
 
@@ -79,8 +113,10 @@ export async function POST(request: NextRequest) {
                                 `data: ${JSON.stringify({
                                     step: "enrich",
                                     status: "complete",
-                                    message: "Analysis complete",
-                                    data: result,
+                                    message: result.source === "ai"
+                                        ? "Analysis complete"
+                                        : `AI fallback: ${result.fallbackReason ?? "AI unavailable, using fallback diagram"}`,
+                                    data: { ...result, mode: "premium" },
                                 })}\n\n`
                             )
                         );
@@ -128,13 +164,16 @@ export async function POST(request: NextRequest) {
                 },
             });
         } else {
-            // Mock analysis for development
+            // Premium requested but no key configured: return deterministic smart result.
             const result = getMockAnalysis(owner, repo, tree);
 
             return NextResponse.json({
                 ...result,
                 generatedAt: new Date().toISOString(),
                 mock: true,
+                source: "fallback",
+                mode: "premium",
+                reason: "No premium AI key configured; showing smart diagram",
             });
         }
     } catch (error) {
