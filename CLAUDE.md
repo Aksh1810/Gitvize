@@ -52,6 +52,7 @@ All shared types live in `src/types/index.ts` — treat it as the single source 
 - **recharts** — charts in dashboard overview
 - **mermaid** — `mermaid-diagram.tsx` for generated diagrams
 - **sonner** — toast notifications
+- **Symbol parsing utility** — `src/lib/symbol-parser.ts` for class/function/interface/type/method/variable extraction and cross-file reference inference
 
 ## Visual Design Rules (Non-Negotiable)
 
@@ -88,11 +89,20 @@ Key data fields per Cytoscape node:
 - `displayLabel` — disambiguated name (adds parent path for duplicate filenames)
 - `compactLabel` — truncated with ellipsis (max 24 chars)
 - `showLabel` — `1` for root-level or high-fanout (≥10 children) folders, `0` otherwise
+- `symbolKind` — symbol node category (`class`, `function`, `interface`, `type`, `method`, `variable`)
+- `parentPath` — for symbol nodes, points to owner file path (used for preview panel navigation)
+
+Symbol graph behavior:
+- `showSymbols` toggle (default ON) enables/disables symbol overlay without changing base file-tree graph
+- Symbol nodes are attached to file nodes via `symbolContains` edges
+- Cross-file references use `symbolRef` edges with confidence levels (`high` from imports, `medium` from identifier inference)
+- Large repos reduce symbol edge density by preferring high-confidence edges
 
 Interactions:
 - `focusNodeNeighborhood(cy, node)` — dims non-connected nodes to 0.12/0.06 opacity, highlights neighborhood
 - `clearNodeFocus(cy)` — resets all to full opacity
-- `applyLargeRepoLabelCulling(cy)` — distance-based greedy label retention post-layout
+- Focused neighborhood nodes are tagged with `keepLabel=1` so labels remain visible after hover-out until focus is cleared
+- Clicking a symbol node opens its parent file in the existing right-side preview panel
 
 ## Common Pitfalls
 
@@ -101,3 +111,5 @@ Interactions:
 - **Plugin registration:** `cytoscape.use(fcose)` must be inside `typeof window !== 'undefined'` guard (SSR safe)
 - **No `useLayoutEffect` without SSR guard** in Cytoscape/React Flow components
 - **Import unused:** Remove unused imports before building — they cause warnings that can mask real errors
+- **Label persistence in large repos:** If focused labels disappear on hover-out, ensure `keepLabel` is set during focus and cleared only in `clearNodeFocus`
+- **Symbol graph limits:** Keep file-size/file-count/reference caps in place to avoid rate-limit and render-performance regressions
