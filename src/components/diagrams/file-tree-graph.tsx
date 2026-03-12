@@ -94,6 +94,22 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         symbols: [],
         references: [],
     });
+    const visibilityRef = useRef({
+        showRoot: true,
+        showFolders: true,
+        showFiles: true,
+        showSymbols: true,
+        showContainsEdges: true,
+        showSymbolRefs: true,
+        symbolKindVisibility: {
+            class: true,
+            function: true,
+            interface: true,
+            type: true,
+            method: true,
+            variable: true,
+        } as Record<SymbolKind, boolean>,
+    });
 
     // Binary file extensions that shouldn't be fetched
     const BINARY_EXTENSIONS = new Set([
@@ -301,7 +317,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 size: Math.min(80, 50 + rootChildren),
                 color: "#6366f1",
                 showLabel: 1,
-                hidden: showRoot ? 0 : 1,
             },
         });
 
@@ -346,7 +361,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     source: parentId,
                     target: `folder:${folderPath}`,
                     type: "contains",
-                    hidden: showContainsEdges ? 0 : 1,
                 },
             });
         };
@@ -360,13 +374,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
 
             if (isFolder) {
-                if (showFolders) {
-                    ensureFolder(item.path);
-                }
+                ensureFolder(item.path);
             } else {
-                if (!showFiles) return;
                 // Ensure parent folder exists
-                if (showFolders && parentPath && !addedFolders.has(parentPath)) {
+                if (parentPath && !addedFolders.has(parentPath)) {
                     ensureFolder(parentPath);
                 }
 
@@ -388,23 +399,21 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
                 edges.push({
                     data: {
-                        id: `edge:${showFolders ? parentId : "root"}-file:${item.path}`,
-                        source: showFolders ? parentId : "root",
+                        id: `edge:${parentId}-file:${item.path}`,
+                        source: parentId,
                         target: `file:${item.path}`,
                         type: "contains",
-                        hidden: showContainsEdges ? 0 : 1,
                     },
                 });
             }
         });
 
-        if (showSymbols && showFiles && symbolGraph.symbols.length > 0) {
+        if (symbolGraph.symbols.length > 0) {
             const nodeIdSet = new Set<string>(nodes.map((node) => node.data.id));
             const edgeIdSet = new Set<string>(edges.map((edge) => edge.data.id));
             const limitedByTreeSize = limitedItems.length > 800;
 
             symbolGraph.symbols.forEach((symbol) => {
-                if (!symbolKindVisibility[symbol.kind]) return;
                 const fileNodeId = `file:${symbol.filePath}`;
                 if (!nodeIdSet.has(fileNodeId)) return;
 
@@ -438,16 +447,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                             source: fileNodeId,
                             target: symbolId,
                             type: "symbolContains",
-                            hidden: showContainsEdges ? 0 : 1,
                         },
                     });
                 }
             });
 
-            if (showSymbolRefs) {
-                symbolGraph.references.forEach((ref) => {
+            symbolGraph.references.forEach((ref) => {
                 if (limitedByTreeSize && ref.confidence !== "high") return;
-                if (!symbolKindVisibility[ref.targetKind]) return;
 
                 const sourceFileId = `file:${ref.fromFilePath}`;
                 const targetPrefix = `symbol:${ref.toFilePath}:${ref.targetKind}:${ref.symbolName}`;
@@ -463,15 +469,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         target: targetPrefix,
                         type: "symbolRef",
                         confidence: ref.confidence,
-                            hidden: showSymbolRefs ? 0 : 1,
                     },
                 });
                 });
-            }
         }
 
         return { nodes, edges };
-    }, [tree, repo, showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showSymbolRefs, symbolKindVisibility, symbolGraph]);
+    }, [tree, repo, symbolGraph]);
 
     // Is this a large repo?
     const isLargeRepo = elements.nodes.length > 80;
@@ -505,6 +509,35 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             .map(([ext, count]) => ({ ext, count, color: getFileColor(`file.${ext}`) }));
         return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals };
     }, [elements, symbolGraph.symbols]);
+
+    const applyVisibility = useCallback((targetCy?: cytoscape.Core | null) => {
+        const cy = targetCy ?? cyRef.current;
+        if (!cy) return;
+
+        const state = visibilityRef.current;
+        cy.batch(() => {
+            cy.getElementById("root").style("display", state.showRoot ? "element" : "none");
+            cy.nodes('node[type="folder"]').style("display", state.showFolders ? "element" : "none");
+            cy.nodes('node[type="file"]').style("display", state.showFiles ? "element" : "none");
+
+            const symbolsVisible = state.showSymbols && state.showFiles;
+            cy.nodes('node[type="symbol"]').forEach((node) => {
+                const kind = node.data("symbolKind") as SymbolKind | undefined;
+                const kindVisible = kind ? state.symbolKindVisibility[kind] : true;
+                node.style("display", symbolsVisible && kindVisible ? "element" : "none");
+            });
+
+            cy.edges('edge[type="contains"], edge[type="symbolContains"]').style(
+                "display",
+                state.showContainsEdges ? "element" : "none"
+            );
+
+            cy.edges('edge[type="symbolRef"]').style(
+                "display",
+                state.showSymbolRefs && symbolsVisible ? "element" : "none"
+            );
+        });
+    }, []);
 
     const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
         cy.nodes().forEach(node => {
@@ -646,12 +679,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     }
                 },
                 {
-                    selector: 'node[hidden = 1]',
-                    style: {
-                        'display': 'none'
-                    }
-                },
-                {
                     selector: 'node[type="symbol"]',
                     style: {
                         'background-color': 'data(color)',
@@ -727,12 +754,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'opacity': 0.55,
                         'line-color': '#38bdf8',
                         'target-arrow-color': '#38bdf8',
-                    }
-                },
-                {
-                    selector: 'edge[hidden = 1]',
-                    style: {
-                        'display': 'none'
                     }
                 },
                 {
@@ -834,11 +855,25 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         });
 
         cyRef.current = cy;
+        applyVisibility(cy);
 
         return () => {
             cy.destroy();
         };
-    }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood]);
+    }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
+
+    useEffect(() => {
+        visibilityRef.current = {
+            showRoot,
+            showFolders,
+            showFiles,
+            showSymbols,
+            showContainsEdges,
+            showSymbolRefs,
+            symbolKindVisibility,
+        };
+        applyVisibility();
+    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showSymbolRefs, symbolKindVisibility, applyVisibility]);
 
     const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
     const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);
