@@ -8,9 +8,12 @@ export interface ExtractedSymbol {
 
 export interface SymbolReference {
     fromFilePath: string;
+    fromSymbolName?: string;
+    fromSymbolKind?: SymbolKind;
     toFilePath: string;
     symbolName: string;
     targetKind: SymbolKind;
+    relation: "imports" | "calls" | "extends" | "implements";
     confidence: "high" | "medium";
 }
 
@@ -133,6 +136,15 @@ function extractReferences(
     for (const file of fileContents) {
         if (references.length >= maxReferences) break;
 
+        const classRelations = parseClassRelations(file.path, file.content, context.symbolsByName);
+        for (const rel of classRelations) {
+            if (references.length >= maxReferences) break;
+            const key = `${rel.fromFilePath}->${rel.toFilePath}:${rel.relation}:${rel.symbolName}`;
+            if (seenRefs.has(key)) continue;
+            seenRefs.add(key);
+            references.push(rel);
+        }
+
         const imported = parseImportedIdentifiers(file.path, file.content, context.fileSet);
         for (const imp of imported) {
             if (references.length >= maxReferences) break;
@@ -148,6 +160,7 @@ function extractReferences(
                     toFilePath: target.filePath,
                     symbolName: target.name,
                     targetKind: target.kind,
+                    relation: "imports",
                     confidence: "high",
                 });
             }
@@ -175,11 +188,13 @@ function extractReferences(
                 const key = `${file.path}->${target.filePath}:${target.kind}:${target.name}`;
                 if (seenRefs.has(key)) continue;
                 seenRefs.add(key);
+                const isCall = new RegExp(`\\b${escapeRegExp(token)}\\s*\\(`).test(stripped);
                 references.push({
                     fromFilePath: file.path,
                     toFilePath: target.filePath,
                     symbolName: target.name,
                     targetKind: target.kind,
+                    relation: isCall ? "calls" : "imports",
                     confidence: "medium",
                 });
                 break;
@@ -188,6 +203,65 @@ function extractReferences(
     }
 
     return references;
+}
+
+function parseClassRelations(
+    filePath: string,
+    content: string,
+    symbolMap: Map<string, ExtractedSymbol[]>
+): SymbolReference[] {
+    const refs: SymbolReference[] = [];
+    const stripped = stripCommentsAndStrings(content);
+    const classRegex = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:extends\s+([A-Za-z_][A-Za-z0-9_]*))?\s*(?:implements\s+([A-Za-z0-9_,\s]+))?/g;
+
+    let match: RegExpExecArray | null;
+    while ((match = classRegex.exec(stripped)) !== null) {
+        const className = match[1];
+        const extendsName = match[2];
+        const implementsBlock = match[3];
+
+        if (extendsName) {
+            const targets = symbolMap.get(extendsName) ?? [];
+            targets.forEach((target) => {
+                if (target.filePath === filePath) return;
+                refs.push({
+                    fromFilePath: filePath,
+                    fromSymbolName: className,
+                    fromSymbolKind: "class",
+                    toFilePath: target.filePath,
+                    symbolName: target.name,
+                    targetKind: target.kind,
+                    relation: "extends",
+                    confidence: "high",
+                });
+            });
+        }
+
+        if (implementsBlock) {
+            implementsBlock
+                .split(/[,\s]+/)
+                .map((name) => name.trim())
+                .filter(Boolean)
+                .forEach((implName) => {
+                    const targets = symbolMap.get(implName) ?? [];
+                    targets.forEach((target) => {
+                        if (target.filePath === filePath) return;
+                        refs.push({
+                            fromFilePath: filePath,
+                            fromSymbolName: className,
+                            fromSymbolKind: "class",
+                            toFilePath: target.filePath,
+                            symbolName: target.name,
+                            targetKind: target.kind,
+                            relation: "implements",
+                            confidence: "high",
+                        });
+                    });
+                });
+        }
+    }
+
+    return refs;
 }
 
 function parseImportedIdentifiers(filePath: string, content: string, fileSet: Set<string>): Array<{ symbolName: string; targetPath: string }> {
@@ -293,6 +367,10 @@ function stripCommentsAndStrings(input: string): string {
         .replace(/`(?:\\.|[^`\\])*`/g, " `str` ")
         .replace(/"(?:\\.|[^"\\])*"/g, ' "str" ')
         .replace(/'(?:\\.|[^'\\])*'/g, " 'str' ");
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function countIdentifiers(content: string): Map<string, number> {

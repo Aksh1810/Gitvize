@@ -79,7 +79,11 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [showFiles, setShowFiles] = useState(true);
     const [showSymbols, setShowSymbols] = useState(true);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
-    const [showSymbolRefs, setShowSymbolRefs] = useState(true);
+    const [showDefinesEdges, setShowDefinesEdges] = useState(true);
+    const [showImportsEdges, setShowImportsEdges] = useState(true);
+    const [showCallsEdges, setShowCallsEdges] = useState(true);
+    const [showExtendsEdges, setShowExtendsEdges] = useState(true);
+    const [showImplementsEdges, setShowImplementsEdges] = useState(true);
     const [symbolKindVisibility, setSymbolKindVisibility] = useState<Record<SymbolKind, boolean>>({
         class: true,
         function: true,
@@ -100,7 +104,11 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         showFiles: true,
         showSymbols: true,
         showContainsEdges: true,
-        showSymbolRefs: true,
+        showDefinesEdges: true,
+        showImportsEdges: true,
+        showCallsEdges: true,
+        showExtendsEdges: true,
+        showImplementsEdges: true,
         symbolKindVisibility: {
             class: true,
             function: true,
@@ -173,10 +181,14 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     }, [showFiles, showSymbols]);
 
     useEffect(() => {
-        if (!showSymbols && showSymbolRefs) {
-            setShowSymbolRefs(false);
+        if (!showSymbols) {
+            setShowDefinesEdges(false);
+            setShowImportsEdges(false);
+            setShowCallsEdges(false);
+            setShowExtendsEdges(false);
+            setShowImplementsEdges(false);
         }
-    }, [showSymbols, showSymbolRefs]);
+    }, [showSymbols]);
 
     useEffect(() => {
         if (!showSymbols) {
@@ -445,7 +457,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                             id: containsId,
                             source: fileNodeId,
                             target: symbolId,
-                            type: "symbolContains",
+                            type: "defines",
                         },
                     });
                 }
@@ -455,18 +467,22 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 if (limitedByTreeSize && ref.confidence !== "high") return;
 
                 const sourceFileId = `file:${ref.fromFilePath}`;
+                const sourceSymbolId = ref.fromSymbolName && ref.fromSymbolKind
+                    ? `symbol:${ref.fromFilePath}:${ref.fromSymbolKind}:${ref.fromSymbolName}`
+                    : null;
                 const targetPrefix = `symbol:${ref.toFilePath}:${ref.targetKind}:${ref.symbolName}`;
-                if (!nodeIdSet.has(sourceFileId) || !nodeIdSet.has(targetPrefix)) return;
+                const sourceId = sourceSymbolId && nodeIdSet.has(sourceSymbolId) ? sourceSymbolId : sourceFileId;
+                if (!nodeIdSet.has(sourceId) || !nodeIdSet.has(targetPrefix)) return;
 
-                const refId = `edge:${sourceFileId}-${targetPrefix}:ref`;
+                const refId = `edge:${sourceId}-${targetPrefix}:${ref.relation}`;
                 if (edgeIdSet.has(refId)) return;
                 edgeIdSet.add(refId);
                 edges.push({
                     data: {
                         id: refId,
-                        source: sourceFileId,
+                        source: sourceId,
                         target: targetPrefix,
-                        type: "symbolRef",
+                        type: ref.relation,
                         confidence: ref.confidence,
                     },
                 });
@@ -484,7 +500,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         const folders = elements.nodes.filter((n: any) => n.data.type === "folder").length;
         const files = elements.nodes.filter((n: any) => n.data.type === "file").length;
         const symbols = elements.nodes.filter((n: any) => n.data.type === "symbol").length;
-        const symbolRefs = elements.edges.filter((e: any) => e.data.type === "symbolRef").length;
+        const symbolRefs = elements.edges.filter((e: any) => ["imports", "calls", "extends", "implements"].includes(e.data.type)).length;
         const symbolKinds = new Map<string, number>();
         const symbolTotals = new Map<string, number>();
         // Count unique extensions
@@ -526,14 +542,34 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 node.style("display", symbolsVisible && kindVisible ? "element" : "none");
             });
 
-            cy.edges('edge[type="contains"], edge[type="symbolContains"]').style(
+            cy.edges('edge[type="contains"]').style(
                 "display",
                 state.showContainsEdges ? "element" : "none"
             );
 
-            cy.edges('edge[type="symbolRef"]').style(
+            cy.edges('edge[type="defines"]').style(
                 "display",
-                state.showSymbolRefs && symbolsVisible ? "element" : "none"
+                state.showDefinesEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="imports"]').style(
+                "display",
+                state.showImportsEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="calls"]').style(
+                "display",
+                state.showCallsEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="extends"]').style(
+                "display",
+                state.showExtendsEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="implements"]').style(
+                "display",
+                state.showImplementsEdges && symbolsVisible ? "element" : "none"
             );
         });
     }, []);
@@ -725,34 +761,60 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     }
                 },
                 {
-                    selector: 'edge[type="symbolContains"]',
+                    selector: 'edge[type="defines"]',
                     style: {
-                        'width': 0.8,
-                        'line-color': 'rgba(148, 163, 184, 0.7)',
-                        'opacity': 0.3,
+                        'width': 0.9,
+                        'line-color': '#22d3ee',
+                        'opacity': 0.35,
                         'curve-style': 'unbundled-bezier',
                         'control-point-distances': [25],
                         'control-point-weights': [0.5],
                     }
                 },
                 {
-                    selector: 'edge[type="symbolRef"]',
+                    selector: 'edge[type="imports"]',
                     style: {
-                        'width': 1.2,
-                        'line-color': '#22d3ee',
-                        'opacity': 0.38,
+                        'width': 1.1,
+                        'line-color': '#3b82f6',
+                        'opacity': 0.4,
                         'curve-style': 'bezier',
                         'line-style': 'dashed',
                         'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#22d3ee',
+                        'target-arrow-color': '#3b82f6',
                     }
                 },
                 {
-                    selector: 'edge[type="symbolRef"][confidence="high"]',
+                    selector: 'edge[type="calls"]',
                     style: {
-                        'opacity': 0.55,
-                        'line-color': '#38bdf8',
-                        'target-arrow-color': '#38bdf8',
+                        'width': 1.1,
+                        'line-color': '#8b5cf6',
+                        'opacity': 0.4,
+                        'curve-style': 'bezier',
+                        'line-style': 'dashed',
+                        'target-arrow-shape': 'triangle',
+                        'target-arrow-color': '#8b5cf6',
+                    }
+                },
+                {
+                    selector: 'edge[type="extends"]',
+                    style: {
+                        'width': 1.2,
+                        'line-color': '#f97316',
+                        'opacity': 0.45,
+                        'curve-style': 'bezier',
+                        'target-arrow-shape': 'triangle',
+                        'target-arrow-color': '#f97316',
+                    }
+                },
+                {
+                    selector: 'edge[type="implements"]',
+                    style: {
+                        'width': 1.2,
+                        'line-color': '#ec4899',
+                        'opacity': 0.45,
+                        'curve-style': 'bezier',
+                        'target-arrow-shape': 'triangle',
+                        'target-arrow-color': '#ec4899',
                     }
                 },
                 {
@@ -868,11 +930,15 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             showFiles,
             showSymbols,
             showContainsEdges,
-            showSymbolRefs,
+            showDefinesEdges,
+            showImportsEdges,
+            showCallsEdges,
+            showExtendsEdges,
+            showImplementsEdges,
             symbolKindVisibility,
         };
         applyVisibility();
-    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showSymbolRefs, symbolKindVisibility, applyVisibility]);
+    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, symbolKindVisibility, applyVisibility]);
 
     const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
     const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);
@@ -966,13 +1032,49 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showContainsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                     </button>
                     <button
-                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showSymbolRefs ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                        onClick={() => setShowSymbolRefs((prev) => !prev)}
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                        onClick={() => setShowDefinesEdges((prev) => !prev)}
                         disabled={!showSymbols}
                     >
                         <span className="h-1.5 w-8 rounded-full bg-cyan-400" />
-                        <span className="flex-1 text-left text-slate-200">Symbol refs</span>
-                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showSymbolRefs ? "bg-purple-500" : "bg-slate-700"}`} />
+                        <span className="flex-1 text-left text-slate-200">Defines</span>
+                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showDefinesEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                    </button>
+                    <button
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                        onClick={() => setShowImportsEdges((prev) => !prev)}
+                        disabled={!showSymbols}
+                    >
+                        <span className="h-1.5 w-8 rounded-full bg-blue-500" />
+                        <span className="flex-1 text-left text-slate-200">Imports</span>
+                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImportsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                    </button>
+                    <button
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                        onClick={() => setShowCallsEdges((prev) => !prev)}
+                        disabled={!showSymbols}
+                    >
+                        <span className="h-1.5 w-8 rounded-full bg-violet-500" />
+                        <span className="flex-1 text-left text-slate-200">Calls</span>
+                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showCallsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                    </button>
+                    <button
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                        onClick={() => setShowExtendsEdges((prev) => !prev)}
+                        disabled={!showSymbols}
+                    >
+                        <span className="h-1.5 w-8 rounded-full bg-orange-500" />
+                        <span className="flex-1 text-left text-slate-200">Extends</span>
+                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showExtendsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                    </button>
+                    <button
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                        onClick={() => setShowImplementsEdges((prev) => !prev)}
+                        disabled={!showSymbols}
+                    >
+                        <span className="h-1.5 w-8 rounded-full bg-pink-500" />
+                        <span className="flex-1 text-left text-slate-200">Implements</span>
+                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImplementsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                     </button>
                 </div>
             </div>
