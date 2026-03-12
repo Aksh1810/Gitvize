@@ -120,9 +120,36 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         const edges: any[] = [];
         const addedFolders = new Set<string>();
 
+        // Show all files (cap at 2000 to prevent browser crash)
+        const limitedItems = tree.slice(0, 2000);
+
+        // Duplicate names in large folders can look conflicting; add context labels when needed.
+        const itemNameCounts = new Map<string, number>();
+        limitedItems.forEach((item) => {
+            const parts = item.path.split("/");
+            const label = parts[parts.length - 1]?.toLowerCase() || "";
+            const key = `${item.type}:${label}`;
+            itemNameCounts.set(key, (itemNameCounts.get(key) || 0) + 1);
+        });
+
+        const getDisplayLabel = (path: string, label: string, kind: "tree" | "blob") => {
+            const key = `${kind}:${label.toLowerCase()}`;
+            const count = itemNameCounts.get(key) || 0;
+            if (count <= 1) return label;
+            const parts = path.split("/");
+            const parentParts = parts.slice(0, -1);
+            const context = parentParts.slice(-2).join("/");
+            return context ? `${context}/${label}` : label;
+        };
+
+        const getCompactLabel = (value: string, max = 24) => {
+            if (value.length <= max) return value;
+            return `${value.slice(0, Math.max(6, max - 1))}…`;
+        };
+
         // Count children per folder for sizing
         const folderChildCount = new Map<string, number>();
-        tree.forEach((item) => {
+        limitedItems.forEach((item) => {
             const parts = item.path.split("/");
             const parentPath = parts.slice(0, -1).join("/");
             const key = parentPath || "__root__";
@@ -135,10 +162,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             data: {
                 id: "root",
                 label: repo,
+                displayLabel: repo,
+                compactLabel: getCompactLabel(repo, 20),
                 path: "",
                 type: "folder",
                 size: Math.min(80, 50 + rootChildren),
                 color: "#6366f1",
+                showLabel: 1,
             },
         });
 
@@ -149,6 +179,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
             const parts = folderPath.split("/");
             const label = parts[parts.length - 1];
+            const displayLabel = getDisplayLabel(folderPath, label, "tree");
             const parentPath = parts.slice(0, -1).join("/");
             const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
 
@@ -164,11 +195,15 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 data: {
                     id: `folder:${folderPath}`,
                     label: childCount > 5 ? `${label} (${childCount})` : label,
+                    displayLabel: childCount > 5 ? `${displayLabel} (${childCount})` : displayLabel,
+                    compactLabel: getCompactLabel(childCount > 5 ? `${displayLabel} (${childCount})` : displayLabel, 22),
                     path: folderPath,
                     type: "folder",
                     size: folderSize,
                     color: "#ec4899",
                     childCount,
+                    // In large repos, only keep labels always-on for root-level or high-fanout folders.
+                    showLabel: folderPath.split("/").length === 1 || childCount >= 10 ? 1 : 0,
                 },
             });
 
@@ -181,12 +216,11 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             });
         };
 
-        // Show all files (cap at 2000 to prevent browser crash)
-        const limitedItems = tree.slice(0, 2000);
         limitedItems.forEach((item) => {
             const parts = item.path.split("/");
             const isFolder = item.type === "tree";
             const label = parts[parts.length - 1];
+            const displayLabel = getDisplayLabel(item.path, label, isFolder ? "tree" : "blob");
             const parentPath = parts.slice(0, -1).join("/");
             const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
 
@@ -203,6 +237,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     data: {
                         id: `file:${item.path}`,
                         label,
+                        displayLabel,
+                        compactLabel: getCompactLabel(displayLabel, 20),
                         path: item.path,
                         type: "file",
                         extension: ext,
@@ -282,7 +318,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         // Improve readability in large repos by revealing labels for focused neighborhood.
         if (isLargeRepo) {
             neighborhood.nodes().forEach(n => {
-                n.style('label', n.data('label'));
+                n.style('label', n.data('compactLabel') || n.data('displayLabel') || n.data('label'));
             });
         }
     }, [isLargeRepo]);
@@ -315,7 +351,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             matched.style('border-color', '#facc15');
             // Show labels on matched nodes
             matched.forEach(node => {
-                node.style('label', node.data('label'));
+                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
             });
             // Also highlight their edges
             matched.connectedEdges().style('opacity', 0.8);
@@ -342,13 +378,15 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'background-color': 'data(color)',
                         'width': 'data(size)',
                         'height': 'data(size)',
-                        'label': isLargeRepo ? '' : 'data(label)',
+                        'label': isLargeRepo ? '' : 'data(displayLabel)',
                         'color': '#ffffff',
                         'text-valign': 'center',
                         'text-halign': 'right',
                         'text-margin-x': 8,
                         'font-size': '11px',
                         'font-family': 'monospace',
+                        'text-wrap': 'ellipsis',
+                        'text-max-width': '150px',
                         'text-outline-width': 1.5,
                         'text-outline-color': '#0f172a',
                         'text-outline-opacity': 0.8,
@@ -361,7 +399,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'border-color': 'rgba(255, 255, 255, 0.4)',
                         'font-weight': 'bold',
                         'font-size': '12px',
-                        'label': 'data(label)',
+                        'label': isLargeRepo ? '' : 'data(displayLabel)',
+                    }
+                },
+                {
+                    selector: 'node[type="folder"][showLabel = 1]',
+                    style: {
+                        'label': isLargeRepo ? 'data(compactLabel)' : 'data(displayLabel)',
                     }
                 },
                 {
@@ -444,7 +488,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             const node = evt.target;
             // Show label on hover for file nodes in large repos
             if (isLargeRepo && node.data('type') === 'file') {
-                node.style('label', node.data('label'));
+                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
                 node.style('font-size', '11px');
                 node.style('z-index', 999);
             }
