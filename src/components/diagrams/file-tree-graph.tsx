@@ -231,13 +231,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         });
 
         const getDisplayLabel = (path: string, label: string, kind: "tree" | "blob") => {
-            const key = `${kind}:${label.toLowerCase()}`;
-            const count = itemNameCounts.get(key) || 0;
-            if (count <= 1) return label;
-            const parts = path.split("/");
-            const parentParts = parts.slice(0, -1);
-            const context = parentParts.slice(-2).join("/");
-            return context ? `${context}/${label}` : label;
+            // Always just the file/folder name, never a partial path
+            return label;
         };
 
         const getCompactLabel = (value: string, max = 24) => {
@@ -335,8 +330,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     data: {
                         id: `file:${item.path}`,
                         label,
-                        displayLabel,
-                        compactLabel: getCompactLabel(displayLabel, 20),
+                        displayLabel: label, // Only file name
+                        compactLabel: getCompactLabel(label, 20),
                         path: item.path,
                         type: "file",
                         extension: ext,
@@ -369,6 +364,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 const symbolId = `symbol:${symbol.filePath}:${symbol.kind}:${symbol.name}`;
                 if (!nodeIdSet.has(symbolId)) {
                     nodeIdSet.add(symbolId);
+                    // Always just the symbol name, never a path
                     nodes.push({
                         data: {
                             id: symbolId,
