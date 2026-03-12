@@ -456,6 +456,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
         cy.nodes().forEach(node => {
             node.style('opacity', 1);
+            node.removeData('keepLabel');
             if (node.data('type') === 'folder') {
                 node.style('border-width', 2);
                 node.style('border-color', 'rgba(255,255,255,0.4)');
@@ -482,12 +483,17 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         // Dim everything first, then re-highlight connected context.
         cy.nodes().style('opacity', 0.12);
         cy.edges().style('opacity', 0.06);
+        cy.nodes().removeData('keepLabel');
 
         const neighborhood = node.closedNeighborhood();
         neighborhood.nodes().style('opacity', 1);
         neighborhood.edges().style('opacity', 0.92);
         neighborhood.edges().style('width', 2);
         neighborhood.edges().style('line-color', '#64748b');
+
+        neighborhood.nodes().forEach(n => {
+            n.data('keepLabel', 1);
+        });
 
         // Primary focus node gets strongest emphasis.
         node.style('border-width', 3);
@@ -755,7 +761,9 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             const node = evt.target;
             // Hide label on mouseout for file nodes in large repos
             if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('label', '');
+                if (!node.data('keepLabel')) {
+                    node.style('label', '');
+                }
                 node.style('z-index', 0);
             }
         });
