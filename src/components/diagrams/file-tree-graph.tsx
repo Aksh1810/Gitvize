@@ -866,13 +866,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         </button>
                     )}
                 </div>
-                <Button
-                    variant="secondary"
-                    className={`h-7 px-2.5 text-[11px] font-mono rounded-md border ${showSymbols ? "bg-cyan-500/20 border-cyan-400/50 text-cyan-200" : "bg-slate-900/90 border-slate-700 text-slate-300"}`}
-                    onClick={() => setShowSymbols((prev) => !prev)}
-                >
-                    Symbols {showSymbols ? "ON" : "OFF"}
-                </Button>
             </div>
 
             {/* Left menu: visibility toggles */}
