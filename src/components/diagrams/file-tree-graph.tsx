@@ -196,7 +196,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
         const runSymbolAnalysis = async () => {
             if (!showSymbols) {
-                setSymbolGraph({ symbols: [], references: [] });
                 setSymbolError(null);
                 setSymbolLoading(false);
                 return;
