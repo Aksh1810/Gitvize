@@ -5,6 +5,7 @@ import cytoscape from "cytoscape";
 // @ts-ignore
 import fcose from "cytoscape-fcose";
 import { getFileColor } from "@/lib/file-icons";
+import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
@@ -50,14 +51,35 @@ interface FileTreeGraphProps {
     repo: string;
 }
 
+const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = {
+    class: { color: "#f59e0b", shape: "hexagon" },
+    function: { color: "#22c55e", shape: "ellipse" },
+    interface: { color: "#06b6d4", shape: "round-rectangle" },
+    type: { color: "#a855f7", shape: "diamond" },
+    method: { color: "#f97316", shape: "triangle" },
+    variable: { color: "#84cc16", shape: "pentagon" },
+};
+
+const MAX_SYMBOL_FILE_BYTES = 120_000;
+const SYMBOL_FILE_LIMIT_SMALL = 50;
+const SYMBOL_FILE_LIMIT_LARGE = 25;
+
 export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const cyRef = useRef<cytoscape.Core | null>(null);
+    const symbolCacheRef = useRef(new Map<string, string>());
     const [selectedFile, setSelectedFile] = useState<FileNodeData | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [fileContent, setFileContent] = useState<string | null>(null);
     const [fileLoading, setFileLoading] = useState(false);
     const [fileError, setFileError] = useState<string | null>(null);
+    const [showSymbols, setShowSymbols] = useState(true);
+    const [symbolLoading, setSymbolLoading] = useState(false);
+    const [symbolError, setSymbolError] = useState<string | null>(null);
+    const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
+        symbols: [],
+        references: [],
+    });
 
     // Binary file extensions that shouldn't be fetched
     const BINARY_EXTENSIONS = new Set([
@@ -113,6 +135,82 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             setFileError(null);
         }
     }, [selectedFile, fetchFileContent]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const runSymbolAnalysis = async () => {
+            if (!showSymbols) {
+                setSymbolGraph({ symbols: [], references: [] });
+                setSymbolError(null);
+                setSymbolLoading(false);
+                return;
+            }
+
+            const sourceFiles = tree
+                .filter((item) => item.type === "blob" && isAnalyzableCodeFile(item.path) && (item.size ?? 0) <= MAX_SYMBOL_FILE_BYTES)
+                .slice(0, tree.length > 800 ? SYMBOL_FILE_LIMIT_LARGE : SYMBOL_FILE_LIMIT_SMALL);
+
+            if (sourceFiles.length === 0) {
+                setSymbolGraph({ symbols: [], references: [] });
+                setSymbolError(null);
+                setSymbolLoading(false);
+                return;
+            }
+
+            setSymbolLoading(true);
+            setSymbolError(null);
+
+            const filePayload: Array<{ path: string; content: string }> = [];
+            const queue = [...sourceFiles];
+            const workers = Array.from({ length: 5 }, async () => {
+                while (queue.length > 0) {
+                    const item = queue.shift();
+                    if (!item || cancelled) return;
+
+                    const cacheKey = `${owner}/${repo}/${item.path}`;
+                    const cached = symbolCacheRef.current.get(cacheKey);
+                    if (cached !== undefined) {
+                        filePayload.push({ path: item.path, content: cached });
+                        continue;
+                    }
+
+                    try {
+                        const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${item.path}`);
+                        if (!res.ok) continue;
+                        const text = await res.text();
+                        symbolCacheRef.current.set(cacheKey, text);
+                        filePayload.push({ path: item.path, content: text });
+                    } catch {
+                        // Ignore per-file fetch failures and continue with available content.
+                    }
+                }
+            });
+
+            await Promise.all(workers);
+            if (cancelled) return;
+
+            if (filePayload.length === 0) {
+                setSymbolGraph({ symbols: [], references: [] });
+                setSymbolError("Could not fetch source files for symbol graph");
+                setSymbolLoading(false);
+                return;
+            }
+
+            const graph = buildSymbolGraph(filePayload, {
+                maxReferences: tree.length > 800 ? 220 : 420,
+            });
+
+            setSymbolGraph(graph);
+            setSymbolLoading(false);
+        };
+
+        runSymbolAnalysis();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [owner, repo, showSymbols, tree]);
 
     // Build graph elements — show all files
     const elements = useMemo(() => {
@@ -258,8 +356,73 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             }
         });
 
+        if (showSymbols && symbolGraph.symbols.length > 0) {
+            const nodeIdSet = new Set<string>(nodes.map((node) => node.data.id));
+            const edgeIdSet = new Set<string>(edges.map((edge) => edge.data.id));
+            const limitedByTreeSize = limitedItems.length > 800;
+
+            symbolGraph.symbols.forEach((symbol) => {
+                const fileNodeId = `file:${symbol.filePath}`;
+                if (!nodeIdSet.has(fileNodeId)) return;
+
+                const style = SYMBOL_KIND_STYLE[symbol.kind];
+                const symbolId = `symbol:${symbol.filePath}:${symbol.kind}:${symbol.name}`;
+                if (!nodeIdSet.has(symbolId)) {
+                    nodeIdSet.add(symbolId);
+                    nodes.push({
+                        data: {
+                            id: symbolId,
+                            label: symbol.name,
+                            displayLabel: symbol.name,
+                            compactLabel: getCompactLabel(symbol.name, 16),
+                            path: symbol.filePath,
+                            parentPath: symbol.filePath,
+                            type: "symbol",
+                            symbolKind: symbol.kind,
+                            size: symbol.kind === "method" || symbol.kind === "variable" ? 9 : 11,
+                            color: style.color,
+                        },
+                    });
+                }
+
+                const containsId = `edge:${fileNodeId}-${symbolId}`;
+                if (!edgeIdSet.has(containsId)) {
+                    edgeIdSet.add(containsId);
+                    edges.push({
+                        data: {
+                            id: containsId,
+                            source: fileNodeId,
+                            target: symbolId,
+                            type: "symbolContains",
+                        },
+                    });
+                }
+            });
+
+            symbolGraph.references.forEach((ref) => {
+                if (limitedByTreeSize && ref.confidence !== "high") return;
+
+                const sourceFileId = `file:${ref.fromFilePath}`;
+                const targetPrefix = `symbol:${ref.toFilePath}:${ref.targetKind}:${ref.symbolName}`;
+                if (!nodeIdSet.has(sourceFileId) || !nodeIdSet.has(targetPrefix)) return;
+
+                const refId = `edge:${sourceFileId}-${targetPrefix}:ref`;
+                if (edgeIdSet.has(refId)) return;
+                edgeIdSet.add(refId);
+                edges.push({
+                    data: {
+                        id: refId,
+                        source: sourceFileId,
+                        target: targetPrefix,
+                        type: "symbolRef",
+                        confidence: ref.confidence,
+                    },
+                });
+            });
+        }
+
         return { nodes, edges };
-    }, [tree, repo]);
+    }, [tree, repo, showSymbols, symbolGraph]);
 
     // Is this a large repo?
     const isLargeRepo = elements.nodes.length > 80;
@@ -268,11 +431,18 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const clusterInfo = useMemo(() => {
         const folders = elements.nodes.filter((n: any) => n.data.type === "folder").length;
         const files = elements.nodes.filter((n: any) => n.data.type === "file").length;
+        const symbols = elements.nodes.filter((n: any) => n.data.type === "symbol").length;
+        const symbolRefs = elements.edges.filter((e: any) => e.data.type === "symbolRef").length;
+        const symbolKinds = new Map<string, number>();
         // Count unique extensions
         const extMap = new Map<string, number>();
         elements.nodes.forEach((n: any) => {
             if (n.data.extension) {
                 extMap.set(n.data.extension, (extMap.get(n.data.extension) || 0) + 1);
+            }
+            if (n.data.type === "symbol" && n.data.symbolKind) {
+                const kind = String(n.data.symbolKind);
+                symbolKinds.set(kind, (symbolKinds.get(kind) || 0) + 1);
             }
         });
         // Sort by count descending, take top 8
@@ -280,15 +450,23 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 8)
             .map(([ext, count]) => ({ ext, count, color: getFileColor(`file.${ext}`) }));
-        return { folders, files, topExtensions };
+        return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds };
     }, [elements]);
 
     const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
         cy.nodes().forEach(node => {
             node.style('opacity', 1);
-            node.style('border-width', node.data('type') === 'folder' ? 2 : 0);
-            node.style('border-color', node.data('type') === 'folder' ? 'rgba(255,255,255,0.4)' : 'transparent');
-            if (isLargeRepo && node.data('type') === 'file') {
+            if (node.data('type') === 'folder') {
+                node.style('border-width', 2);
+                node.style('border-color', 'rgba(255,255,255,0.4)');
+            } else if (node.data('type') === 'symbol') {
+                node.style('border-width', 1);
+                node.style('border-color', 'rgba(255,255,255,0.35)');
+            } else {
+                node.style('border-width', 0);
+                node.style('border-color', 'transparent');
+            }
+            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
                 node.style('label', '');
             }
         });
@@ -409,6 +587,43 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     }
                 },
                 {
+                    selector: 'node[type="symbol"]',
+                    style: {
+                        'background-color': 'data(color)',
+                        'shape': 'ellipse',
+                        'width': 'data(size)',
+                        'height': 'data(size)',
+                        'label': isLargeRepo ? '' : 'data(compactLabel)',
+                        'font-size': '9px',
+                        'font-family': 'monospace',
+                        'text-halign': 'center',
+                        'text-valign': 'bottom',
+                        'text-margin-y': 8,
+                        'border-width': 1,
+                        'border-color': 'rgba(255,255,255,0.35)',
+                    }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="class"]',
+                    style: { 'shape': 'hexagon' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="interface"]',
+                    style: { 'shape': 'round-rectangle' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="type"]',
+                    style: { 'shape': 'diamond' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="method"]',
+                    style: { 'shape': 'triangle' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="variable"]',
+                    style: { 'shape': 'pentagon' }
+                },
+                {
                     selector: 'edge',
                     style: {
                         'width': 1,
@@ -416,6 +631,37 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'opacity': 0.4,
                         'curve-style': 'bezier',
                         'control-point-step-size': 40
+                    }
+                },
+                {
+                    selector: 'edge[type="symbolContains"]',
+                    style: {
+                        'width': 0.8,
+                        'line-color': 'rgba(148, 163, 184, 0.7)',
+                        'opacity': 0.3,
+                        'curve-style': 'unbundled-bezier',
+                        'control-point-distances': [25],
+                        'control-point-weights': [0.5],
+                    }
+                },
+                {
+                    selector: 'edge[type="symbolRef"]',
+                    style: {
+                        'width': 1.2,
+                        'line-color': '#22d3ee',
+                        'opacity': 0.38,
+                        'curve-style': 'bezier',
+                        'line-style': 'dashed',
+                        'target-arrow-shape': 'triangle',
+                        'target-arrow-color': '#22d3ee',
+                    }
+                },
+                {
+                    selector: 'edge[type="symbolRef"][confidence="high"]',
+                    style: {
+                        'opacity': 0.55,
+                        'line-color': '#38bdf8',
+                        'target-arrow-color': '#38bdf8',
                     }
                 },
                 {
@@ -472,6 +718,16 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     extension: data.extension,
                     size: data.rawSize
                 });
+            } else if (data.type === "symbol" && data.parentPath) {
+                const parentPath = String(data.parentPath);
+                const fileLabel = parentPath.split("/").pop() || parentPath;
+                const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                setSelectedFile({
+                    label: fileLabel,
+                    path: parentPath,
+                    type: "file",
+                    extension: ext,
+                });
             }
         });
 
@@ -487,7 +743,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             if (containerRef.current) containerRef.current.style.cursor = 'pointer';
             const node = evt.target;
             // Show label on hover for file nodes in large repos
-            if (isLargeRepo && node.data('type') === 'file') {
+            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
                 node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
                 node.style('font-size', '11px');
                 node.style('z-index', 999);
@@ -498,7 +754,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             if (containerRef.current) containerRef.current.style.cursor = 'default';
             const node = evt.target;
             // Hide label on mouseout for file nodes in large repos
-            if (isLargeRepo && node.data('type') === 'file') {
+            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
                 node.style('label', '');
                 node.style('z-index', 0);
             }
@@ -537,6 +793,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         </button>
                     )}
                 </div>
+                <Button
+                    variant="secondary"
+                    className={`h-7 px-2.5 text-[11px] font-mono rounded-md border ${showSymbols ? "bg-cyan-500/20 border-cyan-400/50 text-cyan-200" : "bg-slate-900/90 border-slate-700 text-slate-300"}`}
+                    onClick={() => setShowSymbols((prev) => !prev)}
+                >
+                    Symbols {showSymbols ? "ON" : "OFF"}
+                </Button>
             </div>
 
             {/* Stats bar overlay */}
@@ -544,7 +807,21 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 <span><strong className="text-purple-400">{elements.nodes.length}</strong> nodes</span>
                 <span className="text-slate-600">|</span>
                 <span><strong className="text-blue-400">{elements.edges.length}</strong> edges</span>
+                {showSymbols && (
+                    <>
+                        <span className="text-slate-600">|</span>
+                        <span><strong className="text-cyan-300">{clusterInfo.symbols}</strong> symbols</span>
+                        <span className="text-slate-600">|</span>
+                        <span><strong className="text-cyan-400">{clusterInfo.symbolRefs}</strong> refs</span>
+                    </>
+                )}
             </div>
+
+            {(symbolLoading || symbolError) && (
+                <div className="absolute top-14 right-3 z-10 px-3 py-1.5 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
+                    {symbolLoading ? "Analyzing symbols..." : symbolError}
+                </div>
+            )}
 
             {/* Cytoscape Container */}
             <div ref={containerRef} className="w-full h-full min-h-[800px] bg-slate-950 rounded-xl" />
@@ -563,6 +840,16 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         <span className="text-slate-300">Folders</span>
                         <span className="ml-auto text-slate-500">{clusterInfo.folders}</span>
                     </div>
+                    {showSymbols && Array.from(clusterInfo.symbolKinds.entries()).map(([kind, count]) => (
+                        <div key={kind} className="flex items-center gap-2 text-[11px]">
+                            <span
+                                className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0"
+                                style={{ backgroundColor: SYMBOL_KIND_STYLE[kind as SymbolKind]?.color || "#22d3ee" }}
+                            />
+                            <span className="text-slate-300 capitalize">{kind}</span>
+                            <span className="ml-auto text-slate-500">{count}</span>
+                        </div>
+                    ))}
                     {clusterInfo.topExtensions.map(({ ext, count, color }) => (
                         <div key={ext} className="flex items-center gap-2 text-[11px]">
                             <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: color }} />
