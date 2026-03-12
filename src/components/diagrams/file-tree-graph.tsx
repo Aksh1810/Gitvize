@@ -63,6 +63,7 @@ const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = 
 const MAX_SYMBOL_FILE_BYTES = 120_000;
 const SYMBOL_FILE_LIMIT_SMALL = 50;
 const SYMBOL_FILE_LIMIT_LARGE = 25;
+const SYMBOL_KIND_ORDER: SymbolKind[] = ["variable", "function", "method", "interface", "type", "class"];
 
 export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -73,7 +74,20 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [fileContent, setFileContent] = useState<string | null>(null);
     const [fileLoading, setFileLoading] = useState(false);
     const [fileError, setFileError] = useState<string | null>(null);
+    const [showRoot, setShowRoot] = useState(true);
+    const [showFolders, setShowFolders] = useState(true);
+    const [showFiles, setShowFiles] = useState(true);
     const [showSymbols, setShowSymbols] = useState(true);
+    const [showContainsEdges, setShowContainsEdges] = useState(true);
+    const [showSymbolRefs, setShowSymbolRefs] = useState(true);
+    const [symbolKindVisibility, setSymbolKindVisibility] = useState<Record<SymbolKind, boolean>>({
+        class: true,
+        function: true,
+        interface: true,
+        type: true,
+        method: true,
+        variable: true,
+    });
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
     const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
@@ -135,6 +149,31 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             setFileError(null);
         }
     }, [selectedFile, fetchFileContent]);
+
+    useEffect(() => {
+        if (!showFiles && showSymbols) {
+            setShowSymbols(false);
+        }
+    }, [showFiles, showSymbols]);
+
+    useEffect(() => {
+        if (!showSymbols && showSymbolRefs) {
+            setShowSymbolRefs(false);
+        }
+    }, [showSymbols, showSymbolRefs]);
+
+    useEffect(() => {
+        if (!showSymbols) {
+            setSymbolKindVisibility({
+                class: false,
+                function: false,
+                interface: false,
+                type: false,
+                method: false,
+                variable: false,
+            });
+        }
+    }, [showSymbols]);
 
     useEffect(() => {
         let cancelled = false;
@@ -262,6 +301,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 size: Math.min(80, 50 + rootChildren),
                 color: "#6366f1",
                 showLabel: 1,
+                hidden: showRoot ? 0 : 1,
             },
         });
 
@@ -305,6 +345,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     id: `edge:${parentId}-folder:${folderPath}`,
                     source: parentId,
                     target: `folder:${folderPath}`,
+                    type: "contains",
+                    hidden: showContainsEdges ? 0 : 1,
                 },
             });
         };
@@ -318,10 +360,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
 
             if (isFolder) {
-                ensureFolder(item.path);
+                if (showFolders) {
+                    ensureFolder(item.path);
+                }
             } else {
+                if (!showFiles) return;
                 // Ensure parent folder exists
-                if (parentPath && !addedFolders.has(parentPath)) {
+                if (showFolders && parentPath && !addedFolders.has(parentPath)) {
                     ensureFolder(parentPath);
                 }
 
@@ -343,20 +388,23 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
                 edges.push({
                     data: {
-                        id: `edge:${parentId}-file:${item.path}`,
-                        source: parentId,
+                        id: `edge:${showFolders ? parentId : "root"}-file:${item.path}`,
+                        source: showFolders ? parentId : "root",
                         target: `file:${item.path}`,
+                        type: "contains",
+                        hidden: showContainsEdges ? 0 : 1,
                     },
                 });
             }
         });
 
-        if (showSymbols && symbolGraph.symbols.length > 0) {
+        if (showSymbols && showFiles && symbolGraph.symbols.length > 0) {
             const nodeIdSet = new Set<string>(nodes.map((node) => node.data.id));
             const edgeIdSet = new Set<string>(edges.map((edge) => edge.data.id));
             const limitedByTreeSize = limitedItems.length > 800;
 
             symbolGraph.symbols.forEach((symbol) => {
+                if (!symbolKindVisibility[symbol.kind]) return;
                 const fileNodeId = `file:${symbol.filePath}`;
                 if (!nodeIdSet.has(fileNodeId)) return;
 
@@ -390,13 +438,16 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                             source: fileNodeId,
                             target: symbolId,
                             type: "symbolContains",
+                            hidden: showContainsEdges ? 0 : 1,
                         },
                     });
                 }
             });
 
-            symbolGraph.references.forEach((ref) => {
+            if (showSymbolRefs) {
+                symbolGraph.references.forEach((ref) => {
                 if (limitedByTreeSize && ref.confidence !== "high") return;
+                if (!symbolKindVisibility[ref.targetKind]) return;
 
                 const sourceFileId = `file:${ref.fromFilePath}`;
                 const targetPrefix = `symbol:${ref.toFilePath}:${ref.targetKind}:${ref.symbolName}`;
@@ -412,13 +463,15 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         target: targetPrefix,
                         type: "symbolRef",
                         confidence: ref.confidence,
+                            hidden: showSymbolRefs ? 0 : 1,
                     },
                 });
-            });
+                });
+            }
         }
 
         return { nodes, edges };
-    }, [tree, repo, showSymbols, symbolGraph]);
+    }, [tree, repo, showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showSymbolRefs, symbolKindVisibility, symbolGraph]);
 
     // Is this a large repo?
     const isLargeRepo = elements.nodes.length > 80;
@@ -430,6 +483,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         const symbols = elements.nodes.filter((n: any) => n.data.type === "symbol").length;
         const symbolRefs = elements.edges.filter((e: any) => e.data.type === "symbolRef").length;
         const symbolKinds = new Map<string, number>();
+        const symbolTotals = new Map<string, number>();
         // Count unique extensions
         const extMap = new Map<string, number>();
         elements.nodes.forEach((n: any) => {
@@ -441,13 +495,16 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 symbolKinds.set(kind, (symbolKinds.get(kind) || 0) + 1);
             }
         });
+        symbolGraph.symbols.forEach((symbol) => {
+            symbolTotals.set(symbol.kind, (symbolTotals.get(symbol.kind) || 0) + 1);
+        });
         // Sort by count descending, take top 8
         const topExtensions = Array.from(extMap.entries())
             .sort((a, b) => b[1] - a[1])
             .slice(0, 8)
             .map(([ext, count]) => ({ ext, count, color: getFileColor(`file.${ext}`) }));
-        return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds };
-    }, [elements]);
+        return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals };
+    }, [elements, symbolGraph.symbols]);
 
     const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
         cy.nodes().forEach(node => {
@@ -589,6 +646,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     }
                 },
                 {
+                    selector: 'node[hidden = 1]',
+                    style: {
+                        'display': 'none'
+                    }
+                },
+                {
                     selector: 'node[type="symbol"]',
                     style: {
                         'background-color': 'data(color)',
@@ -664,6 +727,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'opacity': 0.55,
                         'line-color': '#38bdf8',
                         'target-arrow-color': '#38bdf8',
+                    }
+                },
+                {
+                    selector: 'edge[hidden = 1]',
+                    style: {
+                        'display': 'none'
                     }
                 },
                 {
@@ -804,6 +873,81 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 >
                     Symbols {showSymbols ? "ON" : "OFF"}
                 </Button>
+            </div>
+
+            {/* Left menu: visibility toggles */}
+            <div className="absolute top-16 left-3 z-10 w-56 p-3 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl text-[11px] font-mono text-slate-300 shadow-[0_0_0_1px_rgba(148,163,184,0.05),0_10px_30px_rgba(0,0,0,0.35)]">
+                <div className="flex items-center justify-between mb-3">
+                    <div>
+                        <div className="text-[12px] font-semibold text-slate-200">Filters</div>
+                        <div className="text-[10px] text-slate-500">Toggle visibility of graph layers</div>
+                    </div>
+                </div>
+
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Node Types</div>
+                <div className="space-y-2">
+                    {[
+                        { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-indigo-500" },
+                        { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
+                        { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
+                    ].map((item) => (
+                        <button
+                            key={item.key}
+                            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${item.on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                            onClick={() => item.setOn((prev: boolean) => !prev)}
+                        >
+                            <span className={`h-3 w-3 rounded-full ${item.color} shadow-[0_0_10px_rgba(99,102,241,0.35)]`} />
+                            <span className="flex-1 text-left text-slate-200">{item.label}</span>
+                            <span className="text-slate-500">{item.count}</span>
+                            <span className={`ml-1 h-2.5 w-2.5 rounded-full ${item.on ? "bg-purple-500" : "bg-slate-700"}`} />
+                        </button>
+                    ))}
+
+                    {SYMBOL_KIND_ORDER.map((kind) => {
+                        const count = clusterInfo.symbolTotals.get(kind) || 0;
+                        const on = symbolKindVisibility[kind];
+                        const color = SYMBOL_KIND_STYLE[kind]?.color ?? "#22d3ee";
+                        return (
+                            <button
+                                key={kind}
+                                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                onClick={() =>
+                                    setSymbolKindVisibility((prev) => ({
+                                        ...prev,
+                                        [kind]: !prev[kind],
+                                    }))
+                                }
+                                disabled={!showSymbols}
+                            >
+                                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+                                <span className="flex-1 text-left text-slate-200 capitalize">{kind}</span>
+                                <span className="text-slate-500">{count}</span>
+                                <span className={`ml-1 h-2.5 w-2.5 rounded-full ${on ? "bg-purple-500" : "bg-slate-700"}`} />
+                            </button>
+                        );
+                    })}
+                </div>
+
+                <div className="mt-4 text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Edge Types</div>
+                <div className="space-y-2">
+                    <button
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                        onClick={() => setShowContainsEdges((prev) => !prev)}
+                    >
+                        <span className="h-1.5 w-8 rounded-full bg-emerald-400" />
+                        <span className="flex-1 text-left text-slate-200">Contains</span>
+                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showContainsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                    </button>
+                    <button
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showSymbolRefs ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                        onClick={() => setShowSymbolRefs((prev) => !prev)}
+                        disabled={!showSymbols}
+                    >
+                        <span className="h-1.5 w-8 rounded-full bg-cyan-400" />
+                        <span className="flex-1 text-left text-slate-200">Symbol refs</span>
+                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showSymbolRefs ? "bg-purple-500" : "bg-slate-700"}`} />
+                    </button>
+                </div>
             </div>
 
             {/* Stats bar overlay */}
