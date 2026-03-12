@@ -247,23 +247,54 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         return { folders, files, topExtensions };
     }, [elements]);
 
+    const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
+        cy.nodes().forEach(node => {
+            node.style('opacity', 1);
+            node.style('border-width', node.data('type') === 'folder' ? 2 : 0);
+            node.style('border-color', node.data('type') === 'folder' ? 'rgba(255,255,255,0.4)' : 'transparent');
+            if (isLargeRepo && node.data('type') === 'file') {
+                node.style('label', '');
+            }
+        });
+
+        cy.edges().forEach(edge => {
+            edge.style('opacity', 0.6);
+            edge.style('width', 1);
+            edge.style('line-color', '#334155');
+        });
+    }, [isLargeRepo]);
+
+    const focusNodeNeighborhood = useCallback((cy: cytoscape.Core, node: cytoscape.NodeSingular) => {
+        // Dim everything first, then re-highlight connected context.
+        cy.nodes().style('opacity', 0.12);
+        cy.edges().style('opacity', 0.06);
+
+        const neighborhood = node.closedNeighborhood();
+        neighborhood.nodes().style('opacity', 1);
+        neighborhood.edges().style('opacity', 0.92);
+        neighborhood.edges().style('width', 2);
+        neighborhood.edges().style('line-color', '#64748b');
+
+        // Primary focus node gets strongest emphasis.
+        node.style('border-width', 3);
+        node.style('border-color', '#facc15');
+
+        // Improve readability in large repos by revealing labels for focused neighborhood.
+        if (isLargeRepo) {
+            neighborhood.nodes().forEach(n => {
+                n.style('label', n.data('label'));
+            });
+        }
+    }, [isLargeRepo]);
+
     // Search handler
     const handleSearch = useCallback((query: string) => {
         setSearchQuery(query);
         const cy = cyRef.current;
         if (!cy) return;
 
-        // Reset all nodes to normal
-        cy.nodes().forEach(node => {
-            node.style('opacity', 1);
-            node.style('border-width', node.data('type') === 'folder' ? 2 : 0);
-            node.style('border-color', node.data('type') === 'folder' ? 'rgba(255,255,255,0.4)' : 'transparent');
-            // Reset file labels in large repos
-            if (isLargeRepo && node.data('type') === 'file') {
-                node.style('label', '');
-            }
-        });
-        cy.edges().style('opacity', 0.6);
+        // Reset any prior focus state before applying search highlight.
+        clearNodeFocus(cy);
 
         if (!query.trim()) return;
 
@@ -289,7 +320,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             // Also highlight their edges
             matched.connectedEdges().style('opacity', 0.8);
         }
-    }, [isLargeRepo]);
+    }, [clearNodeFocus]);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -380,6 +411,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             const node = evt.target;
             const data = node.data();
 
+            focusNodeNeighborhood(cy, node);
+
             // Pan to node
             cy.animate({
                 center: { eles: node },
@@ -395,6 +428,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     extension: data.extension,
                     size: data.rawSize
                 });
+            }
+        });
+
+        // Tap on empty canvas resets node-focus context.
+        cy.on('tap', (evt) => {
+            if (evt.target === cy) {
+                clearNodeFocus(cy);
             }
         });
 
@@ -425,7 +465,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         return () => {
             cy.destroy();
         };
-    }, [elements, isLargeRepo]);
+    }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood]);
 
     const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
     const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);
