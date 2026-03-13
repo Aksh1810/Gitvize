@@ -104,7 +104,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
     const [showExplorer, setShowExplorer] = useState(true);
+    const [explorerWidth, setExplorerWidth] = useState(220);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
+    const resizingRef = useRef(false);
+    const explorerWidthRef = useRef(220);
     const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
         symbols: [],
         references: [],
@@ -187,6 +190,31 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             }
             return next;
         });
+    }, []);
+
+    useEffect(() => {
+        explorerWidthRef.current = explorerWidth;
+    }, [explorerWidth]);
+
+    useEffect(() => {
+        const handleMouseMove = (event: MouseEvent) => {
+            if (!resizingRef.current) return;
+            const nextWidth = Math.min(340, Math.max(180, event.clientX));
+            setExplorerWidth(nextWidth);
+        };
+
+        const handleMouseUp = () => {
+            if (!resizingRef.current) return;
+            resizingRef.current = false;
+        };
+
+        window.addEventListener("mousemove", handleMouseMove);
+        window.addEventListener("mouseup", handleMouseUp);
+
+        return () => {
+            window.removeEventListener("mousemove", handleMouseMove);
+            window.removeEventListener("mouseup", handleMouseUp);
+        };
     }, []);
 
     // Binary file extensions that shouldn't be fetched
@@ -1043,7 +1071,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     return (
         <div className="relative w-full h-full">
             {/* Search bar overlay */}
-            <div className={`absolute top-3 z-10 flex items-center gap-2 ${showExplorer ? "left-[270px]" : "left-3"}`}>
+            <div
+                className="absolute top-3 z-10 flex items-center gap-2"
+                style={{ left: showExplorer ? explorerWidth + 16 : 12 }}
+            >
                 <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                     <input
@@ -1065,7 +1096,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             </div>
 
             {/* Left menu: visibility toggles */}
-            <div className={`absolute top-16 z-10 w-56 p-3 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl text-[11px] font-mono text-slate-300 shadow-[0_0_0_1px_rgba(148,163,184,0.05),0_10px_30px_rgba(0,0,0,0.35)] ${showExplorer ? "left-[270px]" : "left-3"}`}>
+            <div
+                className="absolute top-16 z-10 w-56 p-3 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl text-[11px] font-mono text-slate-300 shadow-[0_0_0_1px_rgba(148,163,184,0.05),0_10px_30px_rgba(0,0,0,0.35)]"
+                style={{ left: showExplorer ? explorerWidth + 16 : 12 }}
+            >
                 <div className="flex items-center justify-between mb-3">
                     <div>
                         <div className="text-[12px] font-semibold text-slate-200">Filters</div>
@@ -1198,7 +1232,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
             {/* File Explorer Panel */}
             <div className={`absolute top-0 bottom-0 left-0 z-20 transition-transform duration-200 ${showExplorer ? "translate-x-0" : "-translate-x-full"}`}>
-                <div className="w-64 h-full bg-slate-900/95 backdrop-blur border-r border-slate-700 flex flex-col">
+                <div
+                    className="h-full bg-slate-900/95 backdrop-blur border-r border-slate-700 flex flex-col"
+                    style={{ width: explorerWidth }}
+                >
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                         <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Explorer</span>
                         <button
@@ -1257,6 +1294,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         })()}
                     </div>
                 </div>
+                <div
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent"
+                    onMouseDown={() => {
+                        resizingRef.current = true;
+                    }}
+                />
             </div>
 
             {!showExplorer && (
@@ -1287,7 +1330,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             </div>
 
             {/* Controls overlay */}
-            <div className={`absolute bottom-4 z-10 flex flex-col gap-2 ${showExplorer ? "left-[270px]" : "left-4"}`}>
+            <div
+                className="absolute bottom-4 z-10 flex flex-col gap-2"
+                style={{ left: showExplorer ? explorerWidth + 16 : 16 }}
+            >
                 <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 hover:bg-slate-800" onClick={handleZoomIn}>
                     <ZoomIn className="w-4 h-4" />
                 </Button>
