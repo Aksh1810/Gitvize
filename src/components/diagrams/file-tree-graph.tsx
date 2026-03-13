@@ -106,6 +106,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [showExplorer, setShowExplorer] = useState(false);
     const [explorerWidth, setExplorerWidth] = useState(220);
     const [showRightFilters, setShowRightFilters] = useState(false);
+    const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
+    const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(true);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
@@ -1073,14 +1075,14 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         <div className="relative w-full h-full">
             {/* Top right controls */}
             <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
-                    <span><strong className="text-purple-400">{elements.nodes.length}</strong> nodes</span>
+                <div className="flex items-center gap-3 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
+                    <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>
                     <span className="text-slate-600">|</span>
-                    <span><strong className="text-blue-400">{elements.edges.length}</strong> edges</span>
+                    <span><strong className="text-slate-100">{elements.edges.length}</strong> edges</span>
                 </div>
                 <button
                     onClick={() => setShowRightFilters((prev) => !prev)}
-                    className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/80 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
+                    className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.35)]" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
                     aria-label="Toggle filters"
                 >
                     <Filter className="w-4 h-4" />
@@ -1092,7 +1094,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         placeholder="Search nodes..."
                         value={searchQuery}
                         onChange={(e) => handleSearch(e.target.value)}
-                        className="pl-8 pr-8 py-1.5 w-56 text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50"
+                        className="pl-8 pr-8 h-8 w-56 text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50"
                     />
                     {searchQuery && (
                         <button
@@ -1125,106 +1127,130 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         </button>
                     </div>
                     <div className="flex-1 overflow-auto px-3 py-3 text-[11px] font-mono text-slate-300">
-                        <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Node Types</div>
-                        <div className="space-y-2">
-                            {[
-                                { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-indigo-500" },
-                                { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
-                                { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
-                            ].map((item) => (
-                                <button
-                                    key={item.key}
-                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${item.on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                    onClick={() => item.setOn((prev: boolean) => !prev)}
-                                >
-                                    <span className={`h-3 w-3 rounded-full ${item.color} shadow-[0_0_10px_rgba(99,102,241,0.35)]`} />
-                                    <span className="flex-1 text-left text-slate-200">{item.label}</span>
-                                    <span className="text-slate-500">{item.count}</span>
-                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${item.on ? "bg-purple-500" : "bg-slate-700"}`} />
-                                </button>
-                            ))}
-
-                            {SYMBOL_KIND_ORDER.map((kind) => {
-                                const count = clusterInfo.symbolTotals.get(kind) || 0;
-                                const on = symbolKindVisibility[kind];
-                                const color = SYMBOL_KIND_STYLE[kind]?.color ?? "#22d3ee";
-                                return (
+                        <button
+                            className="w-full flex items-center justify-between rounded px-2 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
+                            onClick={() => setNodeFiltersOpen((prev) => !prev)}
+                        >
+                            <span>Node Types</span>
+                            {nodeFiltersOpen ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                            ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                            )}
+                        </button>
+                        {nodeFiltersOpen && (
+                            <div className="space-y-2 mt-2">
+                                {[
+                                    { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-indigo-500" },
+                                    { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
+                                    { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
+                                ].map((item) => (
                                     <button
-                                        key={kind}
-                                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                        onClick={() =>
-                                            setSymbolKindVisibility((prev) => ({
-                                                ...prev,
-                                                [kind]: !prev[kind],
-                                            }))
-                                        }
-                                        disabled={!showSymbols}
+                                        key={item.key}
+                                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${item.on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                        onClick={() => item.setOn((prev: boolean) => !prev)}
                                     >
-                                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-                                        <span className="flex-1 text-left text-slate-200 capitalize">{kind}</span>
-                                        <span className="text-slate-500">{count}</span>
-                                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${on ? "bg-purple-500" : "bg-slate-700"}`} />
+                                        <span className={`h-3 w-3 rounded-full ${item.color} shadow-[0_0_10px_rgba(99,102,241,0.35)]`} />
+                                        <span className="flex-1 text-left text-slate-200">{item.label}</span>
+                                        <span className="text-slate-500">{item.count}</span>
+                                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${item.on ? "bg-purple-500" : "bg-slate-700"}`} />
                                     </button>
-                                );
-                            })}
-                        </div>
+                                ))}
 
-                        <div className="mt-4 text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Edge Types</div>
-                        <div className="space-y-2">
-                            <button
-                                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                onClick={() => setShowContainsEdges((prev) => !prev)}
-                            >
-                                <span className="h-1.5 w-8 rounded-full bg-emerald-400" />
-                                <span className="flex-1 text-left text-slate-200">Contains</span>
-                                <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showContainsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                            </button>
-                            <button
-                                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                onClick={() => setShowDefinesEdges((prev) => !prev)}
-                                disabled={!showSymbols}
-                            >
-                                <span className="h-1.5 w-8 rounded-full bg-cyan-400" />
-                                <span className="flex-1 text-left text-slate-200">Defines</span>
-                                <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showDefinesEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                            </button>
-                            <button
-                                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                onClick={() => setShowImportsEdges((prev) => !prev)}
-                                disabled={!showSymbols}
-                            >
-                                <span className="h-1.5 w-8 rounded-full bg-blue-500" />
-                                <span className="flex-1 text-left text-slate-200">Imports</span>
-                                <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImportsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                            </button>
-                            <button
-                                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                onClick={() => setShowCallsEdges((prev) => !prev)}
-                                disabled={!showSymbols}
-                            >
-                                <span className="h-1.5 w-8 rounded-full bg-violet-500" />
-                                <span className="flex-1 text-left text-slate-200">Calls</span>
-                                <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showCallsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                            </button>
-                            <button
-                                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                onClick={() => setShowExtendsEdges((prev) => !prev)}
-                                disabled={!showSymbols}
-                            >
-                                <span className="h-1.5 w-8 rounded-full bg-orange-500" />
-                                <span className="flex-1 text-left text-slate-200">Extends</span>
-                                <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showExtendsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                            </button>
-                            <button
-                                className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                onClick={() => setShowImplementsEdges((prev) => !prev)}
-                                disabled={!showSymbols}
-                            >
-                                <span className="h-1.5 w-8 rounded-full bg-pink-500" />
-                                <span className="flex-1 text-left text-slate-200">Implements</span>
-                                <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImplementsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                            </button>
-                        </div>
+                                {SYMBOL_KIND_ORDER.map((kind) => {
+                                    const count = clusterInfo.symbolTotals.get(kind) || 0;
+                                    const on = symbolKindVisibility[kind];
+                                    const color = SYMBOL_KIND_STYLE[kind]?.color ?? "#22d3ee";
+                                    return (
+                                        <button
+                                            key={kind}
+                                            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                            onClick={() =>
+                                                setSymbolKindVisibility((prev) => ({
+                                                    ...prev,
+                                                    [kind]: !prev[kind],
+                                                }))
+                                            }
+                                            disabled={!showSymbols}
+                                        >
+                                            <span className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+                                            <span className="flex-1 text-left text-slate-200 capitalize">{kind}</span>
+                                            <span className="text-slate-500">{count}</span>
+                                            <span className={`ml-1 h-2.5 w-2.5 rounded-full ${on ? "bg-purple-500" : "bg-slate-700"}`} />
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        <button
+                            className="w-full flex items-center justify-between rounded px-2 py-2 mt-4 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
+                            onClick={() => setEdgeFiltersOpen((prev) => !prev)}
+                        >
+                            <span>Edge Types</span>
+                            {edgeFiltersOpen ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                            ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                            )}
+                        </button>
+                        {edgeFiltersOpen && (
+                            <div className="space-y-2 mt-2">
+                                <button
+                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    onClick={() => setShowContainsEdges((prev) => !prev)}
+                                >
+                                    <span className="h-1.5 w-8 rounded-full bg-emerald-400" />
+                                    <span className="flex-1 text-left text-slate-200">Contains</span>
+                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showContainsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                </button>
+                                <button
+                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    onClick={() => setShowDefinesEdges((prev) => !prev)}
+                                    disabled={!showSymbols}
+                                >
+                                    <span className="h-1.5 w-8 rounded-full bg-cyan-400" />
+                                    <span className="flex-1 text-left text-slate-200">Defines</span>
+                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showDefinesEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                </button>
+                                <button
+                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    onClick={() => setShowImportsEdges((prev) => !prev)}
+                                    disabled={!showSymbols}
+                                >
+                                    <span className="h-1.5 w-8 rounded-full bg-blue-500" />
+                                    <span className="flex-1 text-left text-slate-200">Imports</span>
+                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImportsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                </button>
+                                <button
+                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    onClick={() => setShowCallsEdges((prev) => !prev)}
+                                    disabled={!showSymbols}
+                                >
+                                    <span className="h-1.5 w-8 rounded-full bg-violet-500" />
+                                    <span className="flex-1 text-left text-slate-200">Calls</span>
+                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showCallsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                </button>
+                                <button
+                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    onClick={() => setShowExtendsEdges((prev) => !prev)}
+                                    disabled={!showSymbols}
+                                >
+                                    <span className="h-1.5 w-8 rounded-full bg-orange-500" />
+                                    <span className="flex-1 text-left text-slate-200">Extends</span>
+                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showExtendsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                </button>
+                                <button
+                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    onClick={() => setShowImplementsEdges((prev) => !prev)}
+                                    disabled={!showSymbols}
+                                >
+                                    <span className="h-1.5 w-8 rounded-full bg-pink-500" />
+                                    <span className="flex-1 text-left text-slate-200">Implements</span>
+                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImplementsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
