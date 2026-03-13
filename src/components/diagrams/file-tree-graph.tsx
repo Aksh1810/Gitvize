@@ -10,7 +10,7 @@ import type { TreeItem, FileNodeData } from "@/types";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Maximize2, ZoomIn, ZoomOut, Search, X } from "lucide-react";
+import { ExternalLink, Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
 import "prismjs/components/prism-javascript";
@@ -49,6 +49,15 @@ interface FileTreeGraphProps {
     tree: TreeItem[];
     owner: string;
     repo: string;
+}
+
+interface ExplorerNode {
+    name: string;
+    path: string;
+    type: "folder" | "file";
+    children?: ExplorerNode[];
+    size?: number;
+    extension?: string;
 }
 
 const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = {
@@ -94,6 +103,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     });
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
+    const [showExplorer, setShowExplorer] = useState(true);
+    const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
         symbols: [],
         references: [],
@@ -118,6 +129,65 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             variable: true,
         } as Record<SymbolKind, boolean>,
     });
+
+    const explorerTree = useMemo<ExplorerNode>(() => {
+        const rootNode: ExplorerNode = { name: repo, path: "", type: "folder", children: [] };
+        const nodeMap = new Map<string, ExplorerNode>();
+        nodeMap.set("", rootNode);
+
+        tree.forEach((item) => {
+            const parts = item.path.split("/");
+            let currentPath = "";
+            parts.forEach((part, index) => {
+                const isLast = index === parts.length - 1;
+                const nextPath = currentPath ? `${currentPath}/${part}` : part;
+                const isFile = isLast && item.type === "blob";
+
+                if (!nodeMap.has(nextPath)) {
+                    const node: ExplorerNode = {
+                        name: part,
+                        path: nextPath,
+                        type: isFile ? "file" : "folder",
+                        children: isFile ? undefined : [],
+                        size: isFile ? item.size : undefined,
+                        extension: isFile ? part.split(".").pop() : undefined,
+                    };
+                    nodeMap.set(nextPath, node);
+
+                    const parent = nodeMap.get(currentPath);
+                    if (parent?.children) {
+                        parent.children.push(node);
+                    }
+                }
+
+                currentPath = nextPath;
+            });
+        });
+
+        const sortNodes = (node: ExplorerNode) => {
+            if (!node.children) return;
+            node.children.sort((a, b) => {
+                if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+                return a.name.localeCompare(b.name);
+            });
+            node.children.forEach(sortNodes);
+        };
+
+        sortNodes(rootNode);
+        return rootNode;
+    }, [repo, tree]);
+
+    const toggleFolder = useCallback((path: string) => {
+        setExpandedFolders((prev) => {
+            const next = new Set(prev);
+            if (next.has(path)) {
+                next.delete(path);
+            } else {
+                next.add(path);
+            }
+            return next;
+        });
+    }, []);
 
     // Binary file extensions that shouldn't be fetched
     const BINARY_EXTENSIONS = new Set([
@@ -631,6 +701,29 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         }
     }, [isLargeRepo]);
 
+    const handleExplorerFileSelect = useCallback((node: ExplorerNode) => {
+        if (node.type !== "file") return;
+        setSelectedFile({
+            label: node.name,
+            path: node.path,
+            type: "file",
+            extension: node.extension,
+            size: node.size,
+        });
+
+        const cy = cyRef.current;
+        if (!cy) return;
+        const cyNode = cy.getElementById(`file:${node.path}`);
+        if (cyNode && cyNode.nonempty()) {
+            focusNodeNeighborhood(cy, cyNode);
+            cy.animate({
+                center: { eles: cyNode },
+                duration: 300,
+                easing: "ease-out-quad",
+            });
+        }
+    }, [focusNodeNeighborhood]);
+
     // Search handler
     const handleSearch = useCallback((query: string) => {
         setSearchQuery(query);
@@ -762,6 +855,15 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'curve-style': 'bezier',
                         'control-point-step-size': 40,
                         'target-arrow-shape': 'none'
+                    }
+                },
+                {
+                    selector: 'edge[type="contains"]',
+                    style: {
+                        'width': 1,
+                        'line-color': '#34d399',
+                        'opacity': 0.7,
+                        'curve-style': 'bezier'
                     }
                 },
                 {
@@ -941,7 +1043,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     return (
         <div className="relative w-full h-full">
             {/* Search bar overlay */}
-            <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
+            <div className={`absolute top-3 z-10 flex items-center gap-2 ${showExplorer ? "left-[270px]" : "left-3"}`}>
                 <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                     <input
@@ -963,7 +1065,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             </div>
 
             {/* Left menu: visibility toggles */}
-            <div className="absolute top-16 left-3 z-10 w-56 p-3 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl text-[11px] font-mono text-slate-300 shadow-[0_0_0_1px_rgba(148,163,184,0.05),0_10px_30px_rgba(0,0,0,0.35)]">
+            <div className={`absolute top-16 z-10 w-56 p-3 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl text-[11px] font-mono text-slate-300 shadow-[0_0_0_1px_rgba(148,163,184,0.05),0_10px_30px_rgba(0,0,0,0.35)] ${showExplorer ? "left-[270px]" : "left-3"}`}>
                 <div className="flex items-center justify-between mb-3">
                     <div>
                         <div className="text-[12px] font-semibold text-slate-200">Filters</div>
@@ -1094,33 +1196,86 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 </div>
             )}
 
+            {/* File Explorer Panel */}
+            <div className={`absolute top-0 bottom-0 left-0 z-20 transition-transform duration-200 ${showExplorer ? "translate-x-0" : "-translate-x-full"}`}>
+                <div className="w-64 h-full bg-slate-900/95 backdrop-blur border-r border-slate-700 flex flex-col">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
+                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Explorer</span>
+                        <button
+                            onClick={() => setShowExplorer(false)}
+                            className="text-slate-400 hover:text-slate-200"
+                            aria-label="Hide explorer"
+                        >
+                            <PanelLeftClose className="w-4 h-4" />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-auto px-2 py-2 text-[11px] font-mono text-slate-300">
+                        {(() => {
+                            const renderNode = (node: ExplorerNode, depth: number) => {
+                                const isFolder = node.type === "folder";
+                                const isExpanded = expandedFolders.has(node.path);
+                                const hasChildren = node.children && node.children.length > 0;
+                                return (
+                                    <div key={node.path || "root"}>
+                                        <button
+                                            className="w-full flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-slate-800/70"
+                                            style={{ paddingLeft: 6 + depth * 12 }}
+                                            onClick={() => {
+                                                if (isFolder) {
+                                                    toggleFolder(node.path);
+                                                } else {
+                                                    handleExplorerFileSelect(node);
+                                                }
+                                            }}
+                                        >
+                                            {isFolder ? (
+                                                hasChildren ? (
+                                                    isExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />
+                                                ) : (
+                                                    <span className="w-3 h-3" />
+                                                )
+                                            ) : (
+                                                <span className="w-3 h-3" />
+                                            )}
+                                            {isFolder ? (
+                                                <Folder className="w-3.5 h-3.5 text-slate-400" />
+                                            ) : (
+                                                <File className="w-3.5 h-3.5 text-slate-400" />
+                                            )}
+                                            <span className="truncate text-left">{node.name}</span>
+                                        </button>
+                                        {isFolder && isExpanded && hasChildren && (
+                                            <div>
+                                                {node.children!.map((child) => renderNode(child, depth + 1))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            };
+
+                            return renderNode(explorerTree, 0);
+                        })()}
+                    </div>
+                </div>
+            </div>
+
+            {!showExplorer && (
+                <button
+                    onClick={() => setShowExplorer(true)}
+                    className="absolute top-3 left-3 z-20 flex items-center gap-2 px-2 py-1.5 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300 hover:text-white"
+                >
+                    <PanelLeftOpen className="w-4 h-4" />
+                    Explorer
+                </button>
+            )}
+
             {/* Cytoscape Container */}
             <div ref={containerRef} className="w-full h-full min-h-[800px] bg-slate-950 rounded-xl" />
 
             {/* Cluster info overlay */}
             <div className="absolute bottom-4 right-4 z-10 p-3 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-lg min-w-[160px]">
-                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Cluster Info</div>
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">File Types</div>
                 <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-[11px]">
-                        <span className="w-2.5 h-2.5 rounded-full bg-[#6366f1] inline-block flex-shrink-0" />
-                        <span className="text-slate-300">Root</span>
-                        <span className="ml-auto text-slate-500">1</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[11px]">
-                        <span className="w-2.5 h-2.5 rounded-full bg-[#ec4899] inline-block flex-shrink-0" />
-                        <span className="text-slate-300">Folders</span>
-                        <span className="ml-auto text-slate-500">{clusterInfo.folders}</span>
-                    </div>
-                    {showSymbols && Array.from(clusterInfo.symbolKinds.entries()).map(([kind, count]) => (
-                        <div key={kind} className="flex items-center gap-2 text-[11px]">
-                            <span
-                                className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0"
-                                style={{ backgroundColor: SYMBOL_KIND_STYLE[kind as SymbolKind]?.color || "#22d3ee" }}
-                            />
-                            <span className="text-slate-300 capitalize">{kind}</span>
-                            <span className="ml-auto text-slate-500">{count}</span>
-                        </div>
-                    ))}
                     {clusterInfo.topExtensions.map(({ ext, count, color }) => (
                         <div key={ext} className="flex items-center gap-2 text-[11px]">
                             <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: color }} />
@@ -1132,7 +1287,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             </div>
 
             {/* Controls overlay */}
-            <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
+            <div className={`absolute bottom-4 z-10 flex flex-col gap-2 ${showExplorer ? "left-[270px]" : "left-4"}`}>
                 <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 hover:bg-slate-800" onClick={handleZoomIn}>
                     <ZoomIn className="w-4 h-4" />
                 </Button>
