@@ -109,6 +109,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [showExplorer, setShowExplorer] = useState(false);
     const [explorerWidth, setExplorerWidth] = useState(220);
     const [showRightFilters, setShowRightFilters] = useState(false);
+    const [showSearch, setShowSearch] = useState(false);
     const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
     const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(true);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
@@ -1116,23 +1117,33 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 >
                     <Filter className="w-4 h-4" />
                 </button>
-                <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                    <input
-                        type="text"
-                        placeholder="Search nodes..."
-                        value={searchQuery}
-                        onChange={(e) => handleSearch(e.target.value)}
-                        className="pl-8 pr-8 h-8 w-56 text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50"
-                    />
-                    {searchQuery && (
-                        <button
-                            onClick={() => handleSearch("")}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                        >
-                            <X className="w-3 h-3" />
-                        </button>
-                    )}
+                <div className="relative flex items-center">
+                    <button
+                        onClick={() => setShowSearch((prev) => !prev)}
+                        className={`flex items-center justify-center w-8 h-8 rounded-md border ${showSearch ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
+                        aria-label="Toggle search"
+                    >
+                        <Search className="w-4 h-4" />
+                    </button>
+                    <div className={`ml-2 overflow-hidden transition-all duration-200 ${showSearch ? "max-w-[140px] opacity-100" : "max-w-0 opacity-0"}`}>
+                        <div className="relative">
+                            <input
+                                type="text"
+                                placeholder="Search"
+                                value={searchQuery}
+                                onChange={(e) => handleSearch(e.target.value)}
+                                className="pl-3 pr-7 h-8 w-[140px] text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50"
+                            />
+                            {searchQuery && (
+                                <button
+                                    onClick={() => handleSearch("")}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            )}
+                        </div>
+                    </div>
                 </div>
             </div>
 
