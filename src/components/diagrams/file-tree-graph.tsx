@@ -596,7 +596,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         cy.edges().forEach(edge => {
             edge.style('opacity', 0.6);
             edge.style('width', 1);
-            edge.style('line-color', '#334155');
+            edge.style('shadow-blur', 0);
+            edge.style('shadow-opacity', 0);
         });
     }, [isLargeRepo]);
 
@@ -610,7 +611,9 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         neighborhood.nodes().style('opacity', 1);
         neighborhood.edges().style('opacity', 0.92);
         neighborhood.edges().style('width', 2);
-        neighborhood.edges().style('line-color', '#64748b');
+        neighborhood.edges().style('shadow-blur', 8);
+        neighborhood.edges().style('shadow-opacity', 0.6);
+        neighborhood.edges().style('shadow-color', '#93c5fd');
 
         neighborhood.nodes().forEach(n => {
             n.data('keepLabel', 1);
@@ -757,7 +760,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         'line-color': '#334155',
                         'opacity': 0.4,
                         'curve-style': 'bezier',
-                        'control-point-step-size': 40
+                        'control-point-step-size': 40,
+                        'target-arrow-shape': 'none'
                     }
                 },
                 {
@@ -765,7 +769,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     style: {
                         'width': 0.9,
                         'line-color': '#22d3ee',
-                        'opacity': 0.35,
+                        'opacity': 0.7,
                         'curve-style': 'unbundled-bezier',
                         'control-point-distances': [25],
                         'control-point-weights': [0.5],
@@ -776,11 +780,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     style: {
                         'width': 1.1,
                         'line-color': '#3b82f6',
-                        'opacity': 0.4,
+                        'opacity': 0.7,
                         'curve-style': 'bezier',
-                        'line-style': 'dashed',
-                        'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#3b82f6',
                     }
                 },
                 {
@@ -788,11 +789,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     style: {
                         'width': 1.1,
                         'line-color': '#8b5cf6',
-                        'opacity': 0.4,
+                        'opacity': 0.7,
                         'curve-style': 'bezier',
-                        'line-style': 'dashed',
-                        'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#8b5cf6',
                     }
                 },
                 {
@@ -800,10 +798,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     style: {
                         'width': 1.2,
                         'line-color': '#f97316',
-                        'opacity': 0.45,
+                        'opacity': 0.75,
                         'curve-style': 'bezier',
-                        'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#f97316',
                     }
                 },
                 {
@@ -811,10 +807,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     style: {
                         'width': 1.2,
                         'line-color': '#ec4899',
-                        'opacity': 0.45,
+                        'opacity': 0.75,
                         'curve-style': 'bezier',
-                        'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#ec4899',
                     }
                 },
                 {
