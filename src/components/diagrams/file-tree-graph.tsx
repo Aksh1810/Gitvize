@@ -78,11 +78,14 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const containerRef = useRef<HTMLDivElement>(null);
     const cyRef = useRef<cytoscape.Core | null>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
+    const codeScrollRef = useRef<HTMLDivElement>(null);
     const [selectedFile, setSelectedFile] = useState<FileNodeData | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [fileContent, setFileContent] = useState<string | null>(null);
     const [fileLoading, setFileLoading] = useState(false);
     const [fileError, setFileError] = useState<string | null>(null);
+    const [symbolFocus, setSymbolFocus] = useState<string | null>(null);
+    const [focusLine, setFocusLine] = useState<number | null>(null);
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
@@ -274,6 +277,28 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             setFileError(null);
         }
     }, [selectedFile, fetchFileContent]);
+
+    useEffect(() => {
+        if (!fileContent || !symbolFocus) {
+            setFocusLine(null);
+            return;
+        }
+
+        const matcher = new RegExp(`\\b${escapeRegExp(symbolFocus)}\\b`);
+        const lines = fileContent.split("\n");
+        const matchIndex = lines.findIndex((line) => matcher.test(line));
+        setFocusLine(matchIndex >= 0 ? matchIndex + 1 : null);
+    }, [fileContent, symbolFocus]);
+
+    useEffect(() => {
+        if (!focusLine || !codeScrollRef.current) return;
+        const container = codeScrollRef.current;
+        const target = container.querySelector(`[data-line="${focusLine}"]`);
+        if (target instanceof HTMLElement) {
+            const targetTop = target.offsetTop - container.clientHeight * 0.4;
+            container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+        }
+    }, [focusLine]);
 
     useEffect(() => {
         if (!showFiles && showSymbols) {
@@ -991,6 +1016,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             });
 
             if (data.type === "file") {
+                setSymbolFocus(null);
+                setFocusLine(null);
                 setSelectedFile({
                     label: data.label,
                     path: data.path,
@@ -1002,6 +1029,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 const parentPath = String(data.parentPath);
                 const fileLabel = parentPath.split("/").pop() || parentPath;
                 const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                setSymbolFocus(String(data.label));
+                setFocusLine(null);
                 setSelectedFile({
                     label: fileLabel,
                     path: parentPath,
@@ -1410,7 +1439,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     </div>
 
                     {/* Code Content */}
-                    <div className="flex-1 overflow-auto">
+                    <div className="flex-1 overflow-auto" ref={codeScrollRef}>
                         {fileLoading ? (
                             <div className="flex items-center justify-center h-full">
                                 <div className="text-center">
@@ -1439,7 +1468,11 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                             ? highlighted.split("\n")
                                             : fileContent!.split("\n");
                                         return lines.map((line, i) => (
-                                            <div key={i} className="flex hover:bg-white/[0.03] group">
+                                            <div
+                                                key={i}
+                                                data-line={i + 1}
+                                                className={`flex group transition-colors duration-300 ${focusLine === i + 1 ? "bg-indigo-500/15 border-l-2 border-indigo-400/70" : "hover:bg-white/[0.03]"}`}
+                                            >
                                                 <span className="inline-block w-12 text-right pr-4 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
                                                     {i + 1}
                                                 </span>
@@ -1474,4 +1507,8 @@ function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
