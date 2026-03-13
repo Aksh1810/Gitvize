@@ -1,16 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetBrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
   subsets: ["latin"],
 });
 
@@ -41,10 +41,15 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-background`}
+        className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased min-h-screen bg-background relative overflow-x-hidden`}
       >
         <TooltipProvider delayDuration={300}>
+          <div className="app-background" />
+          <div className="app-orb orb-1" />
+          <div className="app-orb orb-2" />
+          <div className="app-orb orb-3" />
           <div className="stars-bg" />
+          <div className="app-noise" />
           {children}
         </TooltipProvider>
         <Toaster

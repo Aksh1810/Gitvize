@@ -301,9 +301,16 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         return (
             <div className="min-h-screen pt-14">
                 <Navbar owner={owner} repo={repo} />
-                <div className="p-6 space-y-4 max-w-7xl mx-auto">
+                <div className="p-6 space-y-6 max-w-7xl mx-auto">
+                    <div className="glass-card-strong glow-border p-6 flex items-center justify-between">
+                        <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Initializing</p>
+                            <h2 className="text-lg font-semibold">Mapping repository signals</h2>
+                        </div>
+                        <div className="loading-orbit" />
+                    </div>
                     <Skeleton className="h-8 w-64" />
-                    <div className="grid grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         {[1, 2, 3, 4].map((i) => (
                             <Skeleton key={i} className="h-20" />
                         ))}
@@ -367,11 +374,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         <AnimatePresence mode="wait">
                             <motion.div
                                 key={activeTab}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                transition={{ duration: 0.2 }}
-                                className="h-full glass-card overflow-hidden rounded-xl overscroll-contain"
+                                initial={{ opacity: 0, y: 12, filter: "blur(6px)" }}
+                                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                                exit={{ opacity: 0, y: -12, filter: "blur(6px)" }}
+                                transition={{ duration: 0.35, ease: "easeOut" }}
+                                className="h-full diagram-shell diagram-grid overscroll-contain"
                             >
                                 {activeTab === "architecture" && analysis ? (
                                     <ArchitectureDiagram

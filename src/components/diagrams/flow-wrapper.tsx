@@ -62,8 +62,9 @@ export default function FlowWrapper({
                 minZoom={0.1}
                 maxZoom={3}
                 proOptions={{ hideAttribution: true }}
+                className="bg-transparent"
             >
-                <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(99, 102, 241, 0.08)" />
+                <Background variant={BackgroundVariant.Dots} gap={26} size={1} color="rgba(99, 102, 241, 0.12)" />
                 <Controls className="!bg-transparent" />
                 <MiniMap
                     nodeColor={(node) => {

@@ -23,7 +23,7 @@ const stepConfig: Record<
 
 const statusIcon: Record<PipelineStatus, React.ReactNode> = {
     pending: <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30" />,
-    running: <Loader2 className="w-4 h-4 animate-spin text-indigo" />,
+    running: <Loader2 className="w-4 h-4 animate-spin text-cyan-300" />,
     complete: <CheckCircle2 className="w-4 h-4 text-emerald-400" />,
     error: <XCircle className="w-4 h-4 text-red-400" />,
 };
@@ -33,43 +33,45 @@ export default function PipelineStatusDisplay({ steps }: PipelineStatusProps) {
 
     return (
         <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
+            initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="glass-card p-6 max-w-md mx-auto"
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="glass-card-strong glow-border p-6 max-w-md mx-auto"
         >
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex items-center gap-4 mb-6">
                 <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${isActive
-                            ? "bg-indigo/10 animate-pulse-glow"
-                            : "bg-secondary/50"
-                        }`}
+                    className={`relative w-11 h-11 rounded-2xl flex items-center justify-center ${
+                        isActive ? "bg-indigo-500/15 animate-pulse-glow" : "bg-secondary/60"
+                    }`}
                 >
-                    <Brain className={`w-5 h-5 ${isActive ? "text-indigo" : "text-muted-foreground"}`} />
+                    <div className="absolute -inset-2 rounded-2xl bg-indigo-500/20 blur" />
+                    <Brain className={`w-5 h-5 relative ${isActive ? "text-indigo-200" : "text-muted-foreground"}`} />
                 </div>
                 <div>
-                    <h3 className="font-semibold">AI Analysis Pipeline</h3>
+                    <h3 className="font-semibold text-base">AI Analysis Pipeline</h3>
                     <p className="text-xs text-muted-foreground">
-                        {isActive ? "Processing..." : "Complete"}
+                        {isActive ? "Processing live graph synthesis" : "Complete"}
                     </p>
                 </div>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 relative">
+                <div className="absolute left-[9px] top-2 bottom-2 w-px bg-gradient-to-b from-indigo-500/50 via-cyan-500/30 to-transparent" />
                 {steps.map((s, i) => (
                     <motion.div
                         key={s.step}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.1 }}
-                        className="flex items-start gap-3"
+                        className="flex items-start gap-3 relative"
                     >
-                        <div className="mt-0.5">{statusIcon[s.status]}</div>
+                        <div className="mt-0.5 z-10">{statusIcon[s.status]}</div>
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                                 {stepConfig[s.step].icon}
                                 <span
                                     className={`text-sm font-medium ${s.status === "running"
-                                            ? "text-indigo"
+                                            ? "text-cyan-200"
                                             : s.status === "complete"
                                                 ? "text-foreground"
                                                 : "text-muted-foreground"
