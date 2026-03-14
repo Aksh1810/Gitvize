@@ -302,7 +302,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <div className="min-h-screen pt-14">
                 <Navbar owner={owner} repo={repo} />
                 <div className="p-6 space-y-6 max-w-7xl mx-auto">
-                    <div className="glass-card-strong glow-border p-6 flex items-center justify-between">
+                    <div className="pro-surface loading-shimmer-soft p-6 flex items-center justify-between">
                         <div>
                             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Initializing</p>
                             <h2 className="text-lg font-semibold">Mapping repository signals</h2>
@@ -444,7 +444,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         )}
 
                         {activeTab === "architecture" && (
-                            <div className="glass-card p-3 border border-border/40">
+                            <div className="pro-surface p-3">
                                 <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                                     Premium Diagram
                                 </div>
@@ -457,7 +457,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         }
                                         runAnalysis("premium");
                                     }}
-                                    className="w-full text-xs px-3 py-2 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-colors"
+                                    className="w-full text-xs px-3 py-2 pro-control pro-focus-ring"
                                 >
                                     Generate Premium Diagram
                                 </button>

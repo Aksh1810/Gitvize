@@ -36,16 +36,16 @@ export default function PipelineStatusDisplay({ steps }: PipelineStatusProps) {
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
-            className="glass-card-strong glow-border p-6 max-w-md mx-auto"
+            className="pro-surface loading-shimmer-soft p-6 max-w-md mx-auto"
         >
             <div className="flex items-center gap-4 mb-6">
                 <div
                     className={`relative w-11 h-11 rounded-2xl flex items-center justify-center ${
-                        isActive ? "bg-indigo-500/15 animate-pulse-glow" : "bg-secondary/60"
+                        isActive ? "bg-white/12 status-pulse-subtle" : "bg-secondary/60"
                     }`}
                 >
-                    <div className="absolute -inset-2 rounded-2xl bg-indigo-500/20 blur" />
-                    <Brain className={`w-5 h-5 relative ${isActive ? "text-indigo-200" : "text-muted-foreground"}`} />
+                    <div className="absolute -inset-2 rounded-2xl bg-white/10 blur" />
+                    <Brain className={`w-5 h-5 relative ${isActive ? "text-white" : "text-muted-foreground"}`} />
                 </div>
                 <div>
                     <h3 className="font-semibold text-base">AI Analysis Pipeline</h3>
@@ -56,7 +56,7 @@ export default function PipelineStatusDisplay({ steps }: PipelineStatusProps) {
             </div>
 
             <div className="space-y-4 relative">
-                <div className="absolute left-[9px] top-2 bottom-2 w-px bg-gradient-to-b from-indigo-500/50 via-cyan-500/30 to-transparent" />
+                <div className="absolute left-[9px] top-2 bottom-2 w-px bg-gradient-to-b from-white/40 via-white/20 to-transparent" />
                 {steps.map((s, i) => (
                     <motion.div
                         key={s.step}
@@ -71,7 +71,7 @@ export default function PipelineStatusDisplay({ steps }: PipelineStatusProps) {
                                 {stepConfig[s.step].icon}
                                 <span
                                     className={`text-sm font-medium ${s.status === "running"
-                                            ? "text-cyan-200"
+                                            ? "text-white"
                                             : s.status === "complete"
                                                 ? "text-foreground"
                                                 : "text-muted-foreground"

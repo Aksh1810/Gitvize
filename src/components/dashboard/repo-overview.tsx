@@ -46,24 +46,24 @@ export default function RepoOverview({
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="glass-card p-6 max-w-3xl"
+            className="pro-surface p-6 max-w-3xl"
         >
             {/* Repo Name with GitHub link */}
             <a
                 href={metadata.htmlUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group mb-5 block rounded-xl border border-border/40 bg-secondary/20 px-3 py-2.5 transition-colors hover:border-indigo/30 hover:bg-indigo/5"
+                className="group mb-5 block rounded-xl border border-white/12 bg-white/[0.02] px-3 py-2.5 transition-colors hover:border-white/25 hover:bg-white/[0.05]"
             >
                 <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                     <FolderGit2 className="h-3 w-3" />
                     Repository
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[15px] font-semibold text-foreground transition-colors group-hover:text-indigo">
+                    <span className="truncate text-[15px] font-semibold text-foreground transition-colors group-hover:text-white">
                         {repo}
                     </span>
-                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-indigo" />
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-white" />
                 </div>
             </a>
 
@@ -72,9 +72,10 @@ export default function RepoOverview({
                 {statItems.map(({ key, icon: Icon, label }) => (
                     <div
                         key={key}
-                        className="flex flex-col items-center justify-center p-3 rounded-lg bg-secondary/30 border border-border/30"
+                        className="flex flex-col items-center justify-center p-3 rounded-lg border border-white/12 bg-white/[0.03]"
                     >
-                        <div className="text-lg font-bold">
+                        <Icon className="w-3.5 h-3.5 mb-1 text-white/70" />
+                        <div className="text-lg font-bold text-white/95">
                             {formatCount(metadata[key])}
                         </div>
                         <div className="text-xs text-muted-foreground">{label}</div>
@@ -96,7 +97,7 @@ export default function RepoOverview({
                         <Badge
                             key={topic}
                             variant="secondary"
-                            className="text-[10px] bg-indigo/10 border-indigo/20 text-indigo"
+                            className="text-[10px] pro-muted-chip"
                         >
                             {topic}
                         </Badge>
@@ -115,7 +116,7 @@ export default function RepoOverview({
                             <Badge
                                 key={tech}
                                 variant="outline"
-                                className="text-xs border-cyan/20 text-cyan"
+                                className="text-xs border-white/15 text-white/80 bg-white/[0.02]"
                             >
                                 {tech}
                             </Badge>

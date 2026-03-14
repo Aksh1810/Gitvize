@@ -34,7 +34,7 @@ export default function Navbar({
     const borderColor = useTransform(
         scrollY,
         [0, 80],
-        ["rgba(99, 102, 241, 0.18)", "rgba(99, 102, 241, 0.4)"]
+        ["rgba(255, 255, 255, 0.1)", "rgba(255, 255, 255, 0.2)"]
     );
     const shadow = useTransform(
         scrollY,
@@ -53,7 +53,7 @@ export default function Navbar({
 
     return (
         <motion.nav
-            className="fixed top-0 left-0 right-0 z-50 px-4 py-3"
+            className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-2xl"
             style={{ backgroundColor: background, borderColor, boxShadow: shadow, borderBottomWidth: "1px" }}
         >
             <div className="absolute inset-0 nav-sheen" />
@@ -64,14 +64,12 @@ export default function Navbar({
                     className="flex items-center gap-3 group"
                 >
                     <div className="relative">
-                        <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-indigo-500/60 via-cyan-500/30 to-pink-500/50 blur" />
-                        <div className="relative w-9 h-9 rounded-2xl bg-[#0b1120] border border-indigo-500/40 flex items-center justify-center">
-                            <GitBranch className="w-4 h-4 text-indigo-300 group-hover:text-indigo-200 transition-colors" />
+                        <div className="relative w-9 h-9 rounded-2xl bg-black/70 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] flex items-center justify-center">
+                            <GitBranch className="w-4 h-4 text-white/85 group-hover:text-white transition-colors" />
                         </div>
                     </div>
                     <div className="hidden sm:flex flex-col">
-                        <span className="text-lg font-semibold tracking-tight gradient-text">GitViz</span>
-                        <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Neon Repo Atlas</span>
+                        <span className="text-lg font-semibold tracking-tight text-white">GitViz</span>
                     </div>
                 </Link>
 
@@ -86,7 +84,7 @@ export default function Navbar({
                         {owner}
                     </a>
                     <span className="text-muted-foreground/50">/</span>
-                    <span className="px-3 py-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-200">
+                    <span className="px-3 py-1 rounded-full pro-muted-chip shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
                         {repo}
                     </span>
                 </div>
@@ -97,9 +95,9 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={onAISettings}
-                        className="rounded-full border border-white/10 bg-white/5 text-xs text-foreground/80 hover:bg-white/10 hover:text-foreground"
+                        className="pro-control pro-focus-ring text-xs"
                     >
-                        <Sparkles className="w-4 h-4 mr-1.5 text-cyan-300" />
+                        <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
                         <span className="hidden sm:inline">AI Key</span>
                     </Button>
 
@@ -107,9 +105,9 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={onExport}
-                        className="rounded-full border border-white/10 bg-white/5 text-xs text-foreground/80 hover:bg-white/10 hover:text-foreground"
+                        className="pro-control pro-focus-ring text-xs"
                     >
-                        <Download className="w-4 h-4 mr-1.5 text-indigo-300" />
+                        <Download className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Export</span>
                     </Button>
 
@@ -117,9 +115,9 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={handleShare}
-                        className="rounded-full border border-white/10 bg-white/5 text-xs text-foreground/80 hover:bg-white/10 hover:text-foreground"
+                        className="pro-control pro-focus-ring text-xs"
                     >
-                        <Share2 className="w-4 h-4 mr-1.5 text-pink-300" />
+                        <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Share</span>
                     </Button>
 
@@ -131,9 +129,9 @@ export default function Navbar({
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="rounded-full border border-white/10 bg-white/5 text-xs text-foreground/80 hover:bg-white/10 hover:text-foreground"
+                            className="pro-control pro-focus-ring text-xs"
                         >
-                            <Star className="w-4 h-4 mr-1.5 text-amber-300" />
+                            <Star className="w-4 h-4 mr-1.5 text-amber-200" />
                             <span className="hidden sm:inline">Star</span>
                         </Button>
                     </a>

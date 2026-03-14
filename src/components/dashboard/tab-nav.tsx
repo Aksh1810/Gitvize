@@ -28,24 +28,24 @@ interface TabNavProps {
 
 export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
     return (
-        <div className="flex items-center gap-3 px-4 py-3 overflow-x-auto border-b border-border/30">
-            <div className="tab-track flex items-center gap-1">
+        <div className="flex items-center gap-3 px-4 py-3 overflow-x-auto border-b border-white/10">
+            <div className="tab-track pro-surface flex items-center gap-1">
                 {DIAGRAM_TABS.map((tab) => {
                     const isActive = activeTab === tab.id;
                     return (
                         <button
                             key={tab.id}
                             onClick={() => onTabChange(tab.id)}
-                            className={`relative flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${
+                            className={`relative flex items-center gap-2 px-4 py-2 text-sm font-medium pro-focus-ring transition-colors ${
                                 isActive
                                     ? "text-white"
-                                    : "text-muted-foreground hover:text-foreground"
+                                    : "text-white/65 hover:text-white"
                             }`}
                         >
                             {isActive && (
                                 <motion.span
                                     layoutId="tab-pill"
-                                    className="tab-pill"
+                                    className="tab-pill pro-pill-active"
                                     transition={{ type: "spring", stiffness: 260, damping: 28 }}
                                 />
                             )}
