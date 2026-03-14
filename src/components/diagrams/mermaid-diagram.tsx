@@ -38,7 +38,17 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     }, [panOffset]);
 
     const getDiagramBBox = useCallback((svgEl: SVGSVGElement): DOMRect | null => {
-        // Mermaid typically renders graph content inside the first <g>; use it for true visual bounds.
+        // Prefer full SVG content bounds first (closest to what users visually perceive).
+        try {
+            const b = svgEl.getBBox();
+            if (b.width > 0 && b.height > 0) {
+                return new DOMRect(b.x, b.y, b.width, b.height);
+            }
+        } catch {
+            // Fall through to group/viewBox fallback.
+        }
+
+        // Mermaid often nests graph geometry under a group; use it as a fallback.
         const group = svgEl.querySelector("g");
         if (group instanceof SVGGElement) {
             try {
@@ -47,17 +57,8 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                     return new DOMRect(b.x, b.y, b.width, b.height);
                 }
             } catch {
-                // Fall through to SVG-level bounds.
+                // Ignore and fall through.
             }
-        }
-
-        try {
-            const b = svgEl.getBBox();
-            if (b.width > 0 && b.height > 0) {
-                return new DOMRect(b.x, b.y, b.width, b.height);
-            }
-        } catch {
-            // Ignore and fall back below.
         }
 
         const viewBox = svgEl.viewBox?.baseVal;
@@ -85,11 +86,11 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
             return { scale: 1, x: 0, y: 0 };
         }
 
-        const paddingFactor = 1.28;
+        // < 1 keeps the full graph visible with a small margin.
+        const paddingFactor = 0.92;
         const fitScale = Math.min(containerWidth / bbox.width, containerHeight / bbox.height) * paddingFactor;
         const scale = forcedScale ?? Math.max(0.1, Math.min(3, fitScale));
         const clampedScale = Math.max(0.1, Math.min(3, scale));
-
         const centerX = bbox.x + bbox.width / 2;
         const centerY = bbox.y + bbox.height / 2;
 
@@ -105,20 +106,31 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         setPanOffset({ x: 0, y: 0 });
     }, [computeFitTransform]);
 
-    const nudgeToVisualCenter = useCallback(() => {
-        const container = containerRef.current;
-        const svgEl = container?.querySelector("svg") as SVGSVGElement | null;
-        if (!container || !svgEl) return;
+    const recenterByRect = useCallback((steps = 3) => {
+        let remaining = steps;
+        const tick = () => {
+            const container = containerRef.current;
+            const svgEl = container?.querySelector("svg") as SVGSVGElement | null;
+            if (!container || !svgEl) return;
 
-        const containerRect = container.getBoundingClientRect();
-        const svgRect = svgEl.getBoundingClientRect();
-        if (!containerRect.width || !containerRect.height || !svgRect.width || !svgRect.height) return;
+            const containerRect = container.getBoundingClientRect();
+            const svgRect = svgEl.getBoundingClientRect();
+            if (!containerRect.width || !containerRect.height || !svgRect.width || !svgRect.height) return;
 
-        const dx = containerRect.left + containerRect.width / 2 - (svgRect.left + svgRect.width / 2);
-        const dy = containerRect.top + containerRect.height / 2 - (svgRect.top + svgRect.height / 2);
+            const dx = containerRect.left + containerRect.width / 2 - (svgRect.left + svgRect.width / 2);
+            const dy = containerRect.top + containerRect.height / 2 - (svgRect.top + svgRect.height / 2);
 
-        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-        setViewTransform((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+            if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
+                setPanOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+            }
+
+            remaining -= 1;
+            if (remaining > 0) {
+                requestAnimationFrame(tick);
+            }
+        };
+
+        requestAnimationFrame(tick);
     }, []);
 
     // Render Mermaid diagram
@@ -207,7 +219,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         const timeoutId = window.setTimeout(() => {
             centerInitialView();
             requestAnimationFrame(() => {
-                nudgeToVisualCenter();
+                recenterByRect(8);
             });
         }, 180);
 
@@ -218,7 +230,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
             }
             window.clearTimeout(timeoutId);
         };
-    }, [svgContent, centerInitialView, nudgeToVisualCenter]);
+    }, [svgContent, centerInitialView, recenterByRect]);
 
     useEffect(() => {
         if (!svgContent || !containerRef.current) return;
@@ -226,7 +238,8 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         const observer = new ResizeObserver(() => {
             // Only auto-center when user has not panned away.
             if (Math.abs(panOffset.x) < 1 && Math.abs(panOffset.y) < 1) {
-                setViewTransform((prev) => computeFitTransform(prev.scale));
+                setViewTransform(computeFitTransform());
+                setPanOffset({ x: 0, y: 0 });
             }
         });
         observer.observe(container);
@@ -297,10 +310,19 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     const zoomOut = () => {
         applyCenteredZoom(viewTransformRef.current.scale - 0.12);
     };
-    const resetView = () => {
+
+    const resetView = useCallback(() => {
+        setIsPanning(false);
         setViewTransform(computeFitTransform());
         setPanOffset({ x: 0, y: 0 });
-    };
+        panOriginRef.current = { x: 0, y: 0 };
+        panStartRef.current = { x: 0, y: 0 };
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                recenterByRect(8);
+            });
+        });
+    }, [computeFitTransform, recenterByRect]);
 
     // Export PNG
     const exportPNG = useCallback(async () => {
