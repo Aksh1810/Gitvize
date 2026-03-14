@@ -69,7 +69,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         return null;
     }, []);
 
-    const computeFitTransform = useCallback((forcedScale?: number) => {
+    const computeFitTransform = useCallback((forcedScale?: number, fitMode: "fit" | "center" = "fit") => {
         const container = containerRef.current;
         if (!container) return { scale: 1, x: 0, y: 0 };
 
@@ -86,10 +86,16 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
             return { scale: 1, x: 0, y: 0 };
         }
 
-        // < 1 keeps the full graph visible with a small margin.
         const paddingFactor = 0.92;
-        const fitScale = Math.min(containerWidth / bbox.width, containerHeight / bbox.height) * paddingFactor;
-        const scale = forcedScale ?? Math.max(0.1, Math.min(3, fitScale));
+        let scale = 1;
+
+        if (fitMode === "fit") {
+            const fitScale = Math.min(containerWidth / bbox.width, containerHeight / bbox.height) * paddingFactor;
+            scale = forcedScale ?? fitScale;
+        } else {
+            scale = forcedScale ?? 1; // Default to 1 (normal size) for center mode
+        }
+
         const clampedScale = Math.max(0.1, Math.min(3, scale));
         const centerX = bbox.x + bbox.width / 2;
         const centerY = bbox.y + bbox.height / 2;
@@ -102,7 +108,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     }, [getDiagramBBox]);
 
     const centerInitialView = useCallback(() => {
-        setViewTransform(computeFitTransform());
+        setViewTransform(computeFitTransform(undefined, "center"));
         setPanOffset({ x: 0, y: 0 });
     }, [computeFitTransform]);
 
@@ -313,7 +319,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
 
     const resetView = useCallback(() => {
         setIsPanning(false);
-        setViewTransform(computeFitTransform());
+        setViewTransform(computeFitTransform(undefined, "fit"));
         setPanOffset({ x: 0, y: 0 });
         panOriginRef.current = { x: 0, y: 0 };
         panStartRef.current = { x: 0, y: 0 };
@@ -324,13 +330,9 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         });
     }, [computeFitTransform, recenterByRect]);
 
-    // Export PNG
-    const exportPNG = useCallback(async () => {
+    // Export SVG
+    const exportSVG = useCallback(async () => {
         if (!svgContent) return;
-
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
 
         const liveSvg = containerRef.current?.querySelector("svg") as SVGSVGElement | null;
         const svgEl = liveSvg?.cloneNode(true) as SVGSVGElement | null;
@@ -343,7 +345,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                 bbox = new DOMRect(rawBBox.x, rawBBox.y, rawBBox.width, rawBBox.height);
             }
         } catch {
-            // Ignore and use fallback values.
+            // Ignore
         }
 
         const padding = 24;
@@ -358,55 +360,29 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         svgEl.setAttribute("width", String(Math.round(viewWidth)));
         svgEl.setAttribute("height", String(Math.round(viewHeight)));
 
+        // Add CSS styles inline to preserve colors usually provided by the webpage
+        const styleEl = document.createElement("style");
+        styleEl.textContent = `
+            * { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+            .node rect, .node circle, .node polygon { fill: #1e293b; stroke: #818cf8; stroke-width: 1.5px; }
+            .node .label { color: #f8fafc; font-size: 14px; }
+            .edgePath path { stroke: #475569; stroke-width: 1.5px; }
+            .edgeLabel { background-color: #0f172a; color: #cbd5e1; padding: 2px 4px; border-radius: 4px; }
+        `;
+        svgEl.insertBefore(styleEl, svgEl.firstChild);
+
         const serializedSvg = new XMLSerializer().serializeToString(svgEl);
-        const img = new Image();
-        const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serializedSvg)}`;
-
-        img.onload = () => {
-            const width = Math.round(viewWidth);
-            const height = Math.round(viewHeight);
-            const multiplier = 2;
-
-            canvas.width = width * multiplier;
-            canvas.height = height * multiplier;
-            ctx.scale(2, 2);
-            ctx.fillStyle = "#0f0a1e";
-            ctx.fillRect(0, 0, width, height);
-            ctx.drawImage(img, 0, 0);
-
-            const link = document.createElement("a");
-            link.download = "gitviz-architecture.png";
-            link.href = canvas.toDataURL("image/png");
-            link.click();
-        };
-        img.onerror = () => {
-            // Fallback: try Blob URL path if data URL fails in current browser.
-            const svgBlob = new Blob([serializedSvg], { type: "image/svg+xml;charset=utf-8" });
-            const blobUrl = URL.createObjectURL(svgBlob);
-            const fallbackImg = new Image();
-            fallbackImg.onload = () => {
-                const width = Math.round(viewWidth);
-                const height = Math.round(viewHeight);
-                const multiplier = 2;
-                canvas.width = width * multiplier;
-                canvas.height = height * multiplier;
-                ctx.scale(2, 2);
-                ctx.fillStyle = "#0f0a1e";
-                ctx.fillRect(0, 0, width, height);
-                ctx.drawImage(fallbackImg, 0, 0);
-                const link = document.createElement("a");
-                link.download = "gitviz-architecture.png";
-                link.href = canvas.toDataURL("image/png");
-                link.click();
-                URL.revokeObjectURL(blobUrl);
-            };
-            fallbackImg.onerror = () => {
-                URL.revokeObjectURL(blobUrl);
-                setError("Failed to export PNG");
-            };
-            fallbackImg.src = blobUrl;
-        };
-        img.src = svgDataUrl;
+        const svgBlob = new Blob([serializedSvg], { type: "image/svg+xml;charset=utf-8" });
+        const blobUrl = URL.createObjectURL(svgBlob);
+        
+        const link = document.createElement("a");
+        link.download = "gitviz-architecture.svg";
+        link.href = blobUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
     }, [svgContent]);
 
     // Copy Mermaid code
@@ -485,11 +461,11 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                 <Button
                     variant="outline"
                     size="sm"
-                    onClick={exportPNG}
+                    onClick={exportSVG}
                     className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <Download className="h-4 w-4 mr-1" />
-                    PNG
+                    SVG
                 </Button>
                 <Button
                     variant="outline"

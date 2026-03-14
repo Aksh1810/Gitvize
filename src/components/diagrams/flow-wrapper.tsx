@@ -65,7 +65,7 @@ export default function FlowWrapper({
                 className="bg-transparent"
             >
                 <Background variant={BackgroundVariant.Dots} gap={26} size={1} color="rgba(99, 102, 241, 0.12)" />
-                <Controls className="!bg-transparent" />
+                <Controls className="!bg-transparent" showInteractive={false} />
                 <MiniMap
                     nodeColor={(node) => {
                         if (node.data?.color) return node.data.color as string;
