@@ -32,9 +32,16 @@ export default async function RepoPage({ params }: PageProps) {
     return (
         <Suspense
             fallback={
-                <div className="min-h-screen pt-14 p-6 space-y-4 max-w-7xl mx-auto">
+                <div className="min-h-screen pt-14 p-6 space-y-6 max-w-7xl mx-auto">
+                    <div className="glass-card-strong glow-border p-6 flex items-center justify-between">
+                        <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Loading</p>
+                            <h2 className="text-lg font-semibold">Warming up visual layers</h2>
+                        </div>
+                        <div className="loading-orbit" />
+                    </div>
                     <Skeleton className="h-10 w-48" />
-                    <div className="grid grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         {[1, 2, 3, 4].map((i) => (
                             <Skeleton key={i} className="h-20" />
                         ))}

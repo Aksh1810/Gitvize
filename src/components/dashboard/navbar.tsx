@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { motion, useScroll, useTransform } from "framer-motion";
 import {
     GitBranch,
     Download,
@@ -24,6 +25,23 @@ export default function Navbar({
     onExport,
     onAISettings,
 }: NavbarProps) {
+    const { scrollY } = useScroll();
+    const background = useTransform(
+        scrollY,
+        [0, 80],
+        ["rgba(10, 14, 26, 0.55)", "rgba(10, 14, 26, 0.92)"]
+    );
+    const borderColor = useTransform(
+        scrollY,
+        [0, 80],
+        ["rgba(255, 255, 255, 0.1)", "rgba(255, 255, 255, 0.2)"]
+    );
+    const shadow = useTransform(
+        scrollY,
+        [0, 80],
+        ["0 8px 24px rgba(2, 6, 23, 0.25)", "0 16px 40px rgba(2, 6, 23, 0.55)"]
+    );
+
     const handleShare = () => {
         const url = `${window.location.origin}/${owner}/${repo}`;
         navigator.clipboard.writeText(url).then(() => {
@@ -34,23 +52,29 @@ export default function Navbar({
     };
 
     return (
-        <nav className="fixed top-0 left-0 right-0 z-50 glass-card border-b border-border/50 px-4 py-2.5">
-            <div className="max-w-[1800px] mx-auto flex items-center justify-between">
+        <motion.nav
+            className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-2xl"
+            style={{ backgroundColor: background, borderColor, boxShadow: shadow, borderBottomWidth: "1px" }}
+        >
+            <div className="absolute inset-0 nav-sheen" />
+            <div className="max-w-[1800px] mx-auto flex items-center justify-between relative">
                 {/* Logo */}
                 <Link
                     href="/"
-                    className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                    className="flex items-center gap-3 group"
                 >
-                    <div className="w-7 h-7 rounded-lg bg-indigo flex items-center justify-center">
-                        <GitBranch className="w-3.5 h-3.5 text-white" />
+                    <div className="relative">
+                        <div className="relative w-9 h-9 rounded-2xl bg-black/70 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] flex items-center justify-center">
+                            <GitBranch className="w-4 h-4 text-white/85 group-hover:text-white transition-colors" />
+                        </div>
                     </div>
-                    <span className="text-lg font-bold gradient-text hidden sm:block">
-                        GitViz
-                    </span>
+                    <div className="hidden sm:flex flex-col">
+                        <span className="text-lg font-semibold tracking-tight text-white">GitViz</span>
+                    </div>
                 </Link>
 
                 {/* Breadcrumb */}
-                <div className="flex items-center gap-1.5 text-sm">
+                <div className="hidden md:flex items-center gap-2 text-sm">
                     <a
                         href={`https://github.com/${owner}`}
                         target="_blank"
@@ -60,18 +84,20 @@ export default function Navbar({
                         {owner}
                     </a>
                     <span className="text-muted-foreground/50">/</span>
-                    <span className="text-foreground font-medium">{repo}</span>
+                    <span className="px-3 py-1 rounded-full pro-muted-chip shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+                        {repo}
+                    </span>
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                     <Button
                         variant="ghost"
                         size="sm"
                         onClick={onAISettings}
-                        className="text-muted-foreground hover:text-foreground"
+                        className="pro-control pro-focus-ring text-xs"
                     >
-                        <Sparkles className="w-4 h-4 mr-1.5" />
+                        <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
                         <span className="hidden sm:inline">AI Key</span>
                     </Button>
 
@@ -79,9 +105,9 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={onExport}
-                        className="text-muted-foreground hover:text-foreground"
+                        className="pro-control pro-focus-ring text-xs"
                     >
-                        <Download className="w-4 h-4 mr-1.5" />
+                        <Download className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Export</span>
                     </Button>
 
@@ -89,9 +115,9 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={handleShare}
-                        className="text-muted-foreground hover:text-foreground"
+                        className="pro-control pro-focus-ring text-xs"
                     >
-                        <Share2 className="w-4 h-4 mr-1.5" />
+                        <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Share</span>
                     </Button>
 
@@ -103,14 +129,14 @@ export default function Navbar({
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="text-muted-foreground hover:text-foreground"
+                            className="pro-control pro-focus-ring text-xs"
                         >
-                            <Star className="w-4 h-4 mr-1.5" />
-                            <span className="hidden sm:inline">Star GitViz</span>
+                            <Star className="w-4 h-4 mr-1.5 text-amber-200" />
+                            <span className="hidden sm:inline">Star</span>
                         </Button>
                     </a>
                 </div>
             </div>
-        </nav>
+        </motion.nav>
     );
 }

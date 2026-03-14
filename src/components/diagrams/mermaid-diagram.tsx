@@ -262,11 +262,8 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         return (
             <div className="flex items-center justify-center h-full">
                 <div className="flex flex-col items-center gap-4">
-                    <div className="relative w-16 h-16">
-                        <div className="absolute inset-0 rounded-full border-2 border-violet-500/20" />
-                        <div className="absolute inset-0 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
-                    </div>
-                    <p className="text-sm text-gray-400 animate-pulse">
+                    <div className="loading-orbit" />
+                    <p className="text-sm text-muted-foreground">
                         Generating architecture diagram...
                     </p>
                 </div>
@@ -298,14 +295,14 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     }
 
     return (
-        <div className="relative h-full w-full overflow-hidden bg-gradient-to-br from-[#0f0a1e] to-[#0a0612]">
+        <div className="relative h-full w-full overflow-hidden diagram-grid">
             {/* Controls */}
             <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
                 <Button
                     variant="outline"
                     size="sm"
                     onClick={zoomIn}
-                    className="bg-gray-900/80 border-gray-700 hover:bg-gray-800 backdrop-blur-sm"
+                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <ZoomIn className="h-4 w-4" />
                 </Button>
@@ -313,7 +310,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                     variant="outline"
                     size="sm"
                     onClick={zoomOut}
-                    className="bg-gray-900/80 border-gray-700 hover:bg-gray-800 backdrop-blur-sm"
+                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <ZoomOut className="h-4 w-4" />
                 </Button>
@@ -321,16 +318,16 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                     variant="outline"
                     size="sm"
                     onClick={resetView}
-                    className="bg-gray-900/80 border-gray-700 hover:bg-gray-800 backdrop-blur-sm"
+                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <Maximize2 className="h-4 w-4" />
                 </Button>
-                <div className="w-px h-6 bg-gray-700" />
+                <div className="w-px h-6 bg-white/10" />
                 <Button
                     variant="outline"
                     size="sm"
                     onClick={exportPNG}
-                    className="bg-gray-900/80 border-gray-700 hover:bg-gray-800 backdrop-blur-sm"
+                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <Download className="h-4 w-4 mr-1" />
                     PNG
@@ -339,7 +336,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                     variant="outline"
                     size="sm"
                     onClick={copyMermaidCode}
-                    className="bg-gray-900/80 border-gray-700 hover:bg-gray-800 backdrop-blur-sm"
+                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     {copied ? (
                         <Check className="h-4 w-4 mr-1 text-green-400" />
@@ -351,8 +348,8 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
             </div>
 
             {/* Scale indicator */}
-            <div className="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded-full bg-gray-900/80 border border-gray-700 backdrop-blur-sm">
-                <span className="text-xs text-gray-400">
+            <div className="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-sm">
+                <span className="text-xs text-muted-foreground">
                     {Math.round(scale * 100)}%
                 </span>
             </div>

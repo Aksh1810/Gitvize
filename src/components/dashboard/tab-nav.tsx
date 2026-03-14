@@ -2,6 +2,7 @@
 
 import { DiagramTab } from "@/types";
 import { DIAGRAM_TABS } from "@/lib/constants";
+import { motion } from "framer-motion";
 import {
     Boxes,
     Network,
@@ -27,23 +28,35 @@ interface TabNavProps {
 
 export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
     return (
-        <div className="flex items-center gap-1 px-4 py-2 overflow-x-auto border-b border-border/30">
-            {DIAGRAM_TABS.map((tab) => (
-                <button
-                    key={tab.id}
-                    onClick={() => onTabChange(tab.id)}
-                    className={`
-            flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
-            ${activeTab === tab.id
-                            ? "bg-violet-500/10 text-violet-400 border border-violet-500/20 shadow-[0_0_12px_rgba(124,58,237,0.15)]"
-                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                        }
-          `}
-                >
-                    {iconMap[tab.icon]}
-                    <span className="hidden sm:inline">{tab.label}</span>
-                </button>
-            ))}
+        <div className="flex items-center gap-3 px-4 py-3 overflow-x-auto border-b border-white/10">
+            <div className="tab-track pro-surface flex items-center gap-1">
+                {DIAGRAM_TABS.map((tab) => {
+                    const isActive = activeTab === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => onTabChange(tab.id)}
+                            className={`relative flex items-center gap-2 px-4 py-2 text-sm font-medium pro-focus-ring transition-colors ${
+                                isActive
+                                    ? "text-white"
+                                    : "text-white/65 hover:text-white"
+                            }`}
+                        >
+                            {isActive && (
+                                <motion.span
+                                    layoutId="tab-pill"
+                                    className="tab-pill pro-pill-active"
+                                    transition={{ type: "spring", stiffness: 260, damping: 28 }}
+                                />
+                            )}
+                            <span className="relative z-10 flex items-center gap-2">
+                                {iconMap[tab.icon]}
+                                <span className="hidden sm:inline">{tab.label}</span>
+                            </span>
+                        </button>
+                    );
+                })}
+            </div>
         </div>
     );
 }
