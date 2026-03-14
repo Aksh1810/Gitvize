@@ -1135,12 +1135,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                 className="pl-3 pr-7 h-8 w-[140px] text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50"
                             />
                             {searchQuery && (
-                                <button
+                                <Button
                                     onClick={() => handleSearch("")}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                                 >
                                     <X className="w-3 h-3" />
-                                </button>
+                                </Button>
                             )}
                         </div>
                     </div>
