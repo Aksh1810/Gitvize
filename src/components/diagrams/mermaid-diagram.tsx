@@ -26,6 +26,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     const [isRendering, setIsRendering] = useState(true);
     const panStartRef = useRef({ x: 0, y: 0 });
     const panOriginRef = useRef({ x: 0, y: 0 });
+    const fitRafRef = useRef<number[]>([]);
     const viewTransformRef = useRef(viewTransform);
     const panOffsetRef = useRef(panOffset);
 
@@ -69,7 +70,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         return null;
     }, []);
 
-    const computeFitTransform = useCallback((forcedScale?: number, fitMode: "fit" | "center" = "fit") => {
+    const computeFitTransform = useCallback((forcedScale?: number) => {
         const container = containerRef.current;
         if (!container) return { scale: 1, x: 0, y: 0 };
 
@@ -87,14 +88,8 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         }
 
         const paddingFactor = 0.92;
-        let scale = 1;
-
-        if (fitMode === "fit") {
-            const fitScale = Math.min(containerWidth / bbox.width, containerHeight / bbox.height) * paddingFactor;
-            scale = forcedScale ?? fitScale;
-        } else {
-            scale = forcedScale ?? 1; // Default to 1 (normal size) for center mode
-        }
+        const fitScale = Math.min(containerWidth / bbox.width, containerHeight / bbox.height) * paddingFactor;
+        const scale = forcedScale ?? fitScale;
 
         const clampedScale = Math.max(0.1, Math.min(3, scale));
         const centerX = bbox.x + bbox.width / 2;
@@ -108,9 +103,16 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     }, [getDiagramBBox]);
 
     const centerInitialView = useCallback(() => {
-        setViewTransform(computeFitTransform(undefined, "center"));
+        setViewTransform(computeFitTransform());
         setPanOffset({ x: 0, y: 0 });
     }, [computeFitTransform]);
+
+    const clearPendingFitFrames = useCallback(() => {
+        for (const rafId of fitRafRef.current) {
+            cancelAnimationFrame(rafId);
+        }
+        fitRafRef.current = [];
+    }, []);
 
 
 
@@ -224,6 +226,12 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         return () => observer.disconnect();
     }, [svgContent, computeFitTransform, panOffset.x, panOffset.y]);
 
+    useEffect(() => {
+        return () => {
+            clearPendingFitFrames();
+        };
+    }, [clearPendingFitFrames]);
+
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
         if (e.button !== 0) return;
         setIsPanning(true);
@@ -290,12 +298,29 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     };
 
     const resetView = useCallback(() => {
+        clearPendingFitFrames();
         setIsPanning(false);
-        setViewTransform(computeFitTransform(undefined, "fit"));
+        const applyFit = () => {
+            setViewTransform(computeFitTransform());
+            setPanOffset({ x: 0, y: 0 });
+        };
+
+        applyFit();
+
+        // Run a couple of post-layout passes to match late SVG/font settling.
+        const raf1 = requestAnimationFrame(() => {
+            applyFit();
+            const raf2 = requestAnimationFrame(() => {
+                applyFit();
+            });
+            fitRafRef.current.push(raf2);
+        });
+        fitRafRef.current.push(raf1);
+
         setPanOffset({ x: 0, y: 0 });
         panOriginRef.current = { x: 0, y: 0 };
         panStartRef.current = { x: 0, y: 0 };
-    }, [computeFitTransform]);
+    }, [clearPendingFitFrames, computeFitTransform]);
 
     // Export SVG
     const exportSVG = useCallback(async () => {
