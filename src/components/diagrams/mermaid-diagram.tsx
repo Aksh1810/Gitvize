@@ -20,11 +20,106 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     const [svgContent, setSvgContent] = useState<string>("");
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
-    const [scale, setScale] = useState(1);
-    const [position, setPosition] = useState({ x: 0, y: 0 });
-    const [isDragging, setIsDragging] = useState(false);
-    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const [viewTransform, setViewTransform] = useState({ scale: 1, x: 0, y: 0 });
+    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+    const [isPanning, setIsPanning] = useState(false);
     const [isRendering, setIsRendering] = useState(true);
+    const panStartRef = useRef({ x: 0, y: 0 });
+    const panOriginRef = useRef({ x: 0, y: 0 });
+    const viewTransformRef = useRef(viewTransform);
+    const panOffsetRef = useRef(panOffset);
+
+    useEffect(() => {
+        viewTransformRef.current = viewTransform;
+    }, [viewTransform]);
+
+    useEffect(() => {
+        panOffsetRef.current = panOffset;
+    }, [panOffset]);
+
+    const getDiagramBBox = useCallback((svgEl: SVGSVGElement): DOMRect | null => {
+        // Mermaid typically renders graph content inside the first <g>; use it for true visual bounds.
+        const group = svgEl.querySelector("g");
+        if (group instanceof SVGGElement) {
+            try {
+                const b = group.getBBox();
+                if (b.width > 0 && b.height > 0) {
+                    return new DOMRect(b.x, b.y, b.width, b.height);
+                }
+            } catch {
+                // Fall through to SVG-level bounds.
+            }
+        }
+
+        try {
+            const b = svgEl.getBBox();
+            if (b.width > 0 && b.height > 0) {
+                return new DOMRect(b.x, b.y, b.width, b.height);
+            }
+        } catch {
+            // Ignore and fall back below.
+        }
+
+        const viewBox = svgEl.viewBox?.baseVal;
+        if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+            return new DOMRect(viewBox.x, viewBox.y, viewBox.width, viewBox.height);
+        }
+
+        return null;
+    }, []);
+
+    const computeFitTransform = useCallback((forcedScale?: number) => {
+        const container = containerRef.current;
+        if (!container) return { scale: 1, x: 0, y: 0 };
+
+        const svgEl = container.querySelector("svg") as SVGSVGElement | null;
+        if (!svgEl) return { scale: 1, x: 0, y: 0 };
+
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        if (!containerWidth || !containerHeight) return { scale: 1, x: 0, y: 0 };
+
+        const bbox = getDiagramBBox(svgEl);
+
+        if (!bbox || bbox.width <= 0 || bbox.height <= 0) {
+            return { scale: 1, x: 0, y: 0 };
+        }
+
+        const paddingFactor = 1.28;
+        const fitScale = Math.min(containerWidth / bbox.width, containerHeight / bbox.height) * paddingFactor;
+        const scale = forcedScale ?? Math.max(0.1, Math.min(3, fitScale));
+        const clampedScale = Math.max(0.1, Math.min(3, scale));
+
+        const centerX = bbox.x + bbox.width / 2;
+        const centerY = bbox.y + bbox.height / 2;
+
+        return {
+            scale: clampedScale,
+            x: containerWidth / 2 - centerX * clampedScale,
+            y: containerHeight / 2 - centerY * clampedScale,
+        };
+    }, [getDiagramBBox]);
+
+    const centerInitialView = useCallback(() => {
+        setViewTransform(computeFitTransform());
+        setPanOffset({ x: 0, y: 0 });
+    }, [computeFitTransform]);
+
+    const nudgeToVisualCenter = useCallback(() => {
+        const container = containerRef.current;
+        const svgEl = container?.querySelector("svg") as SVGSVGElement | null;
+        if (!container || !svgEl) return;
+
+        const containerRect = container.getBoundingClientRect();
+        const svgRect = svgEl.getBoundingClientRect();
+        if (!containerRect.width || !containerRect.height || !svgRect.width || !svgRect.height) return;
+
+        const dx = containerRect.left + containerRect.width / 2 - (svgRect.left + svgRect.width / 2);
+        const dy = containerRect.top + containerRect.height / 2 - (svgRect.top + svgRect.height / 2);
+
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+        setViewTransform((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+    }, []);
 
     // Render Mermaid diagram
     useEffect(() => {
@@ -78,87 +173,6 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                     // Set HTML content
                     setSvgContent(svg);
                     setIsRendering(false);
-
-                    // Add drag logic after a short delay to ensure DOM is updated
-                    setTimeout(() => {
-                        const container = containerRef.current;
-                        if (!container) return;
-
-                        const svgElement = container.querySelector("svg");
-                        if (!svgElement) return;
-
-                        const nodes = svgElement.querySelectorAll(".node");
-                        let draggedNode: SVGGElement | null = null;
-                        let startPoint = { x: 0, y: 0 };
-                        let startTransform = { x: 0, y: 0 };
-
-                        // Prevent SVG default drag behavior
-                        svgElement.addEventListener("dragstart", e => e.preventDefault());
-
-                        nodes.forEach((node) => {
-                            const gNode = node as SVGGElement;
-                            gNode.style.cursor = "grab";
-
-                            gNode.addEventListener("mousedown", (e) => {
-                                // Stop propagation so canvas panning doesn't trigger
-                                e.stopPropagation();
-                                e.preventDefault();
-
-                                draggedNode = gNode;
-                                draggedNode.style.cursor = "grabbing";
-
-                                // Get current transform
-                                const transform = draggedNode.getAttribute("transform");
-                                if (transform) {
-                                    const match = transform.match(/translate\(([^,]+),([^)]+)\)/);
-                                    if (match) {
-                                        startTransform = {
-                                            x: parseFloat(match[1]),
-                                            y: parseFloat(match[2])
-                                        };
-                                    }
-                                }
-
-                                // We need to account for scale/zoom
-                                startPoint = { x: e.clientX, y: e.clientY };
-
-                                // To make dragging smooth, append node to end of SVG to bring it to front
-                                draggedNode.parentNode?.appendChild(draggedNode);
-                            });
-                        });
-
-                        // Attach move and up to the window/SVG so we don't lose it if moving fast
-                        svgElement.addEventListener("mousemove", (e) => {
-                            if (!draggedNode) return;
-
-                            // Account for scale from parent container
-                            const currentScale = scale; // Using the react state is tricky inside a closure here if it changes, 
-                            // But since the zoom handlers re-render the component, we might want to calculate the actual scale dynamically or read from a ref.
-                            // Actually, let's just get the bounding rect scale.
-                            const rect = svgElement.getBoundingClientRect();
-                            const viewBox = svgElement.viewBox.baseVal;
-
-                            // Calculate scale factor between screen pixels and viewBox pixels
-                            const scaleX = viewBox.width / rect.width;
-                            const scaleY = viewBox.height / rect.height;
-
-                            const dx = (e.clientX - startPoint.x) * scaleX;
-                            const dy = (e.clientY - startPoint.y) * scaleY;
-
-                            const newX = startTransform.x + dx;
-                            const newY = startTransform.y + dy;
-
-                            draggedNode.setAttribute("transform", `translate(${newX},${newY})`);
-                        });
-
-                        window.addEventListener("mouseup", () => {
-                            if (draggedNode) {
-                                draggedNode.style.cursor = "grab";
-                                draggedNode = null;
-                            }
-                        });
-
-                    }, 100);
                 }
             } catch (err) {
                 if (!cancelled) {
@@ -180,45 +194,112 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         };
     }, [code]);
 
-    // Pan handlers
-    const handleMouseDown = useCallback(
-        (e: React.MouseEvent) => {
-            if (e.button !== 0) return;
-            setIsDragging(true);
-            setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
-        },
-        [position]
-    );
-
-    const handleMouseMove = useCallback(
-        (e: React.MouseEvent) => {
-            if (!isDragging) return;
-            setPosition({
-                x: e.clientX - dragStart.x,
-                y: e.clientY - dragStart.y,
+    useEffect(() => {
+        if (!svgContent) return;
+        let raf2: number | null = null;
+        const raf1 = requestAnimationFrame(() => {
+            raf2 = requestAnimationFrame(() => {
+                centerInitialView();
             });
-        },
-        [isDragging, dragStart]
-    );
+        });
+
+        // A second pass catches late font/layout settling from Mermaid SVG.
+        const timeoutId = window.setTimeout(() => {
+            centerInitialView();
+            requestAnimationFrame(() => {
+                nudgeToVisualCenter();
+            });
+        }, 180);
+
+        return () => {
+            cancelAnimationFrame(raf1);
+            if (typeof raf2 === "number") {
+                cancelAnimationFrame(raf2);
+            }
+            window.clearTimeout(timeoutId);
+        };
+    }, [svgContent, centerInitialView, nudgeToVisualCenter]);
+
+    useEffect(() => {
+        if (!svgContent || !containerRef.current) return;
+        const container = containerRef.current;
+        const observer = new ResizeObserver(() => {
+            // Only auto-center when user has not panned away.
+            if (Math.abs(panOffset.x) < 1 && Math.abs(panOffset.y) < 1) {
+                setViewTransform((prev) => computeFitTransform(prev.scale));
+            }
+        });
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [svgContent, computeFitTransform, panOffset.x, panOffset.y]);
+
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        if (e.button !== 0) return;
+        setIsPanning(true);
+        panStartRef.current = { x: e.clientX, y: e.clientY };
+        panOriginRef.current = panOffset;
+    }, [panOffset]);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!isPanning) return;
+        const dx = e.clientX - panStartRef.current.x;
+        const dy = e.clientY - panStartRef.current.y;
+        setPanOffset({
+            x: panOriginRef.current.x + dx,
+            y: panOriginRef.current.y + dy,
+        });
+    }, [isPanning]);
 
     const handleMouseUp = useCallback(() => {
-        setIsDragging(false);
+        setIsPanning(false);
+    }, []);
+
+    const applyCenteredZoom = useCallback((nextScaleInput: number) => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        const currentView = viewTransformRef.current;
+        const currentPan = panOffsetRef.current;
+
+        const prevScale = Math.max(0.1, currentView.scale);
+        const nextScale = Math.max(0.1, Math.min(3, nextScaleInput));
+        if (Math.abs(nextScale - prevScale) < 0.0001) return;
+
+        const anchorX = container.clientWidth / 2;
+        const anchorY = container.clientHeight / 2;
+
+        const totalX = currentView.x + currentPan.x;
+        const totalY = currentView.y + currentPan.y;
+
+        const worldX = (anchorX - totalX) / prevScale;
+        const worldY = (anchorY - totalY) / prevScale;
+
+        const newTotalX = anchorX - worldX * nextScale;
+        const newTotalY = anchorY - worldY * nextScale;
+
+        setViewTransform((prev) => ({ ...prev, scale: nextScale }));
+        setPanOffset({
+            x: newTotalX - currentView.x,
+            y: newTotalY - currentView.y,
+        });
     }, []);
 
     // Zoom handlers
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
-        setScale(prev => {
-            const delta = e.deltaY > 0 ? -0.04 : 0.04;
-            return Math.max(0.2, Math.min(3, prev + delta));
-        });
-    }, []);
+        const delta = e.deltaY > 0 ? -0.01 : 0.01;
+        applyCenteredZoom(viewTransformRef.current.scale + delta);
+    }, [applyCenteredZoom]);
 
-    const zoomIn = () => setScale(prev => Math.min(3, prev + 0.15));
-    const zoomOut = () => setScale(prev => Math.max(0.2, prev - 0.15));
+    const zoomIn = () => {
+        applyCenteredZoom(viewTransformRef.current.scale + 0.12);
+    };
+    const zoomOut = () => {
+        applyCenteredZoom(viewTransformRef.current.scale - 0.12);
+    };
     const resetView = () => {
-        setScale(1);
-        setPosition({ x: 0, y: 0 });
+        setViewTransform(computeFitTransform());
+        setPanOffset({ x: 0, y: 0 });
     };
 
     // Export PNG
@@ -229,25 +310,81 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
+        const liveSvg = containerRef.current?.querySelector("svg") as SVGSVGElement | null;
+        const svgEl = liveSvg?.cloneNode(true) as SVGSVGElement | null;
+        if (!svgEl) return;
+
+        let bbox: DOMRect | null = null;
+        try {
+            const rawBBox = liveSvg?.getBBox();
+            if (rawBBox) {
+                bbox = new DOMRect(rawBBox.x, rawBBox.y, rawBBox.width, rawBBox.height);
+            }
+        } catch {
+            // Ignore and use fallback values.
+        }
+
+        const padding = 24;
+        const viewX = (bbox?.x ?? 0) - padding;
+        const viewY = (bbox?.y ?? 0) - padding;
+        const viewWidth = Math.max(1, (bbox?.width ?? 1200) + padding * 2);
+        const viewHeight = Math.max(1, (bbox?.height ?? 800) + padding * 2);
+
+        svgEl.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        svgEl.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+        svgEl.setAttribute("viewBox", `${viewX} ${viewY} ${viewWidth} ${viewHeight}`);
+        svgEl.setAttribute("width", String(Math.round(viewWidth)));
+        svgEl.setAttribute("height", String(Math.round(viewHeight)));
+
+        const serializedSvg = new XMLSerializer().serializeToString(svgEl);
         const img = new Image();
-        const svgBlob = new Blob([svgContent], { type: "image/svg+xml;charset=utf-8" });
-        const url = URL.createObjectURL(svgBlob);
+        const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serializedSvg)}`;
 
         img.onload = () => {
-            canvas.width = img.width * 2;
-            canvas.height = img.height * 2;
+            const width = Math.round(viewWidth);
+            const height = Math.round(viewHeight);
+            const multiplier = 2;
+
+            canvas.width = width * multiplier;
+            canvas.height = height * multiplier;
             ctx.scale(2, 2);
             ctx.fillStyle = "#0f0a1e";
-            ctx.fillRect(0, 0, img.width, img.height);
+            ctx.fillRect(0, 0, width, height);
             ctx.drawImage(img, 0, 0);
 
             const link = document.createElement("a");
             link.download = "gitviz-architecture.png";
             link.href = canvas.toDataURL("image/png");
             link.click();
-            URL.revokeObjectURL(url);
         };
-        img.src = url;
+        img.onerror = () => {
+            // Fallback: try Blob URL path if data URL fails in current browser.
+            const svgBlob = new Blob([serializedSvg], { type: "image/svg+xml;charset=utf-8" });
+            const blobUrl = URL.createObjectURL(svgBlob);
+            const fallbackImg = new Image();
+            fallbackImg.onload = () => {
+                const width = Math.round(viewWidth);
+                const height = Math.round(viewHeight);
+                const multiplier = 2;
+                canvas.width = width * multiplier;
+                canvas.height = height * multiplier;
+                ctx.scale(2, 2);
+                ctx.fillStyle = "#0f0a1e";
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(fallbackImg, 0, 0);
+                const link = document.createElement("a");
+                link.download = "gitviz-architecture.png";
+                link.href = canvas.toDataURL("image/png");
+                link.click();
+                URL.revokeObjectURL(blobUrl);
+            };
+            fallbackImg.onerror = () => {
+                URL.revokeObjectURL(blobUrl);
+                setError("Failed to export PNG");
+            };
+            fallbackImg.src = blobUrl;
+        };
+        img.src = svgDataUrl;
     }, [svgContent]);
 
     // Copy Mermaid code
@@ -350,14 +487,14 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
             {/* Scale indicator */}
             <div className="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-sm">
                 <span className="text-xs text-muted-foreground">
-                    {Math.round(scale * 100)}%
+                    {Math.round(viewTransform.scale * 100)}%
                 </span>
             </div>
 
             {/* SVG Container */}
             <div
                 ref={containerRef}
-                className="h-full w-full cursor-grab active:cursor-grabbing"
+                className={`relative h-full w-full ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
@@ -365,14 +502,24 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
                 onWheel={handleWheel}
             >
                 <div
-                    className="mermaid-container h-full w-full flex items-center justify-center"
+                    className="absolute top-0 left-0"
                     style={{
-                        transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-                        transformOrigin: "center center",
-                        transition: isDragging ? "none" : "transform 0.25s ease-out",
+                        transform: `translate(${viewTransform.x + panOffset.x}px, ${viewTransform.y + panOffset.y}px)`,
+                        transition: isPanning ? "none" : "transform 0.25s ease-out",
+                        willChange: "transform",
                     }}
-                    dangerouslySetInnerHTML={{ __html: svgContent }}
-                />
+                >
+                    <div
+                        className="mermaid-container"
+                        style={{
+                            transform: `scale(${viewTransform.scale})`,
+                            transformOrigin: "0 0",
+                            transition: isPanning ? "none" : "transform 0.25s ease-out",
+                            willChange: "transform",
+                        }}
+                        dangerouslySetInnerHTML={{ __html: svgContent }}
+                    />
+                </div>
             </div>
         </div>
     );
