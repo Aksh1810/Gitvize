@@ -8,6 +8,7 @@ import {
     Share2,
     Star,
     Sparkles,
+    KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -17,6 +18,7 @@ interface NavbarProps {
     repo: string;
     onExport?: () => void;
     onAISettings?: () => void;
+    onGitHubTokenSettings?: () => void;
 }
 
 export default function Navbar({
@@ -24,6 +26,7 @@ export default function Navbar({
     repo,
     onExport,
     onAISettings,
+    onGitHubTokenSettings,
 }: NavbarProps) {
     const { scrollY } = useScroll();
     const background = useTransform(
@@ -91,6 +94,16 @@ export default function Navbar({
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onGitHubTokenSettings}
+                        className="pro-control pro-focus-ring text-xs"
+                    >
+                        <KeyRound className="w-4 h-4 mr-1.5 text-cyan-200" />
+                        <span className="hidden sm:inline">GitHub Token</span>
+                    </Button>
+
                     <Button
                         variant="ghost"
                         size="sm"

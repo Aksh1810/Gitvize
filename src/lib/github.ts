@@ -18,8 +18,10 @@ function headers(token?: string | null): HeadersInit {
     const h: HeadersInit = {
         Accept: "application/vnd.github.v3+json",
     };
-    if (token) {
-        h.Authorization = `Bearer ${token}`;
+    const normalizedToken = token?.trim();
+    if (normalizedToken) {
+        // GitHub PAT auth is most broadly compatible with the `token` scheme.
+        h.Authorization = `token ${normalizedToken}`;
     }
     return h;
 }
@@ -217,6 +219,35 @@ export async function fetchLanguages(
     token?: string | null
 ): Promise<LanguageStats> {
     return ghFetch<LanguageStats>(`/repos/${owner}/${repo}/languages`, token);
+}
+
+// --- Lightweight Access Check ---
+
+export async function checkRepoAccess(
+    owner: string,
+    repo: string,
+    token?: string | null
+): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string }> {
+    const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
+        headers: headers(token),
+        next: { revalidate: 60 },
+    });
+
+    if (!res.ok) {
+        return {
+            ok: false,
+            status: res.status,
+            isPrivate: false,
+        };
+    }
+
+    const data = await res.json() as { private?: boolean; full_name?: string };
+    return {
+        ok: true,
+        status: 200,
+        isPrivate: Boolean(data.private),
+        fullName: data.full_name,
+    };
 }
 
 // --- Latest Commit SHA (for cache key) ---

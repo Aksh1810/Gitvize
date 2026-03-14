@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchAllRepoData, fetchLatestSha } from "@/lib/github";
+import { fetchAllRepoData } from "@/lib/github";
 
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
-    const token = searchParams.get("token");
+    const tokenHeader = request.headers.get("x-github-token");
+    const tokenQuery = searchParams.get("token");
+    const token = tokenHeader || tokenQuery;
 
     if (!owner || !repo) {
         return NextResponse.json(

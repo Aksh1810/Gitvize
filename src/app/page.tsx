@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import GitHubTokenModal, { loadGitHubToken } from "@/components/dashboard/github-token-modal";
 import { EXAMPLE_REPOS, HOW_IT_WORKS_STEPS } from "@/lib/constants";
 
 const container = {
@@ -40,9 +41,12 @@ export default function LandingPage() {
   const router = useRouter();
   const [input, setInput] = useState("");
   const [isNavigating, setIsNavigating] = useState(false);
+  const [githubTokenOpen, setGithubTokenOpen] = useState(false);
+  const [pendingRepo, setPendingRepo] = useState<{ owner: string; repo: string } | null>(null);
+  const [accessHint, setAccessHint] = useState<string | null>(null);
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
       const value = input.trim();
       if (!value) return;
@@ -67,7 +71,34 @@ export default function LandingPage() {
 
       if (owner && repo) {
         setIsNavigating(true);
-        router.push(`/${owner}/${repo}`);
+        setAccessHint(null);
+
+        try {
+          const token = loadGitHubToken();
+          const params = new URLSearchParams({ owner, repo });
+          const res = await fetch(`/api/github/repo/access?${params}`, {
+            headers: token ? { "x-github-token": token } : undefined,
+          });
+
+          if (res.ok) {
+            router.push(`/${owner}/${repo}`);
+            return;
+          }
+
+          // Common private/inaccessible statuses from GitHub without PAT.
+          if ([401, 403, 404].includes(res.status)) {
+            setPendingRepo({ owner, repo });
+            setGithubTokenOpen(true);
+            setAccessHint("This repository may be private or restricted. Add a GitHub PAT to continue.");
+            return;
+          }
+
+          setAccessHint("Unable to verify repository access right now. Please try again.");
+        } catch {
+          setAccessHint("Network error while checking repo access. Please try again.");
+        } finally {
+          setIsNavigating(false);
+        }
       }
     },
     [input, router]
@@ -145,6 +176,10 @@ export default function LandingPage() {
               Visualize
             </Button>
           </form>
+
+          {accessHint && (
+            <p className="mt-3 text-sm text-amber-200/90">{accessHint}</p>
+          )}
         </motion.div>
 
         {/* Example Repos */}
@@ -235,6 +270,20 @@ export default function LandingPage() {
         <footer className="border-t border-border/30 py-8 text-center text-sm text-muted-foreground w-full">
         </footer>
       </main>
+
+      <GitHubTokenModal
+        open={githubTokenOpen}
+        onOpenChange={setGithubTokenOpen}
+        onSave={(token) => {
+          if (!pendingRepo) return;
+          if (!token) {
+            setAccessHint("A GitHub token is required for private repositories.");
+            return;
+          }
+          setAccessHint(null);
+          router.push(`/${pendingRepo.owner}/${pendingRepo.repo}`);
+        }}
+      />
     </div>
   );
 }

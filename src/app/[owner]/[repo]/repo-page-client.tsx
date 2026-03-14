@@ -7,6 +7,7 @@ import Navbar from "@/components/dashboard/navbar";
 import TabNav from "@/components/dashboard/tab-nav";
 import RepoOverview from "@/components/dashboard/repo-overview";
 import AISettingsModal, { loadAISettings } from "@/components/dashboard/ai-settings-modal";
+import GitHubTokenModal from "@/components/dashboard/github-token-modal";
 import PipelineStatusDisplay from "@/components/dashboard/pipeline-status";
 import ArchitectureDiagram from "@/components/diagrams/architecture-diagram";
 import FileTreeGraph from "@/components/diagrams/file-tree-graph";
@@ -72,6 +73,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     ]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [aiSettingsOpen, setAISettingsOpen] = useState(false);
+    const [githubTokenOpen, setGithubTokenOpen] = useState(false);
     const [hasUserAIKey, setHasUserAIKey] = useState(false);
 
     // Get PAT from localStorage
@@ -90,9 +92,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         try {
             const token = getToken();
             const params = new URLSearchParams({ owner, repo });
-            if (token) params.set("token", token);
 
-            const res = await fetch(`/api/github/repo?${params}`);
+            const res = await fetch(`/api/github/repo?${params}`, {
+                headers: token ? { "x-github-token": token } : undefined,
+            });
             if (!res.ok) {
                 const data = await res.json();
                 throw new Error(data.error ?? "Failed to fetch repository data");
@@ -101,8 +104,16 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             const data: RepoData = await res.json();
             setRepoData(data);
         } catch (err) {
+            const token = getToken();
+            const baseMessage = err instanceof Error ? err.message : "Failed to fetch repository data";
+            const isPrivateLikeError = /(404|403|not found|forbidden|private)/i.test(baseMessage);
+            const withHint = !token && isPrivateLikeError
+                ? `${baseMessage}. This repo may be private. Add a GitHub token from the navbar.`
+                : token && isPrivateLikeError
+                    ? `${baseMessage}. Token detected, but it may be expired or missing scopes (repo/read:org) for this repository.`
+                    : baseMessage;
             setError(
-                err instanceof Error ? err.message : "Failed to fetch repository data"
+                withHint
             );
         } finally {
             setLoading(false);
@@ -300,7 +311,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     if (loading) {
         return (
             <div className="min-h-screen pt-14">
-                <Navbar owner={owner} repo={repo} />
+                <Navbar
+                    owner={owner}
+                    repo={repo}
+                    onGitHubTokenSettings={() => setGithubTokenOpen(true)}
+                    onAISettings={() => setAISettingsOpen(true)}
+                />
                 <div className="p-6 space-y-6 max-w-7xl mx-auto">
                     <div className="pro-surface loading-shimmer-soft p-6 flex items-center justify-between">
                         <div>
@@ -325,7 +341,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     if (error) {
         return (
             <div className="min-h-screen pt-14">
-                <Navbar owner={owner} repo={repo} />
+                <Navbar
+                    owner={owner}
+                    repo={repo}
+                    onGitHubTokenSettings={() => setGithubTokenOpen(true)}
+                    onAISettings={() => setAISettingsOpen(true)}
+                />
                 <div className="flex items-center justify-center h-[70vh]">
                     <div className="glass-card p-8 text-center max-w-md">
                         <div className="text-4xl mb-4">⚠️</div>
@@ -339,6 +360,32 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         </button>
                     </div>
                 </div>
+
+                <AISettingsModal
+                    open={aiSettingsOpen}
+                    onOpenChange={setAISettingsOpen}
+                    onSave={() => {
+                        setHasUserAIKey(true);
+                        toast.success("AI key saved", {
+                            description: "You can now generate premium architecture diagrams",
+                        });
+                    }}
+                />
+
+                <GitHubTokenModal
+                    open={githubTokenOpen}
+                    onOpenChange={setGithubTokenOpen}
+                    onSave={(token) => {
+                        if (token) {
+                            toast.success("GitHub token saved", {
+                                description: "Retrying repository fetch...",
+                            });
+                        } else {
+                            toast.info("GitHub token cleared");
+                        }
+                        fetchData();
+                    }}
+                />
             </div>
         );
     }
@@ -350,6 +397,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <Navbar
                 owner={owner}
                 repo={repo}
+                onGitHubTokenSettings={() => setGithubTokenOpen(true)}
                 onAISettings={() => setAISettingsOpen(true)}
                 onExport={() => {
                     const dataStr = JSON.stringify(repoData, null, 2);
@@ -480,6 +528,21 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     toast.success("AI key saved", {
                         description: "You can now generate premium architecture diagrams",
                     });
+                }}
+            />
+
+            <GitHubTokenModal
+                open={githubTokenOpen}
+                onOpenChange={setGithubTokenOpen}
+                onSave={(token) => {
+                    if (token) {
+                        toast.success("GitHub token saved", {
+                            description: "Private repositories are now accessible",
+                        });
+                    } else {
+                        toast.info("GitHub token cleared");
+                    }
+                    fetchData();
                 }}
             />
         </div>
