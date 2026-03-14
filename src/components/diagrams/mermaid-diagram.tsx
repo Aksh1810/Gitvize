@@ -112,32 +112,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         setPanOffset({ x: 0, y: 0 });
     }, [computeFitTransform]);
 
-    const recenterByRect = useCallback((steps = 3) => {
-        let remaining = steps;
-        const tick = () => {
-            const container = containerRef.current;
-            const svgEl = container?.querySelector("svg") as SVGSVGElement | null;
-            if (!container || !svgEl) return;
 
-            const containerRect = container.getBoundingClientRect();
-            const svgRect = svgEl.getBoundingClientRect();
-            if (!containerRect.width || !containerRect.height || !svgRect.width || !svgRect.height) return;
-
-            const dx = containerRect.left + containerRect.width / 2 - (svgRect.left + svgRect.width / 2);
-            const dy = containerRect.top + containerRect.height / 2 - (svgRect.top + svgRect.height / 2);
-
-            if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
-                setPanOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
-            }
-
-            remaining -= 1;
-            if (remaining > 0) {
-                requestAnimationFrame(tick);
-            }
-        };
-
-        requestAnimationFrame(tick);
-    }, []);
 
     // Render Mermaid diagram
     useEffect(() => {
@@ -224,9 +199,6 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         // A second pass catches late font/layout settling from Mermaid SVG.
         const timeoutId = window.setTimeout(() => {
             centerInitialView();
-            requestAnimationFrame(() => {
-                recenterByRect(8);
-            });
         }, 180);
 
         return () => {
@@ -236,7 +208,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
             }
             window.clearTimeout(timeoutId);
         };
-    }, [svgContent, centerInitialView, recenterByRect]);
+    }, [svgContent, centerInitialView]);
 
     useEffect(() => {
         if (!svgContent || !containerRef.current) return;
@@ -323,12 +295,7 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
         setPanOffset({ x: 0, y: 0 });
         panOriginRef.current = { x: 0, y: 0 };
         panStartRef.current = { x: 0, y: 0 };
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                recenterByRect(8);
-            });
-        });
-    }, [computeFitTransform, recenterByRect]);
+    }, [computeFitTransform]);
 
     // Export SVG
     const exportSVG = useCallback(async () => {
