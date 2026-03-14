@@ -102,7 +102,7 @@
   --glow-cyan: 6, 182, 212;
   --glow-pink: 236, 72, 153;
   --glow-amber: 245, 158, 11;
-  --grid-line: rgba(99, 102, 241, 0.08);
+  --grid-line: rgba(255, 255, 255, 0.04);
 }
 
 /* Keep dark variant identical (always dark) */
@@ -216,21 +216,21 @@
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(circle at 15% 20%, rgba(99, 102, 241, 0.2), transparent 40%),
-    radial-gradient(circle at 85% 10%, rgba(236, 72, 153, 0.18), transparent 42%),
-    radial-gradient(circle at 70% 75%, rgba(6, 182, 212, 0.16), transparent 45%),
-    linear-gradient(180deg, rgba(10, 14, 26, 0.98) 0%, rgba(8, 10, 20, 0.98) 60%, rgba(6, 8, 16, 0.98) 100%);
+    radial-gradient(circle at 18% 16%, rgba(99, 102, 241, 0.1), transparent 42%),
+    radial-gradient(circle at 82% 8%, rgba(236, 72, 153, 0.07), transparent 46%),
+    radial-gradient(circle at 68% 78%, rgba(6, 182, 212, 0.08), transparent 48%),
+    linear-gradient(180deg, rgba(7, 9, 16, 0.995) 0%, rgba(6, 8, 14, 0.995) 55%, rgba(4, 5, 10, 1) 100%);
   z-index: -4;
   pointer-events: none;
 }
 
 .app-orb {
   position: fixed;
-  width: 520px;
-  height: 520px;
+  width: 480px;
+  height: 480px;
   border-radius: 999px;
-  filter: blur(80px);
-  opacity: 0.35;
+  filter: blur(96px);
+  opacity: 0.18;
   z-index: -3;
   pointer-events: none;
 }
@@ -238,26 +238,26 @@
 .app-orb.orb-1 {
   top: -120px;
   left: -80px;
-  background: rgba(var(--glow-indigo), 0.55);
+  background: rgba(var(--glow-indigo), 0.3);
 }
 
 .app-orb.orb-2 {
   top: 20vh;
   right: -160px;
-  background: rgba(var(--glow-pink), 0.45);
+  background: rgba(var(--glow-pink), 0.22);
 }
 
 .app-orb.orb-3 {
   bottom: -160px;
   left: 30vw;
-  background: rgba(var(--glow-cyan), 0.4);
+  background: rgba(var(--glow-cyan), 0.24);
 }
 
 .app-noise {
   position: fixed;
   inset: 0;
   background-image: url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.25'/%3E%3C/svg%3E");
-  opacity: 0.08;
+  opacity: 0.04;
   mix-blend-mode: soft-light;
   z-index: -2;
   pointer-events: none;
@@ -285,8 +285,8 @@
 
 .diagram-shell {
   position: relative;
-  background: rgba(8, 12, 24, 0.68);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  background: rgba(0, 0, 0, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 1.25rem;
   overflow: hidden;
 }
@@ -295,17 +295,15 @@
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.16), transparent 45%),
-    radial-gradient(circle at 80% 70%, rgba(6, 182, 212, 0.14), transparent 46%);
-  opacity: 0.8;
+  background: radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.04), transparent 60%);
+  opacity: 0.5;
   pointer-events: none;
 }
 
 .diagram-grid {
-  background-image: linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: 32px 32px;
+  background-image: radial-gradient(circle, var(--grid-line) 1.1px, transparent 1.3px);
+  background-size: 24px 24px;
+  background-position: 0 0;
 }
 
 /* ============================================================================
