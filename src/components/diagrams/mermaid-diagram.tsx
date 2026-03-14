@@ -103,8 +103,8 @@ export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProp
     }, [getDiagramBBox]);
 
     const centerInitialView = useCallback(() => {
-        setViewTransform(computeFitTransform());
-        setPanOffset({ x: 0, y: 0 });
+        setViewTransform(computeFitTransform(1));
+        setPanOffset({ x: 500, y: 500 });
     }, [computeFitTransform]);
 
     const clearPendingFitFrames = useCallback(() => {
