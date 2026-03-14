@@ -302,35 +302,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     }, [focusLine]);
 
     useEffect(() => {
-        if (!showFiles && showSymbols) {
-            setShowSymbols(false);
-        }
-    }, [showFiles, showSymbols]);
-
-    useEffect(() => {
-        if (!showSymbols) {
-            setShowDefinesEdges(false);
-            setShowImportsEdges(false);
-            setShowCallsEdges(false);
-            setShowExtendsEdges(false);
-            setShowImplementsEdges(false);
-        }
-    }, [showSymbols]);
-
-    useEffect(() => {
-        if (!showSymbols) {
-            setSymbolKindVisibility({
-                class: false,
-                function: false,
-                interface: false,
-                type: false,
-                method: false,
-                variable: false,
-            });
-        }
-    }, [showSymbols]);
-
-    useEffect(() => {
         let cancelled = false;
 
         const runSymbolAnalysis = async () => {
@@ -659,7 +630,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         const state = visibilityRef.current;
         cy.batch(() => {
             cy.getElementById("root").style("display", state.showRoot ? "element" : "none");
-            cy.nodes('node[type="folder"]').style("display", state.showFolders ? "element" : "none");
+            cy.nodes('node[type="folder"]').not('#root').style("display", state.showFolders ? "element" : "none");
             cy.nodes('node[type="file"]').style("display", state.showFiles ? "element" : "none");
 
             const symbolsVisible = state.showSymbols && state.showFiles;
@@ -1155,8 +1126,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
             {/* Right filters drawer */}
             <div className={`absolute top-0 right-0 bottom-0 z-30 transition-transform duration-200 ${showRightFilters ? "translate-x-0" : "translate-x-full"}`}>
-                <div className="h-full w-72 bg-slate-900/95 backdrop-blur border-l border-slate-700 flex flex-col">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
+                <div className="h-full w-64 bg-slate-900/95 backdrop-blur border-l border-slate-700 flex flex-col">
+                    <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-700">
                         <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
                         <button
                             onClick={() => setShowRightFilters(false)}
@@ -1166,20 +1137,20 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                             <X className="w-4 h-4" />
                         </button>
                     </div>
-                    <div className="flex-1 overflow-auto px-3 py-3 text-[11px] font-mono text-slate-300">
+                    <div className="flex-1 overflow-auto px-2.5 py-2.5 text-[10px] font-mono text-slate-300">
                         <button
-                            className="w-full flex items-center justify-between rounded px-2 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
+                            className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
                             onClick={() => setNodeFiltersOpen((prev) => !prev)}
                         >
                             <span>Node Types</span>
                             {nodeFiltersOpen ? (
-                                <ChevronDown className="w-3.5 h-3.5" />
+                                <ChevronDown className="w-3 h-3" />
                             ) : (
-                                <ChevronRight className="w-3.5 h-3.5" />
+                                <ChevronRight className="w-3 h-3" />
                             )}
                         </button>
                         {nodeFiltersOpen && (
-                            <div className="space-y-2 mt-2">
+                            <div className="space-y-1.5 mt-1.5">
                                 {[
                                     { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-indigo-500" },
                                     { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
@@ -1187,13 +1158,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                 ].map((item) => (
                                     <button
                                         key={item.key}
-                                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${item.on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                        className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${item.on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                         onClick={() => item.setOn((prev: boolean) => !prev)}
                                     >
-                                        <span className={`h-3 w-3 rounded-full ${item.color} shadow-[0_0_10px_rgba(99,102,241,0.35)]`} />
+                                        <span className={`h-2.5 w-2.5 rounded-full ${item.color} shadow-[0_0_8px_rgba(99,102,241,0.35)]`} />
                                         <span className="flex-1 text-left text-slate-200">{item.label}</span>
                                         <span className="text-slate-500">{item.count}</span>
-                                        <span className={`ml-1 h-2.5 w-2.5 rounded-full ${item.on ? "bg-purple-500" : "bg-slate-700"}`} />
+                                        <span className={`ml-1 h-2 w-2 rounded-full ${item.on ? "bg-purple-500" : "bg-slate-700"}`} />
                                     </button>
                                 ))}
 
@@ -1204,7 +1175,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                     return (
                                         <button
                                             key={kind}
-                                            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                            className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                             onClick={() =>
                                                 setSymbolKindVisibility((prev) => ({
                                                     ...prev,
@@ -1213,10 +1184,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                             }
                                             disabled={!showSymbols}
                                         >
-                                            <span className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+                                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
                                             <span className="flex-1 text-left text-slate-200 capitalize">{kind}</span>
                                             <span className="text-slate-500">{count}</span>
-                                            <span className={`ml-1 h-2.5 w-2.5 rounded-full ${on ? "bg-purple-500" : "bg-slate-700"}`} />
+                                            <span className={`ml-1 h-2 w-2 rounded-full ${on ? "bg-purple-500" : "bg-slate-700"}`} />
                                         </button>
                                     );
                                 })}
@@ -1224,70 +1195,70 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                         )}
 
                         <button
-                            className="w-full flex items-center justify-between rounded px-2 py-2 mt-4 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
+                            className="w-full flex items-center justify-between rounded px-2 py-1.5 mt-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
                             onClick={() => setEdgeFiltersOpen((prev) => !prev)}
                         >
                             <span>Edge Types</span>
                             {edgeFiltersOpen ? (
-                                <ChevronDown className="w-3.5 h-3.5" />
+                                <ChevronDown className="w-3 h-3" />
                             ) : (
-                                <ChevronRight className="w-3.5 h-3.5" />
+                                <ChevronRight className="w-3 h-3" />
                             )}
                         </button>
                         {edgeFiltersOpen && (
-                            <div className="space-y-2 mt-2">
+                            <div className="space-y-1.5 mt-1.5">
                                 <button
-                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                     onClick={() => setShowContainsEdges((prev) => !prev)}
                                 >
-                                    <span className="h-1.5 w-8 rounded-full bg-emerald-400" />
+                                    <span className="h-1.5 w-7 rounded-full bg-emerald-400" />
                                     <span className="flex-1 text-left text-slate-200">Contains</span>
-                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showContainsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                    <span className={`ml-1 h-2 w-2 rounded-full ${showContainsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                                 </button>
                                 <button
-                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                     onClick={() => setShowDefinesEdges((prev) => !prev)}
                                     disabled={!showSymbols}
                                 >
-                                    <span className="h-1.5 w-8 rounded-full bg-cyan-400" />
+                                    <span className="h-1.5 w-7 rounded-full bg-cyan-400" />
                                     <span className="flex-1 text-left text-slate-200">Defines</span>
-                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showDefinesEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                    <span className={`ml-1 h-2 w-2 rounded-full ${showDefinesEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                                 </button>
                                 <button
-                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                     onClick={() => setShowImportsEdges((prev) => !prev)}
                                     disabled={!showSymbols}
                                 >
-                                    <span className="h-1.5 w-8 rounded-full bg-blue-500" />
+                                    <span className="h-1.5 w-7 rounded-full bg-blue-500" />
                                     <span className="flex-1 text-left text-slate-200">Imports</span>
-                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImportsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                    <span className={`ml-1 h-2 w-2 rounded-full ${showImportsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                                 </button>
                                 <button
-                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                     onClick={() => setShowCallsEdges((prev) => !prev)}
                                     disabled={!showSymbols}
                                 >
-                                    <span className="h-1.5 w-8 rounded-full bg-violet-500" />
+                                    <span className="h-1.5 w-7 rounded-full bg-violet-500" />
                                     <span className="flex-1 text-left text-slate-200">Calls</span>
-                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showCallsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                    <span className={`ml-1 h-2 w-2 rounded-full ${showCallsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                                 </button>
                                 <button
-                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                     onClick={() => setShowExtendsEdges((prev) => !prev)}
                                     disabled={!showSymbols}
                                 >
-                                    <span className="h-1.5 w-8 rounded-full bg-orange-500" />
+                                    <span className="h-1.5 w-7 rounded-full bg-orange-500" />
                                     <span className="flex-1 text-left text-slate-200">Extends</span>
-                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showExtendsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                    <span className={`ml-1 h-2 w-2 rounded-full ${showExtendsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                                 </button>
                                 <button
-                                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                     onClick={() => setShowImplementsEdges((prev) => !prev)}
                                     disabled={!showSymbols}
                                 >
-                                    <span className="h-1.5 w-8 rounded-full bg-pink-500" />
+                                    <span className="h-1.5 w-7 rounded-full bg-pink-500" />
                                     <span className="flex-1 text-left text-slate-200">Implements</span>
-                                    <span className={`ml-1 h-2.5 w-2.5 rounded-full ${showImplementsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
+                                    <span className={`ml-1 h-2 w-2 rounded-full ${showImplementsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
                                 </button>
                             </div>
                         )}
