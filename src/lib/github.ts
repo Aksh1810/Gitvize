@@ -272,6 +272,112 @@ export async function fetchDependencyFiles(
         .map((r) => r.value);
 }
 
+// --- Architecture Analysis File Contents ---
+
+const ARCHITECTURE_CODE_EXTENSIONS = new Set([
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "mts",
+    "cts",
+    "mjs",
+    "cjs",
+]);
+
+const ARCHITECTURE_SKIP_SEGMENTS = [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    "vendor",
+    "generated",
+    "__snapshots__",
+];
+
+function scoreArchitecturePath(path: string): number {
+    const lower = path.toLowerCase();
+    let score = 0;
+
+    if (lower.includes("/app/") || lower.includes("/pages/")) score += 80;
+    if (lower.includes("/components/")) score += 70;
+    if (lower.includes("/core/") || lower.includes("/lib/") || lower.includes("/engine/")) score += 65;
+    if (lower.includes("/hooks/") || lower.includes("use")) score += 60;
+    if (lower.includes("/api/") || lower.includes("/services/") || lower.includes("route.")) score += 55;
+    if (lower.includes("test") || lower.includes("spec")) score += 30;
+
+    if (lower.endsWith("/page.tsx") || lower.endsWith("/layout.tsx")) score += 40;
+    if (lower.endsWith("index.ts") || lower.endsWith("index.tsx")) score += 25;
+
+    return score;
+}
+
+function selectArchitectureFiles(
+    tree: FileTreeResponse["tree"],
+    maxFiles: number
+): string[] {
+    const candidates = tree
+        .filter((item) => item.type === "blob")
+        .filter((item) => {
+            const lower = item.path.toLowerCase();
+            if (ARCHITECTURE_SKIP_SEGMENTS.some((segment) => lower.includes(`/${segment}/`) || lower.startsWith(`${segment}/`))) {
+                return false;
+            }
+            if (lower.endsWith(".d.ts")) return false;
+            const ext = lower.split(".").pop() ?? "";
+            return ARCHITECTURE_CODE_EXTENSIONS.has(ext);
+        })
+        .map((item) => ({
+            path: item.path,
+            size: item.size ?? 0,
+            score: scoreArchitecturePath(item.path),
+        }))
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            if (a.size !== b.size) return a.size - b.size;
+            return a.path.localeCompare(b.path);
+        });
+
+    return candidates.slice(0, maxFiles).map((item) => item.path);
+}
+
+export async function fetchArchitectureFileContents(
+    owner: string,
+    repo: string,
+    tree: FileTreeResponse["tree"],
+    token?: string | null,
+    options?: { maxFiles?: number; maxCharsPerFile?: number }
+): Promise<Array<{ path: string; content: string }>> {
+    const maxFiles = Math.max(10, Math.min(options?.maxFiles ?? 40, 80));
+    const maxCharsPerFile = Math.max(1500, Math.min(options?.maxCharsPerFile ?? 14000, 30000));
+    const selectedPaths = selectArchitectureFiles(tree, maxFiles);
+
+    const responses = await Promise.allSettled(
+        selectedPaths.map(async (path) => {
+            const res = await fetch(
+                `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path}`,
+                { headers: headers(token) }
+            );
+            if (!res.ok) throw new Error(`Failed to fetch ${path}`);
+            const raw = await res.text();
+            return {
+                path,
+                content: raw.length > maxCharsPerFile ? raw.slice(0, maxCharsPerFile) : raw,
+            };
+        })
+    );
+
+    return responses
+        .filter(
+            (result): result is PromiseFulfilledResult<{ path: string; content: string }> =>
+                result.status === "fulfilled"
+        )
+        .map((result) => result.value)
+        .filter((entry) => entry.content.trim().length > 0);
+}
+
 // --- Fetch all repo data in parallel ---
 
 export async function fetchAllRepoData(

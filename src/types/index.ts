@@ -93,12 +93,19 @@ export interface FileNode {
   label: string;
   group: string;
   role: string;
+  nodeKind?: "file" | "symbol";
+  symbolKind?: "class" | "function" | "interface" | "type" | "method" | "variable" | "hook";
+  parentPath?: string;
+  isEntry?: boolean;
+  weight?: number;
 }
 
 export interface FileEdge {
   from: string;
   to: string;
   label: string;
+  relationKind?: "contains" | "imports" | "calls" | "extends" | "implements" | "tests" | "uses" | "renders" | "configures" | "verifies";
+  confidence?: "high" | "medium" | "low";
 }
 
 export interface ArchitectureAnalysis {

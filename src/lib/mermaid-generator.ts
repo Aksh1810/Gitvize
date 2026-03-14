@@ -5,7 +5,7 @@
 // Robust character escaping, smart file selection for large repos, and
 // universal edge inference (not project-specific).
 
-import { TreeItem, ArchitectureAnalysis } from "@/types";
+import { TreeItem, ArchitectureAnalysis, FileNode } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Safe string helpers                                                */
@@ -386,6 +386,121 @@ export function generateMermaidFromTree(
     return lines.join("\n");
 }
 
+/* ------------------------------------------------------------------ */
+/*  Symbol-aware architecture renderer                                 */
+/* ------------------------------------------------------------------ */
+
+function isUsableAIMermaid(mermaid: string | undefined): boolean {
+    if (!mermaid) return false;
+    const trimmed = mermaid.trim();
+    if (!trimmed) return false;
+    if (!/^(flowchart|graph)\s+/i.test(trimmed)) return false;
+
+    // Basic quality gate: avoid very tiny or malformed snippets.
+    const edgeCount = (trimmed.match(/-->|-\.->/g) ?? []).length;
+    const nodeCount = (trimmed.match(/\[[^\]]+\]/g) ?? []).length;
+    return nodeCount >= 4 && edgeCount >= 2;
+}
+
+function safeNodeId(input: string): string {
+    return `a_${input.replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/_$/, "")}`;
+}
+
+function fileName(path: string): string {
+    return path.split("/").pop() ?? path;
+}
+
+function inferNodeKind(node: FileNode): "file" | "symbol" {
+    if (node.nodeKind) return node.nodeKind;
+    if (node.symbolKind || node.parentPath || node.path.includes("#")) return "symbol";
+    return "file";
+}
+
+function buildArchitectureMermaidFromAnalysis(
+    analysis: ArchitectureAnalysis,
+    owner: string,
+    repo: string
+): string | null {
+    const nodes = (analysis.fileNodes ?? []).slice(0, 180);
+    const edges = (analysis.fileEdges ?? []).slice(0, 260);
+    if (nodes.length === 0) return null;
+
+    const groupLabelMap = new Map<string, string>();
+    (analysis.groups ?? []).forEach((group) => {
+        groupLabelMap.set(group.name, group.label);
+    });
+
+    const lines: string[] = ["graph TD"];
+
+    // Render by group for readability.
+    const grouped = new Map<string, FileNode[]>();
+    for (const node of nodes) {
+        const key = node.group || "other";
+        const bucket = grouped.get(key) ?? [];
+        bucket.push(node);
+        grouped.set(key, bucket);
+    }
+
+    for (const [group, groupNodes] of grouped) {
+        const groupId = safeNodeId(`group_${group}`);
+        const groupLabel = safeLabel(groupLabelMap.get(group) ?? group);
+        lines.push(`  subgraph ${groupId}["${groupLabel}"]`);
+        lines.push("    direction TB");
+
+        for (const node of groupNodes) {
+            const id = safeNodeId(node.path);
+            const kind = inferNodeKind(node);
+            const isEntry = Boolean(node.isEntry) || analysis.entryPoints.includes(node.path) || analysis.entryPoints.includes(node.parentPath ?? "");
+            const display = safeLabel(node.label || fileName(node.path));
+            const subtitlePath = kind === "symbol" ? node.parentPath : node.path;
+            const subtitle = subtitlePath ? safeLabel(fileName(subtitlePath)) : "";
+            const label = subtitle
+                ? `${display}<br/><small>${subtitle}</small>`
+                : display;
+
+            let mermaidClass = "default";
+            if (kind === "symbol") {
+                mermaidClass = isEntry ? "entry" : "step";
+            } else {
+                mermaidClass = isEntry ? "entry" : "file";
+            }
+            if ((node.role ?? "").toLowerCase().includes("terminal")) {
+                mermaidClass = "terminal";
+            }
+
+            lines.push(`    ${id}["${label}"]:::${mermaidClass}`);
+        }
+
+        lines.push("  end");
+    }
+
+    const allowedEdgeTargets = new Set(nodes.map((node) => node.path));
+    for (const edge of edges) {
+        if (!allowedEdgeTargets.has(edge.from) || !allowedEdgeTargets.has(edge.to)) {
+            continue;
+        }
+        const fromId = safeNodeId(edge.from);
+        const toId = safeNodeId(edge.to);
+        const label = safeLabel(edge.label || edge.relationKind || "uses");
+        lines.push(`  ${fromId} -->|"${label}"| ${toId}`);
+    }
+
+    // Click links resolve symbols back to owning file path.
+    for (const node of nodes) {
+        const targetPath = node.parentPath || node.path;
+        const url = `https://github.com/${owner}/${repo}/blob/main/${targetPath}`;
+        lines.push(`  click ${safeNodeId(node.path)} "${url}"`);
+    }
+
+    lines.push("  classDef default fill:#1e293b,stroke:#94a3b8,stroke-width:3px,color:#f8fafc,font-size:20px");
+    lines.push("  classDef entry fill:#1e293b,stroke:#34d399,stroke-width:5px,color:#f8fafc,font-size:20px");
+    lines.push("  classDef step fill:#1e293b,stroke:#22d3ee,stroke-width:3px,color:#f8fafc,font-size:18px");
+    lines.push("  classDef terminal fill:#1e293b,stroke:#f472b6,stroke-width:5px,color:#f8fafc,font-size:18px");
+    lines.push("  classDef file fill:#0f172a,stroke:#334155,stroke-width:3px,color:#cbd5e1,font-size:16px");
+
+    return lines.join("\n");
+}
+
 /**
  * Pick the best Mermaid code: AI-generated if available, else fallback from tree.
  */
@@ -395,10 +510,20 @@ export function generateArchitectureMermaid(
     owner: string,
     repo: string
 ): string {
-    // If AI already produced Mermaid code, use it directly
-    if (analysis?.mermaidDiagram) {
-        return analysis.mermaidDiagram;
+    // Prefer AI Mermaid when it passes a basic quality gate.
+    const aiMermaid = analysis?.mermaidDiagram;
+    if (aiMermaid && isUsableAIMermaid(aiMermaid)) {
+        return aiMermaid;
     }
-    // Otherwise generate from tree
+
+    // Fall back to normalized architecture graph (supports symbol-aware nodes).
+    if (analysis?.fileNodes?.length) {
+        const rendered = buildArchitectureMermaidFromAnalysis(analysis, owner, repo);
+        if (rendered) {
+            return rendered;
+        }
+    }
+
+    // Final fallback: infer from tree only.
     return generateMermaidFromTree(tree, owner, repo);
 }

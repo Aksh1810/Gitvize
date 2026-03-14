@@ -6,11 +6,12 @@ import type { TreeItem } from "@/types";
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { owner, repo, tree, readme, aiSettings, mode } = body as {
+        const { owner, repo, tree, readme, aiSettings, mode, githubToken } = body as {
             owner: string;
             repo: string;
             tree: TreeItem[];
             readme: string;
+            githubToken?: string;
             aiSettings?: { provider: string; apiKey: string; model?: string };
             forceFallback?: boolean;
             mode?: "smart" | "premium";
@@ -35,7 +36,7 @@ export async function POST(request: NextRequest) {
 
         // Smart mode is deterministic and does not call external AI APIs.
         if (requestedMode === "smart") {
-            const result = getMockAnalysis(owner, repo, tree);
+            const result = await getMockAnalysis(owner, repo, tree, githubToken ?? null);
             return NextResponse.json({
                 ...result,
                 generatedAt: new Date().toISOString(),
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (forceFallback) {
-            const result = getMockAnalysis(owner, repo, tree);
+            const result = await getMockAnalysis(owner, repo, tree, githubToken ?? null);
             return NextResponse.json({
                 ...result,
                 generatedAt: new Date().toISOString(),
@@ -105,7 +106,8 @@ export async function POST(request: NextRequest) {
                                     )
                                 );
                             },
-                            aiConfig
+                            aiConfig,
+                            githubToken ?? null
                         );
 
                         controller.enqueue(
@@ -126,7 +128,7 @@ export async function POST(request: NextRequest) {
                         console.error("AI analysis failed, falling back to mock:", error);
                         // Fall back to mock analysis when AI fails
                         try {
-                            const fallback = getMockAnalysis(owner, repo, tree);
+                            const fallback = await getMockAnalysis(owner, repo, tree, githubToken ?? null);
                             controller.enqueue(
                                 encoder.encode(
                                     `data: ${JSON.stringify({
@@ -165,7 +167,7 @@ export async function POST(request: NextRequest) {
             });
         } else {
             // Premium requested but no key configured: return deterministic smart result.
-            const result = getMockAnalysis(owner, repo, tree);
+            const result = await getMockAnalysis(owner, repo, tree, githubToken ?? null);
 
             return NextResponse.json({
                 ...result,

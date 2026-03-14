@@ -140,6 +140,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     repo,
                     tree: repoData.fileTree.tree,
                     readme: repoData.readme,
+                    githubToken: getToken(),
                     aiSettings,
                 }),
             });

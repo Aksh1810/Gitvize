@@ -2,8 +2,10 @@
 // GitViz — AI Service Layer (Configurable Provider)
 // ============================================================================
 
-import { ArchitectureAnalysis, FileAnnotation, TreeItem } from "@/types";
+import { ArchitectureAnalysis, FileAnnotation, FileEdge, TreeItem } from "@/types";
 import { generateMermaidFromTree } from "@/lib/mermaid-generator";
+import { fetchArchitectureFileContents } from "@/lib/github";
+import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/symbol-parser";
 
 // --- Provider Configuration ---
 
@@ -480,7 +482,8 @@ export async function analyzeRepository(
     tree: TreeItem[],
     readme: string,
     onProgress?: (step: string, message: string) => void,
-    aiConfig?: AIConfig
+    aiConfig?: AIConfig,
+    githubToken?: string | null
 ): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[]; source: "ai" | "fallback"; fallbackReason?: string }> {
     try {
         // Step 1: Understand — analyze the codebase
@@ -568,7 +571,7 @@ export async function analyzeRepository(
         console.error("AI pipeline failed entirely, using mock analysis:", err);
         onProgress?.("enrich", "AI unavailable, generating fallback diagram...");
         return {
-            ...getMockAnalysis(owner, repo, tree),
+            ...(await getMockAnalysis(owner, repo, tree, githubToken)),
             source: "fallback",
             fallbackReason: err instanceof Error ? err.message : String(err),
         };
@@ -577,11 +580,178 @@ export async function analyzeRepository(
 
 // --- Mock Analysis (for development without AI key) ---
 
-export function getMockAnalysis(
+interface SymbolEnrichmentResult {
+    fileNodes: ArchitectureAnalysis["fileNodes"];
+    fileEdges: ArchitectureAnalysis["fileEdges"];
+}
+
+function buildSymbolAwareGraph(
+    baseNodes: NonNullable<ArchitectureAnalysis["fileNodes"]>,
+    baseEdges: NonNullable<ArchitectureAnalysis["fileEdges"]>,
+    sampledFiles: Array<{ path: string; content: string }>,
+    entryPoints: string[]
+): SymbolEnrichmentResult | null {
+    const analyzable = sampledFiles.filter((file) => isAnalyzableCodeFile(file.path) && file.content.trim().length > 0);
+    if (analyzable.length < 3) return null;
+
+    const symbolGraph = buildSymbolGraph(analyzable, { maxReferences: 280 });
+    if (symbolGraph.symbols.length < 12) return null;
+
+    const baseNodeByPath = new Map(baseNodes.map((node) => [node.path, node]));
+    const entrySet = new Set(entryPoints);
+
+    const kindPriority: Record<SymbolKind, number> = {
+        class: 5,
+        interface: 4,
+        type: 4,
+        function: 4,
+        method: 2,
+        variable: 1,
+    };
+
+    const symbolsByFile = new Map<string, Array<{ name: string; kind: SymbolKind }>>();
+    symbolGraph.symbols.forEach((symbol) => {
+        const existing = symbolsByFile.get(symbol.filePath) ?? [];
+        existing.push({ name: symbol.name, kind: symbol.kind });
+        symbolsByFile.set(symbol.filePath, existing);
+    });
+
+    const selectedNodeIds = new Set<string>();
+    const selectedByFileName = new Map<string, string>();
+    const selectedSymbolsByFile = new Map<string, string[]>();
+    const symbolNodes: NonNullable<ArchitectureAnalysis["fileNodes"]> = [];
+
+    const maxSymbolsPerFile = 5;
+    const maxSymbolNodes = 95;
+
+    for (const [filePath, symbols] of symbolsByFile) {
+        if (symbolNodes.length >= maxSymbolNodes) break;
+
+        const sorted = [...symbols]
+            .filter((symbol) => symbol.kind !== "variable" || symbol.name.startsWith("use"))
+            .sort((a, b) => {
+                const pa = kindPriority[a.kind] ?? 0;
+                const pb = kindPriority[b.kind] ?? 0;
+                if (pb !== pa) return pb - pa;
+                return a.name.localeCompare(b.name);
+            });
+
+        let perFileCount = 0;
+        let methodCount = 0;
+        for (const symbol of sorted) {
+            if (symbolNodes.length >= maxSymbolNodes) break;
+            if (perFileCount >= maxSymbolsPerFile) break;
+            if (symbol.kind === "method" && methodCount >= 1) continue;
+
+            const nodeId = `${filePath}#${symbol.kind}:${symbol.name}`;
+            if (selectedNodeIds.has(nodeId)) continue;
+
+            const parent = baseNodeByPath.get(filePath);
+            const symbolKind = symbol.name.startsWith("use") && symbol.kind === "function"
+                ? "hook"
+                : symbol.kind;
+            const isEntry = entrySet.has(filePath) && perFileCount === 0;
+
+            symbolNodes.push({
+                path: nodeId,
+                label: symbol.name,
+                group: parent?.group ?? "core",
+                role: symbol.kind,
+                nodeKind: "symbol",
+                symbolKind,
+                parentPath: filePath,
+                isEntry,
+                weight: (kindPriority[symbol.kind] ?? 1) + (isEntry ? 2 : 0),
+            });
+
+            selectedNodeIds.add(nodeId);
+            selectedByFileName.set(`${filePath}::${symbol.name}`, nodeId);
+            const fileSelected = selectedSymbolsByFile.get(filePath) ?? [];
+            fileSelected.push(nodeId);
+            selectedSymbolsByFile.set(filePath, fileSelected);
+
+            perFileCount += 1;
+            if (symbol.kind === "method") methodCount += 1;
+        }
+    }
+
+    if (symbolNodes.length < 12) return null;
+
+    const allNodes = [...baseNodes, ...symbolNodes];
+    const allNodePaths = new Set(allNodes.map((node) => node.path));
+
+    const resultEdges: NonNullable<ArchitectureAnalysis["fileEdges"]> = [];
+    const seenEdges = new Set<string>();
+    const pushEdge = (edge: FileEdge) => {
+        const key = `${edge.from}->${edge.to}:${edge.relationKind ?? edge.label}`;
+        if (edge.from === edge.to || seenEdges.has(key)) return;
+        if (!allNodePaths.has(edge.from) || !allNodePaths.has(edge.to)) return;
+        seenEdges.add(key);
+        resultEdges.push(edge);
+    };
+
+    baseEdges.slice(0, 120).forEach((edge) => {
+        pushEdge({
+            ...edge,
+            relationKind: edge.relationKind ?? "uses",
+            confidence: edge.confidence ?? "medium",
+        });
+    });
+
+    for (const symbolNode of symbolNodes) {
+        if (!symbolNode.parentPath) continue;
+        pushEdge({
+            from: symbolNode.parentPath,
+            to: symbolNode.path,
+            label: "contains",
+            relationKind: "contains",
+            confidence: "high",
+        });
+    }
+
+    const sortedRefs = [...symbolGraph.references].sort((a, b) => {
+        if (a.confidence === b.confidence) return 0;
+        return a.confidence === "high" ? -1 : 1;
+    });
+
+    let highRefCount = 0;
+    let mediumRefCount = 0;
+    for (const ref of sortedRefs) {
+        const fromSymbol = ref.fromSymbolName
+            ? selectedByFileName.get(`${ref.fromFilePath}::${ref.fromSymbolName}`)
+            : undefined;
+        const toSymbol = selectedByFileName.get(`${ref.toFilePath}::${ref.symbolName}`);
+
+        const fromNode = fromSymbol ?? selectedSymbolsByFile.get(ref.fromFilePath)?.[0] ?? ref.fromFilePath;
+        const toNode = toSymbol ?? selectedSymbolsByFile.get(ref.toFilePath)?.[0] ?? ref.toFilePath;
+
+        if (!allNodePaths.has(fromNode) || !allNodePaths.has(toNode)) continue;
+        if (ref.confidence === "high" && highRefCount >= 120) continue;
+        if (ref.confidence === "medium" && mediumRefCount >= 70) continue;
+
+        pushEdge({
+            from: fromNode,
+            to: toNode,
+            label: ref.relation,
+            relationKind: ref.relation,
+            confidence: ref.confidence,
+        });
+
+        if (ref.confidence === "high") highRefCount += 1;
+        else mediumRefCount += 1;
+    }
+
+    if (highRefCount + mediumRefCount < 8) return null;
+
+    return { fileNodes: allNodes, fileEdges: resultEdges.slice(0, 260) };
+}
+
+export async function getMockAnalysis(
     owner: string,
     repo: string,
-    tree: TreeItem[]
-): { architecture: ArchitectureAnalysis; annotations: FileAnnotation[] } {
+    tree: TreeItem[],
+    githubToken?: string | null
+): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[] }> {
     const dirs = new Set<string>();
     tree.forEach((t) => {
         const parts = t.path.split("/");
@@ -626,13 +796,10 @@ export function getMockAnalysis(
     const allFiles = tree.filter((t) => t.type === "blob").slice(0, 100);
     const usedGroups = new Set<string>();
 
-    const fileNodes = allFiles.map((f) => {
+    const fileNodes: NonNullable<ArchitectureAnalysis["fileNodes"]> = allFiles.map((f) => {
         const parts = f.path.split("/");
         const fileName = parts[parts.length - 1];
         const baseName = fileName.replace(/\.[^/.]+$/, "");
-        const topDir = parts.length > 1 ? parts[0] : "root";
-        const parentDir = parts.length > 2 ? parts.slice(0, -1).join("/") : topDir;
-
         let groupType = "other";
         const lower = f.path.toLowerCase();
         if (lower.includes("test") || lower.includes("spec") || lower.includes("__tests__")) groupType = "test";
@@ -649,7 +816,6 @@ export function getMockAnalysis(
 
         // Create descriptive label
         let label = baseName;
-        const ext = fileName.split(".").pop() || "";
         const role = getFileRole(f.path);
         if (role !== "Source") {
             label = `${baseName} (${role.toLowerCase()})`;
@@ -660,6 +826,8 @@ export function getMockAnalysis(
             label: label.length > 30 ? label.substring(0, 28) + "…" : label,
             group: groupType,
             role,
+            nodeKind: "file" as const,
+            isEntry: /(?:^|\/)index\.(?:ts|tsx|js|jsx)$/.test(f.path) || /(?:^|\/)main\.(?:ts|tsx|js|jsx)$/.test(f.path),
         };
     });
 
@@ -741,17 +909,39 @@ export function getMockAnalysis(
         color: groupColors[g]?.color || "#6b7280",
     }));
 
+    const entryPoints = tree
+        .filter((t) => t.type === "blob")
+        .filter((t) => t.path.match(/^(index|main|app|server)\.(ts|js|tsx|jsx|py|go|rs)$/) !== null)
+        .map((t) => t.path)
+        .slice(0, 5);
+
+    let finalNodes: NonNullable<ArchitectureAnalysis["fileNodes"]> = fileNodes;
+    let finalEdges = fileEdges as NonNullable<ArchitectureAnalysis["fileEdges"]>;
+    try {
+        const sampled = await fetchArchitectureFileContents(owner, repo, tree, githubToken, {
+            maxFiles: 42,
+            maxCharsPerFile: 14000,
+        });
+        const enriched = buildSymbolAwareGraph(finalNodes, finalEdges, sampled, entryPoints);
+        if (enriched) {
+            finalNodes = enriched.fileNodes ?? finalNodes;
+            finalEdges = enriched.fileEdges ?? finalEdges;
+        }
+    } catch (error) {
+        console.warn("Symbol-aware fallback generation skipped:", error);
+    }
+
     const architecture: ArchitectureAnalysis = {
         techStack: inferTechStack(tree),
-        architecturePattern: "Modular",
+        architecturePattern: finalNodes.length > fileNodes.length ? "Symbol-Aware Modular" : "Modular",
         description: `${owner}/${repo} — Analyzed ${tree.length} files across ${modules.length} modules.`,
         modules,
-        entryPoints: tree.filter((t) => t.type === "blob").filter((t) => t.path.match(/^(index|main|app|server)\.(ts|js|tsx|jsx|py|go|rs)$/) !== null).map((t) => t.path).slice(0, 5),
+        entryPoints,
         dataFlow: modules.length > 1 ? [{ from: modules[0].name, to: modules[1].name, description: "Primary data flow" }] : [],
-        fileNodes,
-        fileEdges,
+        fileNodes: finalNodes,
+        fileEdges: finalEdges,
         groups,
-        mermaidDiagram: generateMermaidFromTree(tree, owner, repo),
+        mermaidDiagram: undefined,
     };
 
     const annotations: FileAnnotation[] = tree.filter((t) => t.type === "blob").slice(0, 100).map((t) => {
