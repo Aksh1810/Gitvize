@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
@@ -15,19 +16,27 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GitViz — Visualize Any GitHub Repository",
+  title: {
+    default: "Gitvize — Visualize Any GitHub Repository",
+    template: "Gitvize — %s",
+  },
   description:
     "Turn any GitHub repository into stunning, interactive visualizations. Architecture diagrams, file trees, contributor networks, and more — all AI-powered.",
+  icons: {
+    icon: "/gitvize-icon.svg",
+    shortcut: "/gitvize-icon.svg",
+    apple: "/gitvize-icon.svg",
+  },
   openGraph: {
-    title: "GitViz — Visualize Any GitHub Repository",
+    title: "Gitvize — Visualize Any GitHub Repository",
     description:
       "Turn any GitHub repository into stunning, interactive visualizations.",
-    siteName: "GitViz",
+    siteName: "Gitvize",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "GitViz — Visualize Any GitHub Repository",
+    title: "Gitvize — Visualize Any GitHub Repository",
     description:
       "Turn any GitHub repository into stunning, interactive visualizations.",
   },
@@ -62,6 +71,7 @@ export default function RootLayout({
             },
           }}
         />
+        <Analytics />
       </body>
     </html>
   );

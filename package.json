@@ -12,6 +12,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@types/cytoscape": "^3.21.9",
     "@types/prismjs": "^1.26.6",
+    "@vercel/analytics": "^2.0.1",
     "@xyflow/react": "^12.10.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
