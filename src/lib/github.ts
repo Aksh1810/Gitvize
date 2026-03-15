@@ -14,6 +14,10 @@ import type {
 
 const GITHUB_API = "https://api.github.com";
 
+type FetchCacheMode =
+    | { revalidate: number }
+    | { noStore: true };
+
 function headers(token?: string | null): HeadersInit {
     const h: HeadersInit = {
         Accept: "application/vnd.github.v3+json",
@@ -26,11 +30,40 @@ function headers(token?: string | null): HeadersInit {
     return h;
 }
 
-async function ghFetch<T>(path: string, token?: string | null): Promise<T> {
-    const res = await fetch(`${GITHUB_API}${path}`, {
-        headers: headers(token),
-        next: { revalidate: 300 }, // 5 minute ISR cache
-    });
+async function ghFetch<T>(
+    path: string,
+    token?: string | null,
+    cacheMode: FetchCacheMode = { revalidate: 300 }
+): Promise<T> {
+    const url = `${GITHUB_API}${path}`;
+    const fetchInit =
+        "noStore" in cacheMode
+            ? {
+                headers: headers(token),
+                cache: "no-store" as const,
+            }
+            : {
+                headers: headers(token),
+                next: { revalidate: cacheMode.revalidate },
+            };
+
+    let res = await fetch(url, fetchInit);
+
+    // If the provided token is invalid/expired, retry unauthenticated so
+    // public repositories still work instead of failing with 401/403.
+    if ((res.status === 401 || res.status === 403) && token?.trim()) {
+        const fallbackInit =
+            "noStore" in cacheMode
+                ? {
+                    headers: headers(null),
+                    cache: "no-store" as const,
+                }
+                : {
+                    headers: headers(null),
+                    next: { revalidate: cacheMode.revalidate },
+                };
+        res = await fetch(url, fallbackInit);
+    }
 
     if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -79,7 +112,8 @@ export async function fetchFileTree(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await ghFetch<any>(
         `/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`,
-        token
+        token,
+        { noStore: true }
     );
     return {
         sha: data.sha,
@@ -228,10 +262,21 @@ export async function checkRepoAccess(
     repo: string,
     token?: string | null
 ): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string }> {
-    const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
+    const url = `${GITHUB_API}/repos/${owner}/${repo}`;
+
+    let res = await fetch(url, {
         headers: headers(token),
         next: { revalidate: 60 },
     });
+
+    // If a stored token is invalid/expired, retry without auth so public
+    // repositories can still be resolved.
+    if ((res.status === 401 || res.status === 403) && token?.trim()) {
+        res = await fetch(url, {
+            headers: headers(null),
+            next: { revalidate: 60 },
+        });
+    }
 
     if (!res.ok) {
         return {

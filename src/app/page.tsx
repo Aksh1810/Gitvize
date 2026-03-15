@@ -90,16 +90,29 @@ export default function LandingPage() {
             return;
           }
 
+          // If a token is present and we still get 404, this is most likely a
+          // genuinely missing repository.
           if (res.status === 404 && token) {
             setAccessHint(`Repository ${owner}/${repo} does not exist.`);
             return;
           }
 
-          // Common private/inaccessible statuses from GitHub without PAT.
-          if ([401, 403, 404].includes(res.status)) {
+          // Without a token, 404 can mean either private or non-existent.
+          // Open PAT modal only for this ambiguous case.
+          if (res.status === 404 && !token) {
             setPendingRepo({ owner, repo });
             setGithubTokenOpen(true);
             setAccessHint("This repository may be private or restricted. Add a GitHub PAT to continue.");
+            return;
+          }
+
+          if (res.status === 401) {
+            setAccessHint("Saved GitHub token appears invalid or expired. Clear/update token and try again.");
+            return;
+          }
+
+          if (res.status === 403) {
+            setAccessHint("Access is currently forbidden or rate-limited. Please try again shortly.");
             return;
           }
 

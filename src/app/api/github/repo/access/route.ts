@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json(
             {
                 ok: false,
-                needsAuth: access.status === 401 || access.status === 403 || access.status === 404,
+                needsAuth: access.status === 404,
                 status: access.status,
             },
             { status: access.status }

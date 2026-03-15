@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllRepoData } from "@/lib/github";
 
+function extractStatusCode(errorMessage: string): number | null {
+    const match = errorMessage.match(/GitHub API error\s+(\d{3})\s+/i);
+    if (!match) return null;
+
+    const parsed = Number(match[1]);
+    return Number.isInteger(parsed) ? parsed : null;
+}
+
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
@@ -22,6 +30,7 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         const message =
             error instanceof Error ? error.message : "Failed to fetch repo data";
-        return NextResponse.json({ error: message }, { status: 500 });
+        const statusCode = extractStatusCode(message) ?? 500;
+        return NextResponse.json({ error: message }, { status: statusCode });
     }
 }
