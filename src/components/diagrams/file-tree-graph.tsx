@@ -984,13 +984,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
             focusNodeNeighborhood(cy, node);
 
-            // Pan to node
-            cy.animate({
-                center: { eles: node },
-                duration: 300,
-                easing: 'ease-out-quad'
-            });
-
             if (data.type === "file") {
                 setSymbolFocus(null);
                 setFocusLine(null);
