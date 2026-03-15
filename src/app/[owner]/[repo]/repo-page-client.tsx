@@ -15,6 +15,7 @@ import BranchGraph from "@/components/diagrams/branch-graph";
 import DependencyGraph from "@/components/diagrams/dependency-graph";
 import LanguageDonut from "@/components/charts/language-donut";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
+import { consumeOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
@@ -73,14 +74,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [aiSettingsOpen, setAISettingsOpen] = useState(false);
     const [hasUserAIKey, setHasUserAIKey] = useState(false);
+    const [sessionToken] = useState<string | null>(() => {
+        const token = consumeOneTimeGitHubToken();
+        return token || null;
+    });
 
-    // Get PAT from localStorage
+    // One-time PAT token passed from the landing flow.
     const getToken = useCallback((): string | null => {
-        if (typeof window !== "undefined") {
-            return localStorage.getItem("gitviz_github_pat");
-        }
-        return null;
-    }, []);
+        return sessionToken;
+    }, [sessionToken]);
 
     // Fetch all repo data
     const fetchData = useCallback(async () => {

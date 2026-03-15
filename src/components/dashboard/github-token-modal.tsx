@@ -12,24 +12,26 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 
-export const GITHUB_PAT_STORAGE_KEY = "gitviz_github_pat";
+export const GITHUB_PAT_TRANSIENT_KEY = "gitviz_github_pat_once";
+const GITHUB_PAT_LEGACY_STORAGE_KEY = "gitviz_github_pat";
 
-export function loadGitHubToken(): string {
+export function setOneTimeGitHubToken(token: string) {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem(GITHUB_PAT_TRANSIENT_KEY, token.trim());
+    // Clean up legacy persisted token if present from older builds.
+    localStorage.removeItem(GITHUB_PAT_LEGACY_STORAGE_KEY);
+}
+
+export function consumeOneTimeGitHubToken(): string {
     if (typeof window === "undefined") return "";
-    return localStorage.getItem(GITHUB_PAT_STORAGE_KEY) ?? "";
-}
 
-export function saveGitHubToken(token: string) {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(GITHUB_PAT_STORAGE_KEY, token.trim());
-}
-
-export function clearGitHubToken() {
-    if (typeof window === "undefined") return;
-    localStorage.removeItem(GITHUB_PAT_STORAGE_KEY);
+    const token = sessionStorage.getItem(GITHUB_PAT_TRANSIENT_KEY) ?? "";
+    sessionStorage.removeItem(GITHUB_PAT_TRANSIENT_KEY);
+    // Ensure no persisted token remains.
+    localStorage.removeItem(GITHUB_PAT_LEGACY_STORAGE_KEY);
+    return token;
 }
 
 interface GitHubTokenModalProps {
@@ -41,13 +43,11 @@ interface GitHubTokenModalProps {
 export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubTokenModalProps) {
     const [token, setToken] = useState("");
     const [showToken, setShowToken] = useState(false);
-    const [hasSavedToken, setHasSavedToken] = useState(false);
 
     useEffect(() => {
         if (!open) return;
-        const saved = loadGitHubToken();
-        setToken(saved);
-        setHasSavedToken(saved.length > 0);
+        setToken("");
+        setShowToken(false);
     }, [open]);
 
     const normalized = token.trim();
@@ -55,17 +55,10 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
 
     const handleSave = () => {
         if (!canSave) return;
-        saveGitHubToken(normalized);
-        setHasSavedToken(true);
         onSave(normalized);
         onOpenChange(false);
-    };
-
-    const handleClear = () => {
-        clearGitHubToken();
         setToken("");
-        setHasSavedToken(false);
-        onSave("");
+        setShowToken(false);
     };
 
     return (
@@ -78,7 +71,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                     </DialogTitle>
                     <DialogDescription>
                         Add a Personal Access Token to access private repositories and increase rate limits.
-                        Your token is stored locally in your browser only.
+                        Your token is used one time for this visualization and is not persisted.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -120,21 +113,6 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                             Recommended scopes: repo (private repos), read:org (org private repos), public_repo (public only).
                         </p>
                     </div>
-
-                    {hasSavedToken && (
-                        <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">
-                                Configured
-                            </Badge>
-                            <button
-                                type="button"
-                                onClick={handleClear}
-                                className="text-[10px] text-red-400 hover:underline"
-                            >
-                                Clear saved token
-                            </button>
-                        </div>
-                    )}
                 </div>
 
                 <DialogFooter>
@@ -146,7 +124,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                         disabled={!canSave}
                         className="bg-cyan-600 hover:bg-cyan-700 text-white"
                     >
-                        Save Token
+                        Continue
                     </Button>
                 </DialogFooter>
             </DialogContent>

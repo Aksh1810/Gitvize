@@ -15,7 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import GitHubTokenModal, { loadGitHubToken } from "@/components/dashboard/github-token-modal";
+import GitHubTokenModal, { setOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import { EXAMPLE_REPOS, HOW_IT_WORKS_STEPS } from "@/lib/constants";
 
 const container = {
@@ -87,17 +87,6 @@ export default function LandingPage() {
           if (publicCheck.ok) {
             router.push(`/${owner}/${repo}`);
             return;
-          }
-
-          // Non-public path: likely private/restricted. If a token is already
-          // stored, validate it once before prompting.
-          const savedToken = loadGitHubToken();
-          if (savedToken) {
-            const tokenCheck = await checkAccess(owner, repo, savedToken);
-            if (tokenCheck.ok) {
-              router.push(`/${owner}/${repo}`);
-              return;
-            }
           }
 
           setPendingRepo({ owner, repo });
@@ -293,6 +282,7 @@ export default function LandingPage() {
           try {
             const res = await checkAccess(pendingRepo.owner, pendingRepo.repo, token);
             if (res.ok) {
+              setOneTimeGitHubToken(token);
               setAccessHint(null);
               router.push(`/${pendingRepo.owner}/${pendingRepo.repo}`);
               return;
