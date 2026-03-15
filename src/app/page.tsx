@@ -82,41 +82,27 @@ export default function LandingPage() {
         setAccessHint(null);
 
         try {
-          const token = loadGitHubToken();
-          const res = await checkAccess(owner, repo, token || undefined);
-
-          if (res.ok) {
+          // First check without token: if public, proceed immediately.
+          const publicCheck = await checkAccess(owner, repo);
+          if (publicCheck.ok) {
             router.push(`/${owner}/${repo}`);
             return;
           }
 
-          // If a token is present and we still get 404, this is most likely a
-          // genuinely missing repository.
-          if (res.status === 404 && token) {
-            setAccessHint(`Repository ${owner}/${repo} does not exist.`);
-            return;
+          // Non-public path: likely private/restricted. If a token is already
+          // stored, validate it once before prompting.
+          const savedToken = loadGitHubToken();
+          if (savedToken) {
+            const tokenCheck = await checkAccess(owner, repo, savedToken);
+            if (tokenCheck.ok) {
+              router.push(`/${owner}/${repo}`);
+              return;
+            }
           }
 
-          // Without a token, 404 can mean either private or non-existent.
-          // Open PAT modal only for this ambiguous case.
-          if (res.status === 404 && !token) {
-            setPendingRepo({ owner, repo });
-            setGithubTokenOpen(true);
-            setAccessHint("This repository may be private or restricted. Add a GitHub PAT to continue.");
-            return;
-          }
-
-          if (res.status === 401) {
-            setAccessHint("Saved GitHub token appears invalid or expired. Clear/update token and try again.");
-            return;
-          }
-
-          if (res.status === 403) {
-            setAccessHint("Access is currently forbidden or rate-limited. Please try again shortly.");
-            return;
-          }
-
-          setAccessHint("Unable to verify repository access right now. Please try again.");
+          setPendingRepo({ owner, repo });
+          setGithubTokenOpen(true);
+          setAccessHint("This repository appears private or restricted. Add a GitHub PAT to continue.");
         } catch {
           setAccessHint("Network error while checking repo access. Please try again.");
         } finally {
@@ -312,17 +298,12 @@ export default function LandingPage() {
               return;
             }
 
-            if (res.status === 404) {
-              setAccessHint(`Repository ${pendingRepo.owner}/${pendingRepo.repo} does not exist.`);
+            if (res.status === 401 || res.status === 403 || res.status === 404) {
+              setAccessHint("Token is incorrect or missing required scopes (repo/read:org) for this private repository.");
               return;
             }
 
-            if (res.status === 401 || res.status === 403) {
-              setAccessHint("Token was saved, but it may be missing required scopes (repo/read:org). Please check token permissions.");
-              return;
-            }
-
-            setAccessHint("Unable to verify repository access right now. Please try again.");
+            setAccessHint("Unable to verify token right now. Please try again.");
           } catch {
             setAccessHint("Network error while validating token. Please try again.");
           }
