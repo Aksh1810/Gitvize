@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
     Dialog,
     DialogContent,
@@ -69,16 +69,9 @@ interface AISettingsModalProps {
 }
 
 export default function AISettingsModal({ open, onOpenChange, onSave }: AISettingsModalProps) {
-    const [apiKey, setApiKey] = useState("");
+    const [apiKey, setApiKey] = useState(() => loadAISettings()?.apiKey ?? "");
     const [showKey, setShowKey] = useState(false);
-
-    // Load saved settings on mount
-    useEffect(() => {
-        const saved = loadAISettings();
-        if (saved) {
-            setApiKey(saved.apiKey);
-        }
-    }, [open]);
+    const hasSavedSettings = Boolean(loadAISettings());
 
     const inferred = inferProviderAndModel(apiKey);
 
@@ -177,7 +170,7 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                     </div>
 
                     {/* Status */}
-                    {loadAISettings() && (
+                    {hasSavedSettings && (
                         <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">
                                 ✓ Configured

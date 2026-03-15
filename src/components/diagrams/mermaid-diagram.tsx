@@ -15,7 +15,8 @@ interface MermaidDiagramProps {
     onNodeClick?: (path: string) => void;
 }
 
-export default function MermaidDiagram({ code, onNodeClick }: MermaidDiagramProps) {
+export default function MermaidDiagram({ code, onNodeClick: _onNodeClick }: MermaidDiagramProps) {
+    void _onNodeClick;
     const containerRef = useRef<HTMLDivElement>(null);
     const [svgContent, setSvgContent] = useState<string>("");
     const [error, setError] = useState<string | null>(null);

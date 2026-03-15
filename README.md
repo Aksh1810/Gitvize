@@ -17,9 +17,9 @@ GitViz turns any public GitHub repo URL into interactive, beautiful visualizatio
 
 - Interactive **Cytoscape.js** force-directed graph of the repository's file structure
 - Nodes colored by file type with distinct, bright colors per extension
-- Click any file to preview its code with **Prism.js syntax highlighting** (16+ languages)
+- Click any file to preview its code with **Prism.js syntax highlighting** in the explorer-linked inspector pane
 - Search files by name with real-time filtering
-- Cluster info overlay showing file type breakdown
+- File type breakdown available in the main sidebar below Languages
 
 ### 📦 Dependencies
 
@@ -119,6 +119,21 @@ src/
 │   └── file-icons.ts       # File color & icon mapping
 └── types/                  # TypeScript type definitions
 ```
+
+## Production Readiness Notes (March 2026)
+
+- Baseline architecture preserved: App Router structure, API routes, diagram components, and shared types remain unchanged.
+- Simplification pass completed:
+	- Removed unused imports and dead helper constants in diagrams/lib modules.
+	- Replaced unsafe hook patterns that triggered cascading render lint errors.
+	- Reduced mutable-state anti-patterns in the canvas knowledge graph drag logic.
+	- Tightened Cytoscape typing in the file-tree graph to satisfy strict TypeScript checks.
+- Validation status:
+	- `npm run build` passes.
+	- `npm run lint` has no errors; remaining warnings are image optimization recommendations for avatar/graph image rendering.
+- Remaining optional hardening work:
+	- Replace selected `<img>` usages with `next/image` in graph/timeline node renderers where layout constraints allow.
+	- Add lightweight end-to-end smoke tests for public/private repo entry flow.
 
 ## 📄 License
 

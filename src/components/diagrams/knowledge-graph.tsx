@@ -7,12 +7,12 @@
 // community-based coloring, and hover/click interactions.
 
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { Search, X, Info, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { Search, X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { buildGraphData, type GraphNode, type ClusterInfo } from "@/lib/graph-builder";
+import { buildGraphData, type GraphNode } from "@/lib/graph-builder";
 import type { TreeItem, ArchitectureAnalysis } from "@/types";
 
 interface KnowledgeGraphProps {
@@ -29,7 +29,8 @@ export default function KnowledgeGraph({
     repo,
 }: KnowledgeGraphProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const animFrameRef = useRef<number>(0);
+    const draggedNodeRef = useRef<GraphNode | null>(null);
+    const nodeDragStartRef = useRef({ x: 0, y: 0 });
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
@@ -37,9 +38,6 @@ export default function KnowledgeGraph({
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-    const [draggedNode, setDraggedNode] = useState<GraphNode | null>(null);
-    const [nodeDragStart, setNodeDragStart] = useState({ x: 0, y: 0 });
-    const [isRendered, setIsRendered] = useState(false);
 
     // Build graph data
     const graphData = useMemo(() => {
@@ -268,7 +266,6 @@ export default function KnowledgeGraph({
             }
         });
 
-        setIsRendered(true);
     }, [positionedNodes, graphData.edges, zoom, offset, hoveredNode, selectedNode, searchQuery, highlightedIds]);
 
     // Render loop
@@ -330,6 +327,7 @@ export default function KnowledgeGraph({
 
     const handleMouseMove = useCallback(
         (e: React.MouseEvent) => {
+            const draggedNode = draggedNodeRef.current;
             if (draggedNode) {
                 const canvas = canvasRef.current;
                 if (!canvas) return;
@@ -360,15 +358,15 @@ export default function KnowledgeGraph({
                 canvasRef.current.style.cursor = node ? "grab" : "default";
             }
         },
-        [isDragging, dragStart, draggedNode, zoom, offset, renderCanvas, getNodeAtPosition]
+        [isDragging, dragStart, zoom, offset, renderCanvas, getNodeAtPosition]
     );
 
     const handleMouseDown = useCallback(
         (e: React.MouseEvent) => {
             const node = getNodeAtPosition(e.clientX, e.clientY);
             if (node) {
-                setDraggedNode(node);
-                setNodeDragStart({ x: e.clientX, y: e.clientY });
+                draggedNodeRef.current = node;
+                nodeDragStartRef.current = { x: e.clientX, y: e.clientY };
                 if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
             } else {
                 setIsDragging(true);
@@ -386,13 +384,14 @@ export default function KnowledgeGraph({
         (e: React.MouseEvent) => {
             if (canvasRef.current) canvasRef.current.style.cursor = "default";
 
+            const draggedNode = draggedNodeRef.current;
             if (draggedNode) {
-                const dx = e.clientX - nodeDragStart.x;
-                const dy = e.clientY - nodeDragStart.y;
+                const dx = e.clientX - nodeDragStartRef.current.x;
+                const dy = e.clientY - nodeDragStartRef.current.y;
                 if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
                     setSelectedNode(prev => (prev?.id === draggedNode.id ? null : draggedNode));
                 }
-                setDraggedNode(null);
+                draggedNodeRef.current = null;
                 return;
             }
 
@@ -407,7 +406,7 @@ export default function KnowledgeGraph({
                 setSelectedNode(prev => (prev?.id === node?.id ? null : node || null));
             }
         },
-        [isDragging, dragStart, offset, draggedNode, nodeDragStart, getNodeAtPosition]
+        [isDragging, dragStart, offset, getNodeAtPosition]
     );
 
     const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -584,7 +583,7 @@ export default function KnowledgeGraph({
                 onMouseUp={handleMouseUp}
                 onMouseLeave={() => {
                     setIsDragging(false);
-                    setDraggedNode(null);
+                    draggedNodeRef.current = null;
                     setHoveredNode(null);
                 }}
                 onWheel={handleWheel}

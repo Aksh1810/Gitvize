@@ -2,15 +2,14 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import cytoscape from "cytoscape";
-// @ts-ignore
+// @ts-expect-error fcose is an extension package without bundled TS types.
 import fcose from "cytoscape-fcose";
 import { getFileColor } from "@/lib/file-icons";
 import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen, Filter } from "lucide-react";
+import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen, Filter } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
 import "prismjs/components/prism-javascript";
@@ -73,6 +72,15 @@ const MAX_SYMBOL_FILE_BYTES = 120_000;
 const SYMBOL_FILE_LIMIT_SMALL = 50;
 const SYMBOL_FILE_LIMIT_LARGE = 25;
 const SYMBOL_KIND_ORDER: SymbolKind[] = ["variable", "function", "method", "interface", "type", "class"];
+const BINARY_EXTENSIONS = new Set([
+    "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "bmp",
+    "mp4", "webm", "mp3", "wav", "ogg",
+    "zip", "tar", "gz", "rar", "7z",
+    "pdf", "doc", "docx", "xls", "xlsx",
+    "woff", "woff2", "ttf", "eot", "otf",
+    "exe", "dll", "so", "dylib",
+    "lock",
+]);
 
 export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -89,7 +97,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols, setShowSymbols] = useState(true);
+    const [showSymbols] = useState(true);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(true);
     const [showImportsEdges, setShowImportsEdges] = useState(true);
@@ -226,17 +234,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         };
     }, []);
 
-    // Binary file extensions that shouldn't be fetched
-    const BINARY_EXTENSIONS = new Set([
-        'png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp', 'bmp',
-        'mp4', 'webm', 'mp3', 'wav', 'ogg',
-        'zip', 'tar', 'gz', 'rar', '7z',
-        'pdf', 'doc', 'docx', 'xls', 'xlsx',
-        'woff', 'woff2', 'ttf', 'eot', 'otf',
-        'exe', 'dll', 'so', 'dylib',
-        'lock',
-    ]);
-
     const MAX_FILE_SIZE = 500_000; // 500KB limit for preview
 
     const fetchFileContent = useCallback(async (file: FileNodeData) => {
@@ -264,7 +261,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const text = await res.text();
             setFileContent(text);
-        } catch (err) {
+        } catch {
             setFileError("Could not load file content");
         } finally {
             setFileLoading(false);
@@ -380,8 +377,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
     // Build graph elements — show all files
     const elements = useMemo(() => {
-        const nodes: any[] = [];
-        const edges: any[] = [];
+        const nodes: cytoscape.NodeDefinition[] = [];
+        const edges: cytoscape.EdgeDefinition[] = [];
         const addedFolders = new Set<string>();
 
         // Show all files (cap at 2000 to prevent browser crash)
@@ -396,7 +393,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             itemNameCounts.set(key, (itemNameCounts.get(key) || 0) + 1);
         });
 
-        const getDisplayLabel = (path: string, label: string, kind: "tree" | "blob") => {
+        const getDisplayLabel = (label: string) => {
             // Always just the file/folder name, never a partial path
             return label;
         };
@@ -438,7 +435,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
             const parts = folderPath.split("/");
             const label = parts[parts.length - 1];
-            const displayLabel = getDisplayLabel(folderPath, label, "tree");
+            const displayLabel = getDisplayLabel(label);
             const parentPath = parts.slice(0, -1).join("/");
             const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
 
@@ -480,7 +477,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             const parts = item.path.split("/");
             const isFolder = item.type === "tree";
             const label = parts[parts.length - 1];
-            const displayLabel = getDisplayLabel(item.path, label, isFolder ? "tree" : "blob");
             const parentPath = parts.slice(0, -1).join("/");
             const parentId = parentPath === "" ? "root" : `folder:${parentPath}`;
 
@@ -520,8 +516,16 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         });
 
         if (symbolGraph.symbols.length > 0) {
-            const nodeIdSet = new Set<string>(nodes.map((node) => node.data.id));
-            const edgeIdSet = new Set<string>(edges.map((edge) => edge.data.id));
+            const nodeIdSet = new Set<string>(
+                nodes
+                    .map((node) => (node.data as { id?: string } | undefined)?.id)
+                    .filter((id): id is string => Boolean(id))
+            );
+            const edgeIdSet = new Set<string>(
+                edges
+                    .map((edge) => (edge.data as { id?: string } | undefined)?.id)
+                    .filter((id): id is string => Boolean(id))
+            );
             const limitedByTreeSize = limitedItems.length > 800;
 
             symbolGraph.symbols.forEach((symbol) => {
@@ -597,20 +601,22 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
     // Compute cluster info from elements
     const clusterInfo = useMemo(() => {
-        const folders = elements.nodes.filter((n: any) => n.data.type === "folder").length;
-        const files = elements.nodes.filter((n: any) => n.data.type === "file").length;
-        const symbols = elements.nodes.filter((n: any) => n.data.type === "symbol").length;
-        const symbolRefs = elements.edges.filter((e: any) => ["imports", "calls", "extends", "implements"].includes(e.data.type)).length;
+        const folders = elements.nodes.filter((n) => n.data && (n.data as Record<string, unknown>).type === "folder").length;
+        const files = elements.nodes.filter((n) => n.data && (n.data as Record<string, unknown>).type === "file").length;
+        const symbols = elements.nodes.filter((n) => n.data && (n.data as Record<string, unknown>).type === "symbol").length;
+        const symbolRefs = elements.edges.filter((e) => e.data && ["imports", "calls", "extends", "implements"].includes(String((e.data as Record<string, unknown>).type ?? ""))).length;
         const symbolKinds = new Map<string, number>();
         const symbolTotals = new Map<string, number>();
         // Count unique extensions
         const extMap = new Map<string, number>();
-        elements.nodes.forEach((n: any) => {
-            if (n.data.extension) {
-                extMap.set(n.data.extension, (extMap.get(n.data.extension) || 0) + 1);
+        elements.nodes.forEach((n) => {
+            const data = (n.data ?? {}) as Record<string, unknown>;
+            const extension = typeof data.extension === "string" ? data.extension : null;
+            if (extension) {
+                extMap.set(extension, (extMap.get(extension) || 0) + 1);
             }
-            if (n.data.type === "symbol" && n.data.symbolKind) {
-                const kind = String(n.data.symbolKind);
+            if (data.type === "symbol" && data.symbolKind) {
+                const kind = String(data.symbolKind);
                 symbolKinds.set(kind, (symbolKinds.get(kind) || 0) + 1);
             }
         });
@@ -973,7 +979,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 gravityRange: 3.8,
                 initialTemp: 271,
                 coolingFactor: 0.3
-            } as any,
+            } as unknown as cytoscape.LayoutOptions,
             wheelSensitivity: 0.2,
         });
 
@@ -1268,7 +1274,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             </div>
 
             {/* File Explorer Panel */}
-            <div className={`absolute top-0 bottom-0 left-0 z-20 transition-transform duration-200 ${showExplorer ? "translate-x-0" : "-translate-x-full"}`}>
+            {showExplorer && (
+            <div className="absolute top-0 bottom-0 left-0 z-20">
                 <div
                     className="h-full bg-slate-900/95 backdrop-blur border-r border-slate-700 flex flex-col"
                     style={{ width: explorerWidth }}
@@ -1283,13 +1290,16 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                 title="Toggle code inspector"
                             >
                                 {showExplorerInspector ? (
-                                    <ChevronRight className="w-4 h-4" />
-                                ) : (
                                     <ChevronDown className="w-4 h-4" />
+                                ) : (
+                                    <ChevronRight className="w-4 h-4" />
                                 )}
                             </button>
                             <button
-                                onClick={() => setShowExplorer(false)}
+                                onClick={() => {
+                                    setShowExplorer(false);
+                                    setShowExplorerInspector(false);
+                                }}
                                 className="text-slate-400 hover:text-slate-200"
                                 aria-label="Hide explorer"
                             >
@@ -1352,11 +1362,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     }}
                 />
             </div>
+            )}
 
             {/* Explorer Inspector Pane */}
-            {showExplorer && (
+            {showExplorer && showExplorerInspector && (
                 <div
-                    className={`absolute top-0 bottom-0 z-20 transition-transform duration-200 ${showExplorerInspector ? "translate-x-0" : "-translate-x-full"}`}
+                    className="absolute top-0 bottom-0 z-20"
                     style={{ left: explorerWidth, width: inspectorWidth }}
                 >
                     <div className="h-full bg-[#0a0e1a]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
@@ -1364,7 +1375,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                             <div className="flex items-center gap-1.5 min-w-0">
                                 <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Inspector</span>
                                 <span className="text-[11px] font-semibold truncate">
-                                    {selectedFile?.label ?? "No file selected"}
+                                    {selectedFile?.label ?? ""}
                                 </span>
                                 {selectedFile?.extension && (
                                     <Badge
@@ -1464,7 +1475,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                                 </pre>
                             ) : (
                                 <div className="flex items-center justify-center h-full">
-                                    <p className="text-[10px] text-muted-foreground" />
+                                    <div />
                                 </div>
                             )}
                         </div>
@@ -1474,7 +1485,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
             {!showExplorer && (
                 <button
-                    onClick={() => setShowExplorer(true)}
+                    onClick={() => {
+                        setShowExplorer(true);
+                        setShowExplorerInspector(false);
+                    }}
                     className="absolute top-3 left-3 z-20 flex items-center gap-2 px-2 py-1.5 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300 hover:text-white"
                 >
                     <PanelLeftOpen className="w-4 h-4" />

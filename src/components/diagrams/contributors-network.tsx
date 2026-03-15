@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { type Node, type Edge } from "@xyflow/react";
 import FlowWrapper from "./flow-wrapper";
 import ContributorNode from "./nodes/contributor-node";
-import { getLayoutedElements } from "@/lib/dagre-layout";
 import type { Contributor, ContributorNodeData } from "@/types";
 
 const nodeTypes = { contributor: ContributorNode };

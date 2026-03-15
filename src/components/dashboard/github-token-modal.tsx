@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
     Dialog,
     DialogContent,
@@ -44,11 +44,13 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
     const [token, setToken] = useState("");
     const [showToken, setShowToken] = useState(false);
 
-    useEffect(() => {
-        if (!open) return;
-        setToken("");
-        setShowToken(false);
-    }, [open]);
+    const handleOpenChange = (nextOpen: boolean) => {
+        onOpenChange(nextOpen);
+        if (nextOpen) {
+            setToken("");
+            setShowToken(false);
+        }
+    };
 
     const normalized = token.trim();
     const canSave = normalized.length >= 20;
@@ -62,7 +64,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
     };
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogContent className="bg-slate-950/95 border-border/80 shadow-2xl sm:max-w-[560px]">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-lg">

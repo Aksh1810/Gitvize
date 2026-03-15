@@ -630,8 +630,6 @@ export function getMockAnalysis(
         const parts = f.path.split("/");
         const fileName = parts[parts.length - 1];
         const baseName = fileName.replace(/\.[^/.]+$/, "");
-        const topDir = parts.length > 1 ? parts[0] : "root";
-        const parentDir = parts.length > 2 ? parts.slice(0, -1).join("/") : topDir;
 
         let groupType = "other";
         const lower = f.path.toLowerCase();
@@ -649,7 +647,6 @@ export function getMockAnalysis(
 
         // Create descriptive label
         let label = baseName;
-        const ext = fileName.split(".").pop() || "";
         const role = getFileRole(f.path);
         if (role !== "Source") {
             label = `${baseName} (${role.toLowerCase()})`;

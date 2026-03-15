@@ -93,27 +93,6 @@ const MODULE_TYPE_COLORS: Record<string, string> = {
     other: "#6b7280",
 };
 
-// --- Import Pattern Detection ---
-
-const IMPORT_PATTERNS: Record<string, RegExp[]> = {
-    typescript: [
-        /import\s+.*?\s+from\s+['"](.+?)['"]/g,
-        /import\s+['"](.+?)['"]/g,
-        /require\s*\(\s*['"](.+?)['"]\s*\)/g,
-    ],
-    python: [
-        /from\s+(\S+)\s+import/g,
-        /import\s+(\S+)/g,
-    ],
-    go: [
-        /"(\S+)"/g, // within import blocks
-    ],
-    rust: [
-        /use\s+(\S+)::/g,
-        /mod\s+(\S+)/g,
-    ],
-};
-
 // --- Helper: Get file extension ---
 
 function getExtension(path: string): string {

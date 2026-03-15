@@ -3,8 +3,7 @@
 // ============================================================================
 // Given a file, traces all upstream importers to calculate blast radius.
 
-import type { TreeItem } from "@/types";
-import type { GraphData, GraphEdge } from "./graph-builder";
+import type { GraphData } from "./graph-builder";
 
 export interface ImpactResult {
     targetFile: string;
