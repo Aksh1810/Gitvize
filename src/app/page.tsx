@@ -45,6 +45,14 @@ export default function LandingPage() {
   const [pendingRepo, setPendingRepo] = useState<{ owner: string; repo: string } | null>(null);
   const [accessHint, setAccessHint] = useState<string | null>(null);
 
+  const checkAccess = useCallback(async (owner: string, repo: string, token?: string) => {
+    const params = new URLSearchParams({ owner, repo });
+    const res = await fetch(`/api/github/repo/access?${params}`, {
+      headers: token ? { "x-github-token": token } : undefined,
+    });
+    return res;
+  }, []);
+
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -75,13 +83,15 @@ export default function LandingPage() {
 
         try {
           const token = loadGitHubToken();
-          const params = new URLSearchParams({ owner, repo });
-          const res = await fetch(`/api/github/repo/access?${params}`, {
-            headers: token ? { "x-github-token": token } : undefined,
-          });
+          const res = await checkAccess(owner, repo, token || undefined);
 
           if (res.ok) {
             router.push(`/${owner}/${repo}`);
+            return;
+          }
+
+          if (res.status === 404 && token) {
+            setAccessHint(`Repository ${owner}/${repo} does not exist.`);
             return;
           }
 
@@ -101,7 +111,7 @@ export default function LandingPage() {
         }
       }
     },
-    [input, router]
+    [checkAccess, input, router]
   );
 
   return (
@@ -274,14 +284,35 @@ export default function LandingPage() {
       <GitHubTokenModal
         open={githubTokenOpen}
         onOpenChange={setGithubTokenOpen}
-        onSave={(token) => {
+        onSave={async (token) => {
           if (!pendingRepo) return;
           if (!token) {
             setAccessHint("A GitHub token is required for private repositories.");
             return;
           }
-          setAccessHint(null);
-          router.push(`/${pendingRepo.owner}/${pendingRepo.repo}`);
+
+          try {
+            const res = await checkAccess(pendingRepo.owner, pendingRepo.repo, token);
+            if (res.ok) {
+              setAccessHint(null);
+              router.push(`/${pendingRepo.owner}/${pendingRepo.repo}`);
+              return;
+            }
+
+            if (res.status === 404) {
+              setAccessHint(`Repository ${pendingRepo.owner}/${pendingRepo.repo} does not exist.`);
+              return;
+            }
+
+            if (res.status === 401 || res.status === 403) {
+              setAccessHint("Token was saved, but it may be missing required scopes (repo/read:org). Please check token permissions.");
+              return;
+            }
+
+            setAccessHint("Unable to verify repository access right now. Please try again.");
+          } catch {
+            setAccessHint("Network error while validating token. Please try again.");
+          }
         }}
       />
     </div>

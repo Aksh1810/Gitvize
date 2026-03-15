@@ -8,7 +8,6 @@ import {
     Share2,
     Star,
     Sparkles,
-    KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -18,7 +17,6 @@ interface NavbarProps {
     repo: string;
     onExport?: () => void;
     onAISettings?: () => void;
-    onGitHubTokenSettings?: () => void;
 }
 
 export default function Navbar({
@@ -26,7 +24,6 @@ export default function Navbar({
     repo,
     onExport,
     onAISettings,
-    onGitHubTokenSettings,
 }: NavbarProps) {
     const { scrollY } = useScroll();
     const background = useTransform(
@@ -82,27 +79,32 @@ export default function Navbar({
                         href={`https://github.com/${owner}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-muted-foreground hover:text-foreground transition-colors"
+                        className="px-3 py-1 rounded-full pro-muted-chip shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] text-muted-foreground hover:text-foreground transition-colors"
                     >
                         {owner}
                     </a>
                     <span className="text-muted-foreground/50">/</span>
-                    <span className="px-3 py-1 rounded-full pro-muted-chip shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+                    <span className="text-muted-foreground">
                         {repo}
                     </span>
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onGitHubTokenSettings}
-                        className="pro-control pro-focus-ring text-xs"
+                    <a
+                        href="https://github.com/Aksh1810/Gitviz"
+                        target="_blank"
+                        rel="noopener noreferrer"
                     >
-                        <KeyRound className="w-4 h-4 mr-1.5 text-cyan-200" />
-                        <span className="hidden sm:inline">GitHub Token</span>
-                    </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="pro-control pro-focus-ring text-xs"
+                        >
+                            <Star className="w-4 h-4 mr-1.5 text-amber-200" />
+                            <span className="hidden sm:inline">Star</span>
+                        </Button>
+                    </a>
 
                     <Button
                         variant="ghost"
@@ -134,20 +136,6 @@ export default function Navbar({
                         <span className="hidden sm:inline">Share</span>
                     </Button>
 
-                    <a
-                        href="https://github.com/Aksh1810/Gitviz"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                    >
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="pro-control pro-focus-ring text-xs"
-                        >
-                            <Star className="w-4 h-4 mr-1.5 text-amber-200" />
-                            <span className="hidden sm:inline">Star</span>
-                        </Button>
-                    </a>
                 </div>
             </div>
         </motion.nav>

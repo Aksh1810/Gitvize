@@ -138,12 +138,6 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                 </div>
 
                 <DialogFooter>
-                    <Button
-                        variant="outline"
-                        onClick={() => window.open("https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens", "_blank", "noopener,noreferrer")}
-                    >
-                        How to generate PAT
-                    </Button>
                     <Button variant="ghost" onClick={() => onOpenChange(false)}>
                         Cancel
                     </Button>
