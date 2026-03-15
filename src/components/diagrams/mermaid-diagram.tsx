@@ -134,10 +134,10 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick }: Merm
                 mermaid.initialize({
                     startOnLoad: false,
                     theme: "dark",
-                    securityLevel: "loose", // Required for click events (GitDiagram approach)
+                    securityLevel: "strict",
                     flowchart: {
                         useMaxWidth: false,
-                        htmlLabels: true,
+                        htmlLabels: false,
                         curve: "basis",
                         padding: 24,
                         nodeSpacing: 60,
