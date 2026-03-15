@@ -114,7 +114,7 @@ export default function LandingPage() {
             <span className="text-xl font-bold gradient-text">Gitvize</span>
           </div>
           <a
-            href="https://github.com"
+            href="https://github.com/Aksh1810/Gitvize"
             target="_blank"
             rel="noopener noreferrer"
             className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5 text-sm"

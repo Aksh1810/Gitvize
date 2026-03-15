@@ -1,8 +1,8 @@
-# 🔮 GitViz
+# 🔮 Gitvize
 
 **Visualize any GitHub repository's architecture, file structure, dependencies, and commit history — instantly.**
 
-GitViz turns any public GitHub repo URL into interactive, beautiful visualizations. Just paste a `github.com/owner/repo` link and explore.
+Gitvize turns any public GitHub repo URL into interactive, beautiful visualizations. Paste a `github.com/owner/repo` link and explore.
 
 ## ✨ Features
 
@@ -11,7 +11,7 @@ GitViz turns any public GitHub repo URL into interactive, beautiful visualizatio
 - Auto-generated **Mermaid flowcharts** showing how files relate to each other
 - Files grouped into layers: App Routes, UI Components, Logic/Core, Config, Tests, Docs
 - Draggable nodes, pan/zoom, export to PNG, and copy Mermaid code
-- Click any node to jump to the file on GitHub
+- Interactive Mermaid rendering with pan/zoom + export
 
 ### 🌳 File Tree
 
@@ -23,7 +23,7 @@ GitViz turns any public GitHub repo URL into interactive, beautiful visualizatio
 
 ### 📦 Dependencies
 
-- Parses `package.json` to visualize **npm dependencies** as a graph
+- Parses dependency manifests to visualize project dependencies as a graph
 - Solid lines = production dependencies, dotted lines = dev dependencies
 - Left-to-right layout with a clear legend
 
@@ -42,6 +42,7 @@ GitViz turns any public GitHub repo URL into interactive, beautiful visualizatio
 
 - Repo name as a clickable GitHub hyperlink
 - **Language donut chart** with separated segments (Recharts)
+- **Vercel Analytics** support for production traffic insights
 - **Tech stack** showing only frameworks & tools (not raw languages)
 - Contributor avatars and star/fork counts
 
@@ -88,16 +89,25 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### Usage
 
 1. Paste any GitHub repository URL (e.g. `https://github.com/facebook/react`)
-2. GitViz fetches the repo's file tree, branches, commits, and dependencies
+2. Gitvize fetches the repo's file tree, branches, commits, and dependencies
 3. Switch between tabs: **Architecture**, **File Tree**, **Branches**, **Dependencies**, **Contributors**
 
-### Environment Variables (Optional)
+### Environment Variables
 
 ```env
-GITHUB_TOKEN=ghp_your_token_here
+# Optional: AI providers (for premium AI diagrams)
+GEMINI_API_KEY=
+AI_API_KEY=
+AI_PROVIDER=openai
+AI_MODEL=gpt-4o
+
+# Optional: DB-backed features
+DATABASE_URL=
 ```
 
-Adding a GitHub Personal Access Token increases your API rate limit from 60 to 5,000 requests/hour — useful for large repos with thousands of commits.
+Notes:
+- For private repo visualization, users provide a one-time PAT in the UI flow.
+- Basic public repo visualization works without any env vars.
 
 ## 📁 Project Structure
 
@@ -128,6 +138,10 @@ src/
 	- Replaced unsafe hook patterns that triggered cascading render lint errors.
 	- Reduced mutable-state anti-patterns in the canvas knowledge graph drag logic.
 	- Tightened Cytoscape typing in the file-tree graph to satisfy strict TypeScript checks.
+	- Added server-side input validation for repository owner/name in API routes.
+	- Removed token query fallback from API endpoints.
+	- Hardened Mermaid security mode and pinned vulnerable transitive packages.
+	- Integrated Vercel Analytics in root layout.
 - Validation status:
 	- `npm run build` passes.
 	- `npm run lint` has no errors; remaining warnings are image optimization recommendations for avatar/graph image rendering.
