@@ -69,7 +69,7 @@ export default function Navbar({
                         </div>
                     </div>
                     <div className="hidden sm:flex flex-col">
-                        <span className="text-lg font-semibold tracking-tight text-white">GitViz</span>
+                        <span className="text-lg font-semibold tracking-tight text-white">Gitvize</span>
                     </div>
                 </Link>
 

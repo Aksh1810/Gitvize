@@ -14,12 +14,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 
-export const GITHUB_PAT_TRANSIENT_KEY = "gitviz_github_pat_once";
+export const GITHUB_PAT_TRANSIENT_KEY = "gitvize_github_pat_once";
+const GITHUB_PAT_LEGACY_TRANSIENT_KEY = "gitviz_github_pat_once";
 const GITHUB_PAT_LEGACY_STORAGE_KEY = "gitviz_github_pat";
 
 export function setOneTimeGitHubToken(token: string) {
     if (typeof window === "undefined") return;
     sessionStorage.setItem(GITHUB_PAT_TRANSIENT_KEY, token.trim());
+    sessionStorage.removeItem(GITHUB_PAT_LEGACY_TRANSIENT_KEY);
     // Clean up legacy persisted token if present from older builds.
     localStorage.removeItem(GITHUB_PAT_LEGACY_STORAGE_KEY);
 }
@@ -27,8 +29,12 @@ export function setOneTimeGitHubToken(token: string) {
 export function consumeOneTimeGitHubToken(): string {
     if (typeof window === "undefined") return "";
 
-    const token = sessionStorage.getItem(GITHUB_PAT_TRANSIENT_KEY) ?? "";
+    const token =
+        sessionStorage.getItem(GITHUB_PAT_TRANSIENT_KEY) ??
+        sessionStorage.getItem(GITHUB_PAT_LEGACY_TRANSIENT_KEY) ??
+        "";
     sessionStorage.removeItem(GITHUB_PAT_TRANSIENT_KEY);
+    sessionStorage.removeItem(GITHUB_PAT_LEGACY_TRANSIENT_KEY);
     // Ensure no persisted token remains.
     localStorage.removeItem(GITHUB_PAT_LEGACY_STORAGE_KEY);
     return token;

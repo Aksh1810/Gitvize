@@ -41,12 +41,13 @@ function inferProviderAndModel(apiKey: string): { provider: AISettings["provider
     return null;
 }
 
-const STORAGE_KEY = "gitviz_ai_settings";
+const STORAGE_KEY = "gitvize_ai_settings";
+const LEGACY_STORAGE_KEY = "gitviz_ai_settings";
 
 export function loadAISettings(): AISettings | null {
     if (typeof window === "undefined") return null;
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
         if (!raw) return null;
         return JSON.parse(raw) as AISettings;
     } catch {
@@ -56,10 +57,12 @@ export function loadAISettings(): AISettings | null {
 
 export function saveAISettings(settings: AISettings) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
 export function clearAISettings() {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
 interface AISettingsModalProps {

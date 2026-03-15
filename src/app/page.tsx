@@ -64,7 +64,7 @@ export default function LandingPage() {
 
       // Parse GitHub URL or owner/repo slug
       const urlMatch = value.match(
-        /(?:github\.com|gitviz\.com)\/([^/]+)\/([^/\s?#]+)/
+        /(?:github\.com|gitvize\.com)\/([^/]+)\/([^/\s?#]+)/
       );
       if (urlMatch) {
         owner = urlMatch[1];
@@ -111,7 +111,7 @@ export default function LandingPage() {
             <div className="w-8 h-8 rounded-lg bg-indigo flex items-center justify-center">
               <GitBranch className="w-4 h-4 text-white" />
             </div>
-            <span className="text-xl font-bold gradient-text">GitViz</span>
+            <span className="text-xl font-bold gradient-text">Gitvize</span>
           </div>
           <a
             href="https://github.com"

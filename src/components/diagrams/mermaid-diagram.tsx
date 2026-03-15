@@ -369,7 +369,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick }: Merm
         const blobUrl = URL.createObjectURL(svgBlob);
         
         const link = document.createElement("a");
-        link.download = "gitviz-architecture.svg";
+        link.download = "gitvize-architecture.svg";
         link.href = blobUrl;
         document.body.appendChild(link);
         link.click();

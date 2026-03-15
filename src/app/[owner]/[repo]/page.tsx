@@ -11,16 +11,16 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     const { owner, repo } = await params;
 
     return {
-        title: `${repo} · GitViz`,
+        title: `${repo}`,
         description: `Interactive visualization of ${owner}/${repo} — architecture diagrams, file tree, contributors, and more.`,
         openGraph: {
-            title: `${repo} · GitViz`,
+            title: `Gitvize · ${repo}`,
             description: `Interactive visualization of ${owner}/${repo}`,
-            siteName: "GitViz",
+            siteName: "Gitvize",
         },
         twitter: {
             card: "summary_large_image",
-            title: `${repo} · GitViz`,
+            title: `Gitvize · ${repo}`,
             description: `Interactive visualization of ${owner}/${repo}`,
         },
     };
