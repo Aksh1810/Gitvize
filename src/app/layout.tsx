@@ -23,9 +23,9 @@ export const metadata: Metadata = {
   description:
     "Turn any GitHub repository into stunning, interactive visualizations. Architecture diagrams, file trees, contributor networks, and more — all AI-powered.",
   icons: {
-    icon: "/gitvize-icon.svg",
-    shortcut: "/gitvize-icon.svg",
-    apple: "/gitvize-icon.svg",
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
   },
   openGraph: {
     title: "Gitvize — Visualize Any GitHub Repository",
