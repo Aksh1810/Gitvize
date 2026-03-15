@@ -107,6 +107,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
     const [showExplorer, setShowExplorer] = useState(false);
+    const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const [explorerWidth, setExplorerWidth] = useState(220);
     const [showRightFilters, setShowRightFilters] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
@@ -119,6 +120,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         symbols: [],
         references: [],
     });
+    const inspectorWidth = 360;
     const visibilityRef = useRef({
         showRoot: true,
         showFolders: true,
@@ -731,6 +733,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
 
     const handleExplorerFileSelect = useCallback((node: ExplorerNode) => {
         if (node.type !== "file") return;
+        setShowExplorer(true);
+        setShowExplorerInspector(true);
         setSelectedFile({
             label: node.name,
             path: node.path,
@@ -990,6 +994,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             if (data.type === "file") {
                 setSymbolFocus(null);
                 setFocusLine(null);
+                setShowExplorer(true);
+                setShowExplorerInspector(true);
                 setSelectedFile({
                     label: data.label,
                     path: data.path,
@@ -1003,6 +1009,8 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
                 setSymbolFocus(String(data.label));
                 setFocusLine(null);
+                setShowExplorer(true);
+                setShowExplorerInspector(true);
                 setSelectedFile({
                     label: fileLabel,
                     path: parentPath,
@@ -1274,13 +1282,27 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 >
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                         <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Explorer</span>
-                        <button
-                            onClick={() => setShowExplorer(false)}
-                            className="text-slate-400 hover:text-slate-200"
-                            aria-label="Hide explorer"
-                        >
-                            <PanelLeftClose className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => setShowExplorerInspector((prev) => !prev)}
+                                className="text-slate-400 hover:text-slate-200"
+                                aria-label="Toggle code inspector"
+                                title="Toggle code inspector"
+                            >
+                                {showExplorerInspector ? (
+                                    <ChevronRight className="w-4 h-4" />
+                                ) : (
+                                    <ChevronDown className="w-4 h-4" />
+                                )}
+                            </button>
+                            <button
+                                onClick={() => setShowExplorer(false)}
+                                className="text-slate-400 hover:text-slate-200"
+                                aria-label="Hide explorer"
+                            >
+                                <PanelLeftClose className="w-4 h-4" />
+                            </button>
+                        </div>
                     </div>
                     <div className="flex-1 overflow-auto px-2 py-2 text-[11px] font-mono text-slate-300">
                         {(() => {
@@ -1338,6 +1360,125 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 />
             </div>
 
+            {/* Explorer Inspector Pane */}
+            {showExplorer && (
+                <div
+                    className={`absolute top-0 bottom-0 z-20 transition-transform duration-200 ${showExplorerInspector ? "translate-x-0" : "-translate-x-full"}`}
+                    style={{ left: explorerWidth, width: inspectorWidth }}
+                >
+                    <div className="h-full bg-[#0a0e1a]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
+                        <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Inspector</span>
+                                <span className="text-[11px] font-semibold truncate">
+                                    {selectedFile?.label ?? "No file selected"}
+                                </span>
+                                {selectedFile?.extension && (
+                                    <Badge
+                                        variant="outline"
+                                        className="text-[9px] shrink-0"
+                                        style={{ borderColor: getFileColor(selectedFile.label) + "40", color: getFileColor(selectedFile.label) }}
+                                    >
+                                        .{selectedFile.extension}
+                                    </Badge>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-1">
+                                {selectedFile && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="w-6 h-6 shrink-0"
+                                        onClick={() => setSelectedFile(null)}
+                                    >
+                                        <X className="w-3.5 h-3.5" />
+                                    </Button>
+                                )}
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="w-6 h-6 shrink-0"
+                                    onClick={() => setShowExplorerInspector(false)}
+                                >
+                                    <PanelLeftClose className="w-3.5 h-3.5" />
+                                </Button>
+                            </div>
+                        </div>
+
+                        {selectedFile && (
+                            <div className="px-3 py-2 border-b border-border/20 text-[10px] text-muted-foreground space-y-1">
+                                <div className="truncate">
+                                    <span className="font-medium text-foreground/80">Path:</span> {selectedFile.path}
+                                </div>
+                                {selectedFile.size !== undefined && (
+                                    <div>
+                                        <span className="font-medium text-foreground/80">Size:</span> {formatBytes(selectedFile.size)}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex-1 overflow-auto" ref={codeScrollRef}>
+                            {fileLoading ? (
+                                <div className="flex items-center justify-center h-full">
+                                    <div className="text-center">
+                                        <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                                        <p className="text-[10px] text-muted-foreground">Loading file...</p>
+                                    </div>
+                                </div>
+                            ) : fileError ? (
+                                <div className="flex items-center justify-center h-full">
+                                    <div className="text-center px-4">
+                                        <p className="text-[10px] text-muted-foreground">{fileError}</p>
+                                    </div>
+                                </div>
+                            ) : fileContent !== null && selectedFile ? (
+                                <pre className="text-[10px] leading-[1.55] font-mono" style={{ background: "transparent" }}>
+                                    <code>
+                                        {(() => {
+                                            const ext = selectedFile.extension?.toLowerCase() ?? "";
+                                            const lang = extToPrismLang[ext];
+                                            const grammar = lang && Prism.languages[lang];
+                                            const highlighted = grammar
+                                                ? Prism.highlight(fileContent!, grammar, lang)
+                                                : null;
+                                            const lines = highlighted
+                                                ? highlighted.split("\n")
+                                                : fileContent!.split("\n");
+                                            return lines.map((line, i) => (
+                                                <div
+                                                    key={i}
+                                                    data-line={i + 1}
+                                                    className={`flex group transition-colors duration-300 ${focusLine === i + 1 ? "bg-indigo-500/15 border-l-2 border-indigo-400/70" : "hover:bg-white/[0.03]"}`}
+                                                >
+                                                    <span className="inline-block w-10 text-right pr-3 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
+                                                        {i + 1}
+                                                    </span>
+                                                    {highlighted ? (
+                                                        <span
+                                                            className="flex-1 whitespace-pre pr-3 break-all"
+                                                            dangerouslySetInnerHTML={{ __html: line || " " }}
+                                                        />
+                                                    ) : (
+                                                        <span className="flex-1 text-slate-300 whitespace-pre pr-3 break-all">
+                                                            {line || " "}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ));
+                                        })()}
+                                    </code>
+                                </pre>
+                            ) : (
+                                <div className="flex items-center justify-center h-full">
+                                    <p className="text-[10px] text-muted-foreground" />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {!showExplorer && (
                 <button
                     onClick={() => setShowExplorer(true)}
@@ -1351,24 +1492,10 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             {/* Cytoscape Container */}
             <div ref={containerRef} className="w-full h-full min-h-[800px] bg-slate-950 rounded-xl" />
 
-            {/* Cluster info overlay */}
-            <div className="absolute bottom-4 right-4 z-10 p-3 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-lg min-w-[160px]">
-                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">File Types</div>
-                <div className="space-y-1.5">
-                    {clusterInfo.topExtensions.map(({ ext, count, color }) => (
-                        <div key={ext} className="flex items-center gap-2 text-[11px]">
-                            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: color }} />
-                            <span className="text-slate-300">.{ext}</span>
-                            <span className="ml-auto text-slate-500">{count}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
             {/* Controls overlay */}
             <div
                 className="absolute bottom-4 z-10 flex flex-col gap-2"
-                style={{ left: showExplorer ? explorerWidth + 16 : 16 }}
+                style={{ left: showExplorer ? explorerWidth + (showExplorerInspector ? inspectorWidth : 0) + 16 : 16 }}
             >
                 <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 hover:bg-slate-800" onClick={handleZoomIn}>
                     <ZoomIn className="w-4 h-4" />
@@ -1381,106 +1508,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 </Button>
             </div>
 
-            {/* File Code Preview Panel */}
-            {selectedFile && (
-                <div className="absolute top-0 right-0 bottom-0 w-[480px] z-20 bg-[#0a0e1a]/95 backdrop-blur-xl border-l border-border/30 flex flex-col">
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
-                        <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-sm font-semibold truncate">{selectedFile.label}</span>
-                            {selectedFile.extension && (
-                                <Badge
-                                    variant="outline"
-                                    className="text-[10px] shrink-0"
-                                    style={{ borderColor: getFileColor(selectedFile.label) + "40", color: getFileColor(selectedFile.label) }}
-                                >
-                                    .{selectedFile.extension}
-                                </Badge>
-                            )}
-                        </div>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="w-7 h-7 shrink-0"
-                            onClick={() => setSelectedFile(null)}
-                        >
-                            <X className="w-4 h-4" />
-                        </Button>
-                    </div>
-
-                    {/* File meta */}
-                    <div className="px-4 py-2 border-b border-border/20 text-xs text-muted-foreground space-y-1">
-                        <div className="truncate">
-                            <span className="font-medium text-foreground/80">Path:</span> {selectedFile.path}
-                        </div>
-                        {selectedFile.size !== undefined && (
-                            <div>
-                                <span className="font-medium text-foreground/80">Size:</span> {formatBytes(selectedFile.size)}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Code Content */}
-                    <div className="flex-1 overflow-auto" ref={codeScrollRef}>
-                        {fileLoading ? (
-                            <div className="flex items-center justify-center h-full">
-                                <div className="text-center">
-                                    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                                    <p className="text-xs text-muted-foreground">Loading file...</p>
-                                </div>
-                            </div>
-                        ) : fileError ? (
-                            <div className="flex items-center justify-center h-full">
-                                <div className="text-center px-6">
-                                    <div className="text-3xl mb-2">📄</div>
-                                    <p className="text-xs text-muted-foreground">{fileError}</p>
-                                </div>
-                            </div>
-                        ) : fileContent !== null ? (
-                            <pre className="text-[12px] leading-[1.6] font-mono" style={{ background: "transparent" }}>
-                                <code>
-                                    {(() => {
-                                        const ext = selectedFile.extension?.toLowerCase() ?? "";
-                                        const lang = extToPrismLang[ext];
-                                        const grammar = lang && Prism.languages[lang];
-                                        const highlighted = grammar
-                                            ? Prism.highlight(fileContent!, grammar, lang)
-                                            : null;
-                                        const lines = highlighted
-                                            ? highlighted.split("\n")
-                                            : fileContent!.split("\n");
-                                        return lines.map((line, i) => (
-                                            <div
-                                                key={i}
-                                                data-line={i + 1}
-                                                className={`flex group transition-colors duration-300 ${focusLine === i + 1 ? "bg-indigo-500/15 border-l-2 border-indigo-400/70" : "hover:bg-white/[0.03]"}`}
-                                            >
-                                                <span className="inline-block w-12 text-right pr-4 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
-                                                    {i + 1}
-                                                </span>
-                                                {highlighted ? (
-                                                    <span
-                                                        className="flex-1 whitespace-pre pr-4 break-all"
-                                                        dangerouslySetInnerHTML={{ __html: line || " " }}
-                                                    />
-                                                ) : (
-                                                    <span className="flex-1 text-slate-300 whitespace-pre pr-4 break-all">
-                                                        {line || " "}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        ));
-                                    })()}
-                                </code>
-                            </pre>
-                        ) : (
-                            <div className="flex items-center justify-center h-full">
-                                <p className="text-xs text-muted-foreground">Select a file to preview</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

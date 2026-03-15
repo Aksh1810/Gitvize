@@ -15,6 +15,7 @@ import BranchGraph from "@/components/diagrams/branch-graph";
 import DependencyGraph from "@/components/diagrams/dependency-graph";
 import LanguageDonut from "@/components/charts/language-donut";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
+import { getFileColor } from "@/lib/file-icons";
 import { consumeOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
@@ -307,6 +308,27 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         );
     }, [repoData?.dependencyFiles]);
 
+    const fileTypeLegend = useMemo(() => {
+        const extCounts = new Map<string, number>();
+        const items = repoData?.fileTree?.tree ?? [];
+
+        items.forEach((item) => {
+            if (item.type !== "blob") return;
+            const name = item.path.split("/").pop() || "";
+            const ext = (name.split(".").pop() || "other").toLowerCase();
+            extCounts.set(ext, (extCounts.get(ext) || 0) + 1);
+        });
+
+        return Array.from(extCounts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 8)
+            .map(([ext, count]) => ({
+                ext,
+                count,
+                color: getFileColor(`file.${ext}`),
+            }));
+    }, [repoData?.fileTree?.tree]);
+
     // Loading state
     if (loading) {
         return (
@@ -472,6 +494,26 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                         {Object.keys(repoData.languages).length > 0 && (
                             <LanguageDonut languages={repoData.languages} />
+                        )}
+
+                        {fileTypeLegend.length > 0 && (
+                            <div className="pro-surface p-2.5">
+                                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                                    File Types
+                                </div>
+                                <div className="space-y-1">
+                                    {fileTypeLegend.map(({ ext, count, color }) => (
+                                        <div key={ext} className="flex items-center gap-1.5 text-[11px]">
+                                            <span
+                                                className="w-2 h-2 rounded-full inline-block flex-shrink-0"
+                                                style={{ backgroundColor: color }}
+                                            />
+                                            <span className="text-slate-300">.{ext}</span>
+                                            <span className="ml-auto text-slate-500 text-[10px]">{count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         )}
 
                         {activeTab === "architecture" && (
