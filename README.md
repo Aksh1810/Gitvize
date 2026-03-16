@@ -63,51 +63,11 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 | Icons | Lucide React |
 | Data Source | GitHub REST API |
 
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- npm / yarn / pnpm
-
-### Installation
-
-```bash
-git clone https://github.com/Aksh1810/Gitviz.git
-cd Gitviz
-npm install
-```
-
-### Development
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
 ### Usage
 
 1. Paste any GitHub repository URL (e.g. `https://github.com/facebook/react`)
 2. Gitvize fetches the repo's file tree, branches, commits, and dependencies
 3. Switch between tabs: **Architecture**, **File Tree**, **Branches**, **Dependencies**, **Contributors**
-
-### Environment Variables
-
-```env
-# Optional: AI providers (for premium AI diagrams)
-GEMINI_API_KEY=
-AI_API_KEY=
-AI_PROVIDER=openai
-AI_MODEL=gpt-4o
-
-# Optional: DB-backed features
-DATABASE_URL=
-```
-
-Notes:
-- For private repo visualization, users provide a one-time PAT in the UI flow.
-- Basic public repo visualization works without any env vars.
 
 ## 📁 Project Structure
 
@@ -129,25 +89,6 @@ src/
 │   └── file-icons.ts       # File color & icon mapping
 └── types/                  # TypeScript type definitions
 ```
-
-## Production Readiness Notes (March 2026)
-
-- Baseline architecture preserved: App Router structure, API routes, diagram components, and shared types remain unchanged.
-- Simplification pass completed:
-	- Removed unused imports and dead helper constants in diagrams/lib modules.
-	- Replaced unsafe hook patterns that triggered cascading render lint errors.
-	- Reduced mutable-state anti-patterns in the canvas knowledge graph drag logic.
-	- Tightened Cytoscape typing in the file-tree graph to satisfy strict TypeScript checks.
-	- Added server-side input validation for repository owner/name in API routes.
-	- Removed token query fallback from API endpoints.
-	- Hardened Mermaid security mode and pinned vulnerable transitive packages.
-	- Integrated Vercel Analytics in root layout.
-- Validation status:
-	- `npm run build` passes.
-	- `npm run lint` has no errors; remaining warnings are image optimization recommendations for avatar/graph image rendering.
-- Remaining optional hardening work:
-	- Replace selected `<img>` usages with `next/image` in graph/timeline node renderers where layout constraints allow.
-	- Add lightweight end-to-end smoke tests for public/private repo entry flow.
 
 ## 📄 License
 
