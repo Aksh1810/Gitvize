@@ -10,7 +10,7 @@ import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/s
 import type { TreeItem, FileNodeData } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen } from "lucide-react";
+import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, Copy, CornerDownRight } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
 import "prismjs/components/prism-javascript";
@@ -71,9 +71,18 @@ interface FlatExplorerRow {
     size?: number;
 }
 
+interface CodeLineRow {
+    lineNumber: number;
+    raw: string;
+    html: string | null;
+    indentLevel: number;
+}
+
 const EXPLORER_ROW_HEIGHT = 30;
 const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
 const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
+const CODE_ROW_HEIGHT = 24;
+const CODE_ACTIVE_LINE_STORAGE_PREFIX = "gitviz_code_active_line";
 
 const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = {
     class: { color: "#f59e0b", shape: "hexagon" },
@@ -102,7 +111,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const containerRef = useRef<HTMLDivElement>(null);
     const cyRef = useRef<cytoscape.Core | null>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
-    const codeScrollRef = useRef<HTMLDivElement>(null);
+    const codePanelRef = useRef<HTMLDivElement>(null);
+    const codeSearchInputRef = useRef<HTMLInputElement>(null);
+    const codeListRef = useRef<{
+        element: HTMLDivElement | null;
+        scrollToRow: (config: { index: number; align?: "auto" | "center" | "end" | "smart" | "start"; behavior?: "auto" | "instant" | "smooth" }) => void;
+    } | null>(null);
     const [selectedFile, setSelectedFile] = useState<FileNodeData | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [fileContent, setFileContent] = useState<string | null>(null);
@@ -110,6 +124,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [fileError, setFileError] = useState<string | null>(null);
     const [symbolFocus, setSymbolFocus] = useState<string | null>(null);
     const [focusLine, setFocusLine] = useState<number | null>(null);
+    const [activeLine, setActiveLine] = useState(1);
+    const [inspectorSearchQuery, setInspectorSearchQuery] = useState("");
+    const [jumpToLineInput, setJumpToLineInput] = useState("");
+    const [showInspectorInsights, setShowInspectorInsights] = useState(true);
+    const [copiedPath, setCopiedPath] = useState(false);
+    const [codeViewportHeight, setCodeViewportHeight] = useState(520);
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
@@ -152,7 +172,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         symbols: [],
         references: [],
     });
-    const inspectorWidth = 360;
+    const inspectorWidth = 620;
     const visibilityRef = useRef({
         showRoot: true,
         showFolders: true,
@@ -390,6 +410,73 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         }
     }, [selectedFile, fetchFileContent]);
 
+    const filePathParts = useMemo(() => selectedFile?.path.split("/") ?? [], [selectedFile?.path]);
+
+    const highlightedLines = useMemo<CodeLineRow[]>(() => {
+        if (!fileContent) return [];
+        const ext = selectedFile?.extension?.toLowerCase() ?? "";
+        const lang = extToPrismLang[ext];
+        const grammar = lang ? Prism.languages[lang] : null;
+        const rawLines = fileContent.split("\n");
+        const highlighted = grammar ? Prism.highlight(fileContent, grammar, lang).split("\n") : [];
+
+        return rawLines.map((raw, index) => {
+            const leadingWhitespace = raw.match(/^[\t ]+/)?.[0] ?? "";
+            const spaces = leadingWhitespace.replace(/\t/g, "    ").length;
+            return {
+                lineNumber: index + 1,
+                raw,
+                html: grammar ? (highlighted[index] ?? "") : null,
+                indentLevel: Math.min(10, Math.floor(spaces / 4)),
+            };
+        });
+    }, [fileContent, selectedFile?.extension]);
+
+    const searchMatches = useMemo(() => {
+        const query = inspectorSearchQuery.trim().toLowerCase();
+        if (!query) return new Set<number>();
+        const matches = new Set<number>();
+        highlightedLines.forEach((line) => {
+            if (line.raw.toLowerCase().includes(query)) {
+                matches.add(line.lineNumber);
+            }
+        });
+        return matches;
+    }, [highlightedLines, inspectorSearchQuery]);
+
+    const activeLineStorageKey = selectedFile?.path
+        ? `${CODE_ACTIVE_LINE_STORAGE_PREFIX}:${owner}/${repo}:${selectedFile.path}`
+        : null;
+
+    useEffect(() => {
+        if (!showExplorerInspector || !codePanelRef.current) return;
+        const observer = new ResizeObserver((entries) => {
+            const [entry] = entries;
+            if (!entry) return;
+            setCodeViewportHeight(Math.max(220, Math.floor(entry.contentRect.height)));
+        });
+        observer.observe(codePanelRef.current);
+        return () => observer.disconnect();
+    }, [showExplorerInspector]);
+
+    useEffect(() => {
+        if (!activeLineStorageKey || typeof window === "undefined") return;
+        const saved = Number(localStorage.getItem(activeLineStorageKey));
+        if (Number.isFinite(saved) && saved > 0) {
+            setActiveLine(saved);
+            setJumpToLineInput(String(saved));
+        } else {
+            setActiveLine(1);
+            setJumpToLineInput("1");
+        }
+        setInspectorSearchQuery("");
+    }, [activeLineStorageKey]);
+
+    useEffect(() => {
+        if (!activeLineStorageKey || typeof window === "undefined") return;
+        localStorage.setItem(activeLineStorageKey, String(activeLine));
+    }, [activeLine, activeLineStorageKey]);
+
     useEffect(() => {
         if (!fileContent || !symbolFocus) {
             setFocusLine(null);
@@ -403,14 +490,36 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     }, [fileContent, symbolFocus]);
 
     useEffect(() => {
-        if (!focusLine || !codeScrollRef.current) return;
-        const container = codeScrollRef.current;
-        const target = container.querySelector(`[data-line="${focusLine}"]`);
-        if (target instanceof HTMLElement) {
-            const targetTop = target.offsetTop - container.clientHeight * 0.4;
-            container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
-        }
+        if (!focusLine) return;
+        setActiveLine(focusLine);
+        setJumpToLineInput(String(focusLine));
     }, [focusLine]);
+
+    useEffect(() => {
+        if (!highlightedLines.length) return;
+        const bounded = Math.min(Math.max(activeLine, 1), highlightedLines.length);
+        if (bounded !== activeLine) {
+            setActiveLine(bounded);
+            setJumpToLineInput(String(bounded));
+            return;
+        }
+        codeListRef.current?.scrollToRow({
+            index: bounded - 1,
+            align: "smart",
+            behavior: "auto",
+        });
+    }, [activeLine, highlightedLines.length]);
+
+    useEffect(() => {
+        const onFind = (event: KeyboardEvent) => {
+            if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f") return;
+            if (!showExplorerInspector) return;
+            event.preventDefault();
+            codeSearchInputRef.current?.focus();
+        };
+        window.addEventListener("keydown", onFind);
+        return () => window.removeEventListener("keydown", onFind);
+    }, [showExplorerInspector]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1607,113 +1716,241 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                     className="absolute top-0 bottom-0 z-20"
                     style={{ left: explorerWidth, width: inspectorWidth }}
                 >
-                    <div className="h-full bg-[#0a0e1a]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
-                        <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Inspector</span>
-                                <span className="text-[11px] font-semibold truncate">
-                                    {selectedFile?.label ?? ""}
-                                </span>
-                                {selectedFile?.extension && (
-                                    <Badge
-                                        variant="outline"
-                                        className="text-[9px] shrink-0"
-                                        style={{ borderColor: getFileColor(selectedFile.label) + "40", color: getFileColor(selectedFile.label) }}
-                                    >
-                                        .{selectedFile.extension}
-                                    </Badge>
-                                )}
-                            </div>
-                            <div className="flex items-center gap-1">
-                                {selectedFile && (
+                    <div className="h-full bg-[#070b15]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
+                        <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
+                            <div className="flex items-center justify-between px-3 py-2.5">
+                                <div className="min-w-0 flex items-center gap-1.5">
+                                    <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Code Inspector</span>
+                                    <span className="text-[12px] font-semibold text-slate-100 truncate">{selectedFile?.label ?? ""}</span>
+                                    {selectedFile?.extension && (
+                                        <Badge
+                                            variant="outline"
+                                            className="text-[9px] shrink-0 border-slate-700 text-slate-300"
+                                        >
+                                            .{selectedFile.extension}
+                                        </Badge>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    {selectedFile && (
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="w-7 h-7 shrink-0 text-slate-300 hover:text-white"
+                                            onClick={() => {
+                                                if (!selectedFile.path) return;
+                                                navigator.clipboard.writeText(selectedFile.path).then(() => {
+                                                    setCopiedPath(true);
+                                                    setTimeout(() => setCopiedPath(false), 1000);
+                                                }).catch(() => undefined);
+                                            }}
+                                            title="Copy file path"
+                                        >
+                                            <Copy className="w-3.5 h-3.5" />
+                                        </Button>
+                                    )}
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="w-6 h-6 shrink-0"
-                                        onClick={() => setSelectedFile(null)}
+                                        className="w-7 h-7 shrink-0 text-slate-300 hover:text-white"
+                                        onClick={() => setShowInspectorInsights((prev) => !prev)}
+                                        title="Toggle insights"
                                     >
-                                        <X className="w-3.5 h-3.5" />
+                                        <CornerDownRight className="w-3.5 h-3.5" />
                                     </Button>
-                                )}
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="w-6 h-6 shrink-0"
-                                    onClick={() => setShowExplorerInspector(false)}
-                                >
-                                    <PanelLeftClose className="w-3.5 h-3.5" />
-                                </Button>
+                                    {selectedFile && (
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="w-7 h-7 shrink-0 text-slate-300 hover:text-white"
+                                            onClick={() => setSelectedFile(null)}
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </Button>
+                                    )}
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="w-7 h-7 shrink-0 text-slate-300 hover:text-white"
+                                        onClick={() => setShowExplorerInspector(false)}
+                                    >
+                                        <PanelLeftClose className="w-3.5 h-3.5" />
+                                    </Button>
+                                </div>
                             </div>
+
+                            {selectedFile && (
+                                <div className="px-3 pb-2.5 space-y-2">
+                                    <div className="text-[10px] text-slate-400 truncate">
+                                        {filePathParts.length > 1 ? filePathParts.slice(0, -1).join(" / ") : "root"}
+                                    </div>
+                                    <div className="grid grid-cols-[minmax(0,1fr)_96px_78px] gap-2">
+                                        <input
+                                            ref={codeSearchInputRef}
+                                            value={inspectorSearchQuery}
+                                            onChange={(event) => setInspectorSearchQuery(event.target.value)}
+                                            placeholder="Search in file (Cmd/Ctrl+F)"
+                                            className="h-8 rounded-md border border-slate-700 bg-slate-900/70 px-2.5 text-[11px] text-slate-200 placeholder:text-slate-500 outline-none focus:border-indigo-500/70"
+                                        />
+                                        <input
+                                            value={jumpToLineInput}
+                                            onChange={(event) => setJumpToLineInput(event.target.value.replace(/[^0-9]/g, ""))}
+                                            onKeyDown={(event) => {
+                                                if (event.key !== "Enter") return;
+                                                const next = Number(jumpToLineInput || "1");
+                                                const bounded = Math.min(Math.max(next, 1), Math.max(1, highlightedLines.length));
+                                                setActiveLine(bounded);
+                                                setJumpToLineInput(String(bounded));
+                                            }}
+                                            placeholder="Line"
+                                            className="h-8 rounded-md border border-slate-700 bg-slate-900/70 px-2.5 text-[11px] text-slate-200 placeholder:text-slate-500 outline-none focus:border-indigo-500/70"
+                                        />
+                                        <Button
+                                            variant="secondary"
+                                            className="h-8 text-[11px] font-medium bg-slate-800/90 border border-slate-700 hover:bg-slate-700/90"
+                                            onClick={() => {
+                                                const next = Number(jumpToLineInput || "1");
+                                                const bounded = Math.min(Math.max(next, 1), Math.max(1, highlightedLines.length));
+                                                setActiveLine(bounded);
+                                                setJumpToLineInput(String(bounded));
+                                            }}
+                                        >
+                                            Go
+                                        </Button>
+                                    </div>
+                                    <div className="flex items-center justify-between text-[10px] text-slate-500">
+                                        <span>{selectedFile.path}</span>
+                                        <span>{copiedPath ? "Path copied" : ""}</span>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
-                        {selectedFile && (
-                            <div className="px-3 py-2 border-b border-border/20 text-[10px] text-muted-foreground space-y-1">
-                                <div className="truncate">
-                                    <span className="font-medium text-foreground/80">Path:</span> {selectedFile.path}
-                                </div>
-                                {selectedFile.size !== undefined && (
-                                    <div>
-                                        <span className="font-medium text-foreground/80">Size:</span> {formatBytes(selectedFile.size)}
+                        <div className="flex-1 min-h-0 flex">
+                            <div
+                                className="flex-1 min-w-0 border-r border-slate-800/80 focus:outline-none focus:ring-1 focus:ring-indigo-500/40"
+                                ref={codePanelRef}
+                                tabIndex={0}
+                                onKeyDown={(event) => {
+                                    if (!highlightedLines.length) return;
+                                    if (event.key === "ArrowDown") {
+                                        event.preventDefault();
+                                        const next = Math.min(highlightedLines.length, activeLine + 1);
+                                        setActiveLine(next);
+                                        setJumpToLineInput(String(next));
+                                    } else if (event.key === "ArrowUp") {
+                                        event.preventDefault();
+                                        const next = Math.max(1, activeLine - 1);
+                                        setActiveLine(next);
+                                        setJumpToLineInput(String(next));
+                                    }
+                                }}
+                            >
+                                {fileLoading ? (
+                                    <div className="flex items-center justify-center h-full">
+                                        <div className="text-center">
+                                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                                            <p className="text-[11px] text-slate-400">Loading file...</p>
+                                        </div>
+                                    </div>
+                                ) : fileError ? (
+                                    <div className="flex items-center justify-center h-full">
+                                        <p className="text-[11px] text-slate-400 px-4 text-center">{fileError}</p>
+                                    </div>
+                                ) : fileContent !== null && selectedFile ? (
+                                    <List
+                                        listRef={codeListRef}
+                                        style={{ height: codeViewportHeight, width: "100%" }}
+                                        rowCount={highlightedLines.length}
+                                        rowHeight={CODE_ROW_HEIGHT}
+                                        overscanCount={14}
+                                        rowProps={{
+                                            rows: highlightedLines,
+                                            activeLine,
+                                            searchMatches,
+                                            onLineSelect: (lineNumber: number) => {
+                                                setActiveLine(lineNumber);
+                                                setJumpToLineInput(String(lineNumber));
+                                            },
+                                        }}
+                                        rowComponent={({ index, style, ariaAttributes, rows, activeLine: currentActiveLine, searchMatches: currentSearchMatches, onLineSelect }: RowComponentProps<{ rows: CodeLineRow[]; activeLine: number; searchMatches: Set<number>; onLineSelect: (lineNumber: number) => void }>) => {
+                                            const line = rows[index];
+                                            const isActive = currentActiveLine === line.lineNumber;
+                                            const isMatch = currentSearchMatches.has(line.lineNumber);
+
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    style={style}
+                                                    {...ariaAttributes}
+                                                    onClick={() => onLineSelect(line.lineNumber)}
+                                                    className={`group relative w-full flex items-center text-left font-mono text-[13px] leading-[1.62] ${isActive ? "bg-indigo-500/14" : ""} ${!isActive ? "hover:bg-slate-800/40" : ""}`}
+                                                >
+                                                    <span className={`w-14 shrink-0 select-none text-right pr-3 border-r border-slate-800/70 ${isActive ? "text-indigo-200" : "text-slate-500 group-hover:text-slate-400"}`}>
+                                                        {line.lineNumber}
+                                                    </span>
+                                                    <span className="relative flex-1 min-w-0 px-3 whitespace-pre overflow-x-hidden" style={{ fontFamily: '"JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}>
+                                                        {Array.from({ length: line.indentLevel }).map((_, guideIndex) => (
+                                                            <span
+                                                                key={`${line.lineNumber}-indent-${guideIndex}`}
+                                                                className="absolute top-0 bottom-0 w-px bg-slate-700/20"
+                                                                style={{ left: 12 + guideIndex * 14 }}
+                                                            />
+                                                        ))}
+                                                        {line.html ? (
+                                                            <span
+                                                                className={`relative z-[1] ${isMatch ? "bg-amber-400/14" : ""}`}
+                                                                dangerouslySetInnerHTML={{ __html: line.html || " " }}
+                                                            />
+                                                        ) : (
+                                                            <span className={`relative z-[1] text-slate-200 ${isMatch ? "bg-amber-400/14" : ""}`}>{line.raw || " "}</span>
+                                                        )}
+                                                    </span>
+                                                </button>
+                                            );
+                                        }}
+                                    />
+                                ) : (
+                                    <div className="flex items-center justify-center h-full">
+                                        <div className="text-[11px] text-slate-500">Select a file to inspect</div>
                                     </div>
                                 )}
                             </div>
-                        )}
 
-                        <div className="flex-1 overflow-auto" ref={codeScrollRef}>
-                            {fileLoading ? (
-                                <div className="flex items-center justify-center h-full">
-                                    <div className="text-center">
-                                        <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                                        <p className="text-[10px] text-muted-foreground">Loading file...</p>
+                            {showInspectorInsights && (
+                                <aside className="w-52 shrink-0 bg-[#090f1d]/90 p-3 text-[10px] font-mono text-slate-300 overflow-auto">
+                                    <p className="uppercase tracking-wider text-slate-500 font-semibold mb-2">Context</p>
+                                    <div className="space-y-2">
+                                        <div>
+                                            <p className="text-slate-500">Active Line</p>
+                                            <p className="text-slate-100">{activeLine}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500">Matches</p>
+                                            <p className="text-slate-100">{searchMatches.size}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-500">Total Lines</p>
+                                            <p className="text-slate-100">{highlightedLines.length}</p>
+                                        </div>
+                                        {selectedFile?.size !== undefined && (
+                                            <div>
+                                                <p className="text-slate-500">File Size</p>
+                                                <p className="text-slate-100">{formatBytes(selectedFile.size)}</p>
+                                            </div>
+                                        )}
+                                        {symbolFocus && (
+                                            <div>
+                                                <p className="text-slate-500">Focused Symbol</p>
+                                                <p className="text-slate-100 break-all">{symbolFocus}</p>
+                                            </div>
+                                        )}
+                                        <div>
+                                            <p className="text-slate-500">Line Preview</p>
+                                            <p className="text-slate-200 leading-relaxed break-words">{highlightedLines[activeLine - 1]?.raw?.trim() || "-"}</p>
+                                        </div>
                                     </div>
-                                </div>
-                            ) : fileError ? (
-                                <div className="flex items-center justify-center h-full">
-                                    <div className="text-center px-4">
-                                        <p className="text-[10px] text-muted-foreground">{fileError}</p>
-                                    </div>
-                                </div>
-                            ) : fileContent !== null && selectedFile ? (
-                                <pre className="text-[10px] leading-[1.55] font-mono" style={{ background: "transparent" }}>
-                                    <code>
-                                        {(() => {
-                                            const ext = selectedFile.extension?.toLowerCase() ?? "";
-                                            const lang = extToPrismLang[ext];
-                                            const grammar = lang && Prism.languages[lang];
-                                            const highlighted = grammar
-                                                ? Prism.highlight(fileContent!, grammar, lang)
-                                                : null;
-                                            const lines = highlighted
-                                                ? highlighted.split("\n")
-                                                : fileContent!.split("\n");
-                                            return lines.map((line, i) => (
-                                                <div
-                                                    key={i}
-                                                    data-line={i + 1}
-                                                    className={`flex group transition-colors duration-300 ${focusLine === i + 1 ? "bg-indigo-500/15 border-l-2 border-indigo-400/70" : "hover:bg-white/[0.03]"}`}
-                                                >
-                                                    <span className="inline-block w-10 text-right pr-3 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
-                                                        {i + 1}
-                                                    </span>
-                                                    {highlighted ? (
-                                                        <span
-                                                            className="flex-1 whitespace-pre pr-3 break-all"
-                                                            dangerouslySetInnerHTML={{ __html: line || " " }}
-                                                        />
-                                                    ) : (
-                                                        <span className="flex-1 text-slate-300 whitespace-pre pr-3 break-all">
-                                                            {line || " "}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            ));
-                                        })()}
-                                    </code>
-                                </pre>
-                            ) : (
-                                <div className="flex items-center justify-center h-full">
-                                    <div />
-                                </div>
+                                </aside>
                             )}
                         </div>
                     </div>
