@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { RepoMetadata, ArchitectureAnalysis } from "@/types";
+import { transitions } from "@/lib/motion";
 
 interface RepoOverviewProps {
     metadata: RepoMetadata;
@@ -46,6 +47,7 @@ export default function RepoOverview({
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={transitions.soft}
             className="pro-surface p-6 max-w-3xl"
         >
             {/* Repo Name with GitHub link */}

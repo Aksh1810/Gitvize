@@ -17,19 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import GitHubTokenModal, { setOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import { EXAMPLE_REPOS, HOW_IT_WORKS_STEPS } from "@/lib/constants";
-
-const container = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.08 },
-  },
-};
-
-const item = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0 },
-};
+import { fadeSlideUp, staggerContainer, transitions } from "@/lib/motion";
 
 const iconMap: Record<string, React.ReactNode> = {
   Link: <LinkIcon className="w-6 h-6" />,
@@ -128,9 +116,9 @@ export default function LandingPage() {
       {/* Hero */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 pt-20">
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
+          variants={fadeSlideUp}
+          initial="hidden"
+          animate="show"
           className="text-center max-w-3xl mx-auto mb-12"
         >
 
@@ -182,7 +170,7 @@ export default function LandingPage() {
 
         {/* Example Repos */}
         <motion.div
-          variants={container}
+          variants={staggerContainer}
           initial="hidden"
           animate="show"
           className="w-full max-w-5xl mx-auto mb-20"
@@ -194,7 +182,9 @@ export default function LandingPage() {
             {EXAMPLE_REPOS.map((repo) => (
               <motion.button
                 key={`${repo.owner}/${repo.repo}`}
-                variants={item}
+                variants={fadeSlideUp}
+                whileHover={{ y: -3 }}
+                transition={transitions.base}
                 onClick={() => {
                   setIsNavigating(true);
                   router.push(`/${repo.owner}/${repo.repo}`);
@@ -235,9 +225,10 @@ export default function LandingPage() {
 
         {/* How it Works */}
         <motion.section
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5, duration: 0.6 }}
+          variants={fadeSlideUp}
+          initial="hidden"
+          animate="show"
+          transition={{ ...transitions.soft, delay: 0.25 }}
           className="w-full max-w-4xl mx-auto mb-24"
         >
           <h2 className="text-3xl font-bold text-center mb-12">

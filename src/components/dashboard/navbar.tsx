@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { transitions } from "@/lib/motion";
 
 interface NavbarProps {
     owner: string;
@@ -54,6 +55,9 @@ export default function Navbar({
     return (
         <motion.nav
             className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-2xl"
+            initial={{ y: -18, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={transitions.soft}
             style={{ backgroundColor: background, borderColor, boxShadow: shadow, borderBottomWidth: "1px" }}
         >
             <div className="absolute inset-0 nav-sheen" />

@@ -3,6 +3,7 @@
 import { DiagramTab } from "@/types";
 import { DIAGRAM_TABS } from "@/lib/constants";
 import { motion } from "framer-motion";
+import { transitions } from "@/lib/motion";
 import {
     Boxes,
     Network,
@@ -46,7 +47,7 @@ export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
                                 <motion.span
                                     layoutId="tab-pill"
                                     className="tab-pill pro-pill-active"
-                                    transition={{ type: "spring", stiffness: 260, damping: 28 }}
+                                    transition={transitions.spring}
                                 />
                             )}
                             <span className="relative z-10 flex items-center gap-2">

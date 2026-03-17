@@ -20,6 +20,7 @@ import { consumeOneTimeGitHubToken } from "@/components/dashboard/github-token-m
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
+import { transitions } from "@/lib/motion";
 import type {
     DiagramTab,
     RepoMetadata,
@@ -430,7 +431,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 initial={{ opacity: 0, y: 12, filter: "blur(6px)" }}
                                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                                 exit={{ opacity: 0, y: -12, filter: "blur(6px)" }}
-                                transition={{ duration: 0.35, ease: "easeOut" }}
+                                transition={transitions.soft}
                                 className="h-full diagram-shell diagram-grid overscroll-contain"
                             >
                                 {activeTab === "architecture" && analysis ? (
