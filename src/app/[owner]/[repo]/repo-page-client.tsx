@@ -432,7 +432,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                                 exit={{ opacity: 0, y: -12, filter: "blur(6px)" }}
                                 transition={transitions.soft}
-                                className="h-full diagram-shell diagram-grid overscroll-contain"
+                                className="h-full diagram-shell diagram-grid overscroll-contain surface-neo mesh-grid"
                             >
                                 {activeTab === "architecture" && analysis ? (
                                     <ArchitectureDiagram
@@ -498,7 +498,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         )}
 
                         {fileTypeLegend.length > 0 && (
-                            <div className="pro-surface p-2.5">
+                            <div className="surface-neo-soft p-2.5">
                                 <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
                                     File Types
                                 </div>
@@ -518,7 +518,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         )}
 
                         {activeTab === "architecture" && (
-                            <div className="pro-surface p-3">
+                            <div className="surface-neo-soft p-3">
                                 <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                                     Premium Diagram
                                 </div>

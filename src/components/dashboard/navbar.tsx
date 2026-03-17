@@ -68,7 +68,7 @@ export default function Navbar({
                     className="flex items-center gap-3 group"
                 >
                     <div className="relative">
-                        <div className="relative w-9 h-9 rounded-2xl bg-black/70 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] flex items-center justify-center">
+                        <div className="relative w-9 h-9 rounded-2xl bg-black/70 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] flex items-center justify-center interactive-lift">
                             <GitBranch className="w-4 h-4 text-white/85 group-hover:text-white transition-colors" />
                         </div>
                     </div>
@@ -83,7 +83,7 @@ export default function Navbar({
                         href={`https://github.com/${owner}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-3 py-1 rounded-full pro-muted-chip shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] text-muted-foreground hover:text-foreground transition-colors"
+                        className="px-3 py-1 rounded-full border border-white/14 bg-white/[0.03] text-muted-foreground hover:text-foreground transition-colors"
                     >
                         {owner}
                     </a>

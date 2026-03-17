@@ -320,6 +320,73 @@
     inset 0 0 30px rgba(99, 102, 241, 0.04);
 }
 
+.surface-neo {
+  background:
+    linear-gradient(180deg, rgba(14, 20, 36, 0.94), rgba(8, 11, 20, 0.96)),
+    radial-gradient(circle at 12% 0%, rgba(99, 102, 241, 0.12), transparent 42%);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 1rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 20px 50px rgba(2, 6, 23, 0.45);
+}
+
+.surface-neo-soft {
+  background:
+    linear-gradient(180deg, rgba(15, 22, 38, 0.78), rgba(8, 12, 22, 0.9));
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 0.9rem;
+  box-shadow: 0 14px 35px rgba(2, 6, 23, 0.35);
+}
+
+.mesh-grid {
+  position: relative;
+}
+
+.mesh-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.75), transparent 95%);
+}
+
+.hero-glow {
+  position: relative;
+}
+
+.hero-glow::after {
+  content: "";
+  position: absolute;
+  inset: -18% -10% auto;
+  height: 280px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.28), transparent 66%);
+  filter: blur(28px);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.interactive-lift {
+  transition:
+    transform var(--motion-duration-base) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-base) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.interactive-lift:hover {
+  transform: translateY(-3px);
+  border-color: rgba(129, 140, 248, 0.38);
+  box-shadow:
+    0 16px 35px rgba(2, 6, 23, 0.42),
+    0 0 0 1px rgba(129, 140, 248, 0.14);
+}
+
 /* ==========================================================================
    Ambient Background Layers
    ========================================================================== */

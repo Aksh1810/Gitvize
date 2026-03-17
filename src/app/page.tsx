@@ -93,7 +93,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 glass-card border-b border-border/50 px-6 py-3">
+      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#090d18]/75 backdrop-blur-2xl px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-indigo flex items-center justify-center">
@@ -119,8 +119,13 @@ export default function LandingPage() {
           variants={fadeSlideUp}
           initial="hidden"
           animate="show"
-          className="text-center max-w-3xl mx-auto mb-12"
+          className="text-center max-w-4xl mx-auto mb-12 hero-glow"
         >
+
+          <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-500/10 px-3 py-1 text-[11px] font-medium text-indigo-100">
+            <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
+            Developer-first repository intelligence
+          </div>
 
           <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight mb-6">
             <span className="gradient-text">Visualize</span> Any
@@ -137,7 +142,7 @@ export default function LandingPage() {
           {/* Input */}
           <form
             onSubmit={handleSubmit}
-            className="flex flex-col sm:flex-row gap-3 max-w-xl mx-auto"
+            className="surface-neo mesh-grid flex flex-col sm:flex-row gap-3 max-w-3xl mx-auto p-3"
           >
             <div className="relative flex-1">
               <Input
@@ -145,7 +150,7 @@ export default function LandingPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="owner/repo or github.com/owner/repo"
-                className="h-14 text-lg pl-5 pr-4 bg-secondary/50 border-indigo/20 focus:border-indigo/50 focus:ring-2 focus:ring-indigo/20 rounded-xl"
+                className="h-14 text-base sm:text-lg pl-5 pr-4 bg-white/[0.03] border-white/15 focus:border-indigo/50 focus:ring-2 focus:ring-indigo/20 rounded-xl"
               />
             </div>
             <Button
@@ -189,7 +194,7 @@ export default function LandingPage() {
                   setIsNavigating(true);
                   router.push(`/${repo.owner}/${repo.repo}`);
                 }}
-                className="glass-card glass-card-hover p-4 text-left group cursor-pointer"
+                className="surface-neo-soft interactive-lift p-4 text-left group cursor-pointer"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-foreground group-hover:text-indigo transition-colors">
@@ -238,7 +243,7 @@ export default function LandingPage() {
             {HOW_IT_WORKS_STEPS.map((step, i) => (
               <div
                 key={step.title}
-                className="glass-card p-6 text-center relative"
+                className="surface-neo-soft interactive-lift p-6 text-center relative"
               >
                 <div className="absolute -top-3 left-6 bg-indigo text-white text-xs font-bold px-2.5 py-1 rounded-full">
                   {i + 1}
