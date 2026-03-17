@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import cytoscape from "cytoscape";
+import { List, type RowComponentProps } from "react-window";
 // @ts-expect-error fcose is an extension package without bundled TS types.
 import fcose from "cytoscape-fcose";
 import { getFileColor } from "@/lib/file-icons";
@@ -9,7 +10,7 @@ import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/s
 import type { TreeItem, FileNodeData } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen, Filter } from "lucide-react";
+import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
 import "prismjs/components/prism-javascript";
@@ -58,6 +59,21 @@ interface ExplorerNode {
     size?: number;
     extension?: string;
 }
+
+interface FlatExplorerRow {
+    path: string;
+    name: string;
+    depth: number;
+    type: "folder" | "file";
+    hasChildren: boolean;
+    isExpanded: boolean;
+    extension?: string;
+    size?: number;
+}
+
+const EXPLORER_ROW_HEIGHT = 30;
+const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
+const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
 
 const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = {
     class: { color: "#f59e0b", shape: "hexagon" },
@@ -117,13 +133,21 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [showExplorer, setShowExplorer] = useState(false);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const [explorerWidth, setExplorerWidth] = useState(220);
+    const [explorerViewportHeight, setExplorerViewportHeight] = useState(560);
     const [showRightFilters, setShowRightFilters] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
     const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
     const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(true);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
+    const [treeFocusPath, setTreeFocusPath] = useState<string>("");
+    const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
+    const explorerBodyRef = useRef<HTMLDivElement>(null);
+    const explorerListRef = useRef<{
+        element: HTMLDivElement | null;
+        scrollToRow: (config: { index: number; align?: "auto" | "center" | "end" | "smart" | "start"; behavior?: "auto" | "instant" | "smooth" }) => void;
+    } | null>(null);
     const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
         symbols: [],
         references: [],
@@ -208,6 +232,94 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             return next;
         });
     }, []);
+
+    const explorerRows = useMemo<FlatExplorerRow[]>(() => {
+        const rows: FlatExplorerRow[] = [];
+
+        const walk = (node: ExplorerNode, depth: number) => {
+            const hasChildren = Boolean(node.children && node.children.length > 0);
+            const isExpanded = node.type === "folder" ? expandedFolders.has(node.path) : false;
+            rows.push({
+                path: node.path,
+                name: node.name,
+                depth,
+                type: node.type,
+                hasChildren,
+                isExpanded,
+                extension: node.extension,
+                size: node.size,
+            });
+
+            if (node.type === "folder" && hasChildren && isExpanded) {
+                node.children!.forEach((child) => walk(child, depth + 1));
+            }
+        };
+
+        walk(explorerTree, 0);
+        return rows;
+    }, [expandedFolders, explorerTree]);
+
+    const explorerRowIndexByPath = useMemo(() => {
+        const map = new Map<string, number>();
+        explorerRows.forEach((row, index) => {
+            map.set(row.path, index);
+        });
+        return map;
+    }, [explorerRows]);
+
+    const repoScopedExpandedKey = `${EXPLORER_EXPANDED_STORAGE_PREFIX}:${owner}/${repo}`;
+    const repoScopedScrollKey = `${EXPLORER_SCROLL_STORAGE_PREFIX}:${owner}/${repo}`;
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const rawExpanded = localStorage.getItem(repoScopedExpandedKey);
+            if (rawExpanded) {
+                const parsed = JSON.parse(rawExpanded) as string[];
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    setExpandedFolders(new Set(parsed));
+                }
+            }
+            const rawScroll = localStorage.getItem(repoScopedScrollKey);
+            if (rawScroll) {
+                const parsedOffset = Number(rawScroll);
+                if (Number.isFinite(parsedOffset)) {
+                    setExplorerScrollOffset(parsedOffset);
+                }
+            }
+        } catch {
+            // Ignore persisted UI state parsing issues.
+        }
+    }, [repoScopedExpandedKey, repoScopedScrollKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        localStorage.setItem(repoScopedExpandedKey, JSON.stringify(Array.from(expandedFolders)));
+    }, [expandedFolders, repoScopedExpandedKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        localStorage.setItem(repoScopedScrollKey, String(explorerScrollOffset));
+    }, [explorerScrollOffset, repoScopedScrollKey]);
+
+    useEffect(() => {
+        if (!showExplorer || !explorerBodyRef.current) return;
+        const observer = new ResizeObserver((entries) => {
+            const [entry] = entries;
+            if (!entry) return;
+            const nextHeight = Math.max(180, Math.floor(entry.contentRect.height));
+            setExplorerViewportHeight(nextHeight);
+        });
+        observer.observe(explorerBodyRef.current);
+        return () => observer.disconnect();
+    }, [showExplorer]);
+
+    useEffect(() => {
+        if (!showExplorer) return;
+        const element = explorerListRef.current?.element;
+        if (!element) return;
+        element.scrollTop = explorerScrollOffset;
+    }, [showExplorer, explorerScrollOffset]);
 
     useEffect(() => {
         explorerWidthRef.current = explorerWidth;
@@ -737,10 +849,31 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         }
     }, [isLargeRepo]);
 
-    const handleExplorerFileSelect = useCallback((node: ExplorerNode) => {
-        if (node.type !== "file") return;
+    const expandParentFolders = useCallback((path: string) => {
+        const parts = path.split("/");
+        setExpandedFolders((prev) => {
+            const next = new Set(prev);
+            next.add("");
+            for (let index = 1; index < parts.length; index += 1) {
+                next.add(parts.slice(0, index).join("/"));
+            }
+            return next;
+        });
+    }, []);
+
+    const focusExplorerPath = useCallback((path: string) => {
+        setTreeFocusPath(path);
+        const nextIndex = explorerRowIndexByPath.get(path);
+        if (nextIndex !== undefined) {
+            explorerListRef.current?.scrollToRow({ index: nextIndex, align: "smart", behavior: "auto" });
+        }
+    }, [explorerRowIndexByPath]);
+
+    const handleExplorerFileSelect = useCallback((node: { name: string; path: string; extension?: string; size?: number }) => {
         setShowExplorer(true);
         setShowExplorerInspector(true);
+        expandParentFolders(node.path);
+        setTreeFocusPath(node.path);
         setSelectedFile({
             label: node.name,
             path: node.path,
@@ -760,7 +893,79 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 easing: "ease-out-quad",
             });
         }
-    }, [focusNodeNeighborhood]);
+    }, [expandParentFolders, focusNodeNeighborhood]);
+
+    const handleExplorerKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (!showExplorer || explorerRows.length === 0) return;
+
+        const activePath = treeFocusPath || selectedFile?.path || "";
+        const activeIndex = explorerRowIndexByPath.get(activePath) ?? 0;
+        const activeRow = explorerRows[activeIndex];
+
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            const nextIndex = Math.min(explorerRows.length - 1, activeIndex + 1);
+            focusExplorerPath(explorerRows[nextIndex].path);
+            return;
+        }
+
+        if (event.key === "ArrowUp") {
+            event.preventDefault();
+            const nextIndex = Math.max(0, activeIndex - 1);
+            focusExplorerPath(explorerRows[nextIndex].path);
+            return;
+        }
+
+        if (!activeRow) return;
+
+        if (event.key === "ArrowRight") {
+            event.preventDefault();
+            if (activeRow.type === "folder") {
+                if (!activeRow.isExpanded) {
+                    toggleFolder(activeRow.path);
+                    return;
+                }
+                const childIndex = activeIndex + 1;
+                if (explorerRows[childIndex]?.depth === activeRow.depth + 1) {
+                    focusExplorerPath(explorerRows[childIndex].path);
+                }
+            }
+            return;
+        }
+
+        if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            if (activeRow.type === "folder" && activeRow.isExpanded) {
+                toggleFolder(activeRow.path);
+                return;
+            }
+            const parentPath = getParentPath(activeRow.path);
+            if (parentPath !== null && explorerRowIndexByPath.has(parentPath)) {
+                focusExplorerPath(parentPath);
+            }
+            return;
+        }
+
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (activeRow.type === "folder") {
+                toggleFolder(activeRow.path);
+            } else {
+                handleExplorerFileSelect({
+                    name: activeRow.name,
+                    path: activeRow.path,
+                    extension: activeRow.extension,
+                    size: activeRow.size,
+                });
+            }
+        }
+    }, [showExplorer, explorerRows, treeFocusPath, selectedFile?.path, explorerRowIndexByPath, focusExplorerPath, toggleFolder, handleExplorerFileSelect]);
+
+    useEffect(() => {
+        if (!selectedFile?.path) return;
+        expandParentFolders(selectedFile.path);
+        setTreeFocusPath(selectedFile.path);
+    }, [selectedFile?.path, expandParentFolders]);
 
     // Search handler
     const handleSearch = useCallback((query: string) => {
@@ -1307,52 +1512,84 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                             </button>
                         </div>
                     </div>
-                    <div className="flex-1 overflow-auto px-2 py-2 text-[11px] font-mono text-slate-300">
-                        {(() => {
-                            const renderNode = (node: ExplorerNode, depth: number) => {
-                                const isFolder = node.type === "folder";
-                                const isExpanded = expandedFolders.has(node.path);
-                                const hasChildren = node.children && node.children.length > 0;
+                    <div
+                        className="relative flex-1 overflow-hidden text-[11px] font-mono text-slate-200"
+                        ref={explorerBodyRef}
+                        tabIndex={0}
+                        onKeyDown={handleExplorerKeyboard}
+                    >
+                        <List
+                            listRef={explorerListRef}
+                            style={{ height: explorerViewportHeight, width: explorerWidth }}
+                            rowCount={explorerRows.length}
+                            rowHeight={EXPLORER_ROW_HEIGHT}
+                            overscanCount={10}
+                            rowComponent={({ index, style, ariaAttributes, rows }: RowComponentProps<{ rows: FlatExplorerRow[] }>) => {
+                                const row = rows[index];
+                                const isFolder = row.type === "folder";
+                                const isSelected = selectedFile?.path === row.path;
+                                const isFocused = treeFocusPath === row.path;
+                                const iconColor = isFolder ? "#f472b6" : getFileColor(row.name);
+
                                 return (
-                                    <div key={node.path || "root"}>
+                                    <div style={style} key={row.path || "root"} className="px-1.5 py-0.5" {...ariaAttributes}>
                                         <button
-                                            className="w-full flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-slate-800/70"
-                                            style={{ paddingLeft: 6 + depth * 12 }}
+                                            className={`group relative w-full h-[28px] flex items-center gap-1.5 rounded-md border transition-colors duration-150 ${isSelected ? "bg-indigo-500/20 border-indigo-400/50 text-white shadow-[inset_2px_0_0_0_#818cf8]" : "border-transparent text-slate-300 hover:bg-slate-800/75 hover:text-slate-100"} ${isFocused && !isSelected ? "ring-1 ring-slate-500/70" : ""}`}
+                                            style={{ paddingLeft: 6 + row.depth * 14 }}
                                             onClick={() => {
+                                                setTreeFocusPath(row.path);
                                                 if (isFolder) {
-                                                    toggleFolder(node.path);
+                                                    toggleFolder(row.path);
                                                 } else {
-                                                    handleExplorerFileSelect(node);
+                                                    handleExplorerFileSelect({
+                                                        name: row.name,
+                                                        path: row.path,
+                                                        extension: row.extension,
+                                                        size: row.size,
+                                                    });
                                                 }
                                             }}
                                         >
+                                            {Array.from({ length: row.depth }).map((_, guideIdx) => (
+                                                <span
+                                                    key={`${row.path}-guide-${guideIdx}`}
+                                                    className="absolute top-1 bottom-1 w-px bg-slate-700/40"
+                                                    style={{ left: 12 + guideIdx * 14 }}
+                                                />
+                                            ))}
                                             {isFolder ? (
-                                                hasChildren ? (
-                                                    isExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />
+                                                row.hasChildren ? (
+                                                    <span className={`transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}>
+                                                        <ChevronRight className="w-3 h-3 text-slate-400" />
+                                                    </span>
                                                 ) : (
                                                     <span className="w-3 h-3" />
                                                 )
                                             ) : (
                                                 <span className="w-3 h-3" />
                                             )}
+
                                             {isFolder ? (
-                                                <Folder className="w-3.5 h-3.5" style={{ color: "#f472b6" }} />
+                                                row.isExpanded ? <FolderOpen className="w-3.5 h-3.5" style={{ color: iconColor }} /> : <Folder className="w-3.5 h-3.5" style={{ color: iconColor }} />
                                             ) : (
-                                                <File className="w-3.5 h-3.5" style={{ color: getFileColor(node.name) }} />
+                                                getExplorerFileIcon(row.name)
                                             )}
-                                            <span className="truncate text-left">{node.name}</span>
+
+                                            <span className="truncate text-left">{row.name || repo}</span>
                                         </button>
-                                        {isFolder && isExpanded && hasChildren && (
-                                            <div>
-                                                {node.children!.map((child) => renderNode(child, depth + 1))}
-                                            </div>
-                                        )}
                                     </div>
                                 );
-                            };
-
-                            return renderNode(explorerTree, 0);
-                        })()}
+                            }}
+                            rowProps={{ rows: explorerRows }}
+                            onResize={(size) => {
+                                setExplorerViewportHeight(Math.max(180, Math.floor(size.height)));
+                            }}
+                            onScroll={(event) => {
+                                const target = event.currentTarget;
+                                if (!(target instanceof HTMLDivElement)) return;
+                                setExplorerScrollOffset(target.scrollTop);
+                            }}
+                        />
                     </div>
                 </div>
                 <div
@@ -1523,6 +1760,33 @@ function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function getParentPath(path: string): string | null {
+    if (!path) return null;
+    const parts = path.split("/");
+    if (parts.length <= 1) return "";
+    return parts.slice(0, -1).join("/");
+}
+
+function getExplorerFileIcon(fileName: string) {
+    const extension = fileName.split(".").pop()?.toLowerCase() || "";
+    if (["ts", "tsx", "js", "jsx", "mjs", "cjs"].includes(extension)) {
+        return <FileCode2 className="w-3.5 h-3.5 text-cyan-400" />;
+    }
+    if (["json", "jsonc", "yaml", "yml"].includes(extension)) {
+        return <FileJson2 className="w-3.5 h-3.5 text-amber-300" />;
+    }
+    if (["md", "txt", "rst", "adoc"].includes(extension)) {
+        return <FileText className="w-3.5 h-3.5 text-slate-300" />;
+    }
+    if (["html", "css", "scss", "xml", "svg"].includes(extension)) {
+        return <FileType2 className="w-3.5 h-3.5 text-pink-300" />;
+    }
+    if (["py", "go", "rs", "java", "c", "cpp", "h", "hpp", "rb", "php"].includes(extension)) {
+        return <Braces className="w-3.5 h-3.5 text-emerald-300" />;
+    }
+    return <File className="w-3.5 h-3.5" style={{ color: getFileColor(fileName) }} />;
 }
 
 function escapeRegExp(value: string): string {
