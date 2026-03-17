@@ -122,7 +122,7 @@ export default function LandingPage() {
           className="text-center max-w-4xl mx-auto mb-12 hero-glow"
         >
 
-          <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-500/10 px-3 py-1 text-[11px] font-medium text-indigo-100">
+          <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-500/10 px-3 py-1 ui-eyebrow text-indigo-100">
             <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
             Developer-first repository intelligence
           </div>
@@ -180,7 +180,7 @@ export default function LandingPage() {
           animate="show"
           className="w-full max-w-5xl mx-auto mb-20"
         >
-          <p className="text-center text-sm text-muted-foreground mb-6">
+          <p className="text-center ui-body text-muted-foreground mb-6">
             Or explore a popular repository
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -208,11 +208,11 @@ export default function LandingPage() {
                     {repo.stars}
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                <p className="ui-micro text-muted-foreground mb-2 line-clamp-2">
                   {repo.description}
                 </p>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground/60">
+                  <span className="ui-micro text-muted-foreground/60">
                     {repo.owner}
                   </span>
                   <span className="text-muted-foreground/30">·</span>

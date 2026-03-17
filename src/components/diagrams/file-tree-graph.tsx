@@ -10,7 +10,7 @@ import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/s
 import type { TreeItem, FileNodeData } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen } from "lucide-react";
+import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
 import "prismjs/components/prism-javascript";
@@ -1344,16 +1344,18 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             >
                 <div className="h-full border-r border-slate-700 flex flex-col" style={{ width: explorerWidth }}>
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Explorer</span>
-                        <button
-                            type="button"
+                        <span className="ui-eyebrow text-slate-400">Explorer</span>
+                        <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={() => setShowExplorerInspector((prev) => !prev)}
-                            className="text-[10px] text-slate-400 hover:text-slate-200"
+                            className="h-7 w-7 text-slate-400 hover:text-slate-200"
+                            aria-label={showExplorerInspector ? "Hide inspector" : "Show inspector"}
                         >
-                            {showExplorerInspector ? "Hide Inspector" : "Show Inspector"}
-                        </button>
+                            {showExplorerInspector ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
+                        </Button>
                     </div>
-                    <div className="relative flex-1 overflow-hidden text-[11px] font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
+                    <div className="relative flex-1 overflow-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
                         <List
                             listRef={explorerListRef}
                             style={{ height: explorerViewportHeight, width: explorerWidth }}
@@ -1409,8 +1411,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
                             <div className="flex items-center justify-between px-3 py-2.5">
                                 <div className="min-w-0 flex items-center gap-1.5">
-                                    <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Code Inspector</span>
-                                    <span className="text-[12px] font-semibold text-slate-100 truncate">{selectedFile?.label ?? ""}</span>
+                                    <span className="ui-eyebrow text-slate-400">Code Inspector</span>
+                                    <span className="ui-body font-semibold text-slate-100 truncate">{selectedFile?.label ?? ""}</span>
                                 </div>
                                 <Button
                                     variant="ghost"
@@ -1425,11 +1427,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         </div>
 
                         <div className="flex-1 min-h-0 flex">
-                            <div className="flex-1 min-w-0 border-r border-slate-800/80" ref={codePanelRef}>
+                            <div className="flex-1 min-w-0 border-r border-slate-800/80 overflow-x-auto" ref={codePanelRef}>
                                 {fileLoading ? (
-                                    <div className="flex items-center justify-center h-full"><p className="text-[11px] text-slate-400">Loading file...</p></div>
+                                    <div className="flex items-center justify-center h-full"><p className="ui-body text-slate-400">Loading file...</p></div>
                                 ) : fileError ? (
-                                    <div className="flex items-center justify-center h-full"><p className="text-[11px] text-slate-400 px-4 text-center">{fileError}</p></div>
+                                    <div className="flex items-center justify-center h-full"><p className="ui-body text-slate-400 px-4 text-center">{fileError}</p></div>
                                 ) : fileContent !== null && selectedFile ? (
                                     <List
                                         listRef={codeListRef}
@@ -1442,17 +1444,17 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                             const line = rows[index];
                                             const isActive = currentActiveLine === line.lineNumber;
                                             return (
-                                                <button type="button" style={style} {...ariaAttributes} onClick={() => onLineSelect(line.lineNumber)} className={`group relative w-full flex items-center text-left font-mono text-[13px] leading-[1.62] ${isActive ? "bg-indigo-500/14" : "hover:bg-slate-800/40"}`}>
+                                                <button type="button" style={style} {...ariaAttributes} onClick={() => onLineSelect(line.lineNumber)} className={`group relative min-w-full w-max flex items-center text-left font-mono text-[13px] leading-[1.62] ${isActive ? "bg-indigo-500/14" : "hover:bg-slate-800/40"}`}>
                                                     <span className={`w-14 shrink-0 select-none text-right pr-3 border-r border-slate-800/70 ${isActive ? "text-indigo-200" : "text-slate-500 group-hover:text-slate-400"}`}>{line.lineNumber}</span>
-                                                    <span className="relative flex-1 min-w-0 px-3 whitespace-pre overflow-x-hidden">
-                                                        {line.html ? <span className="relative z-[1]" dangerouslySetInnerHTML={{ __html: line.html || " " }} /> : <span className="relative z-[1] text-slate-200">{line.raw || " "}</span>}
+                                                    <span className="relative px-3 whitespace-pre text-left">
+                                                        {line.html ? <span className="relative z-[1] inline-block" dangerouslySetInnerHTML={{ __html: line.html || " " }} /> : <span className="relative z-[1] inline-block text-slate-200">{line.raw || " "}</span>}
                                                     </span>
                                                 </button>
                                             );
                                         }}
                                     />
                                 ) : (
-                                    <div className="flex items-center justify-center h-full"><div className="text-[11px] text-slate-500">Select a file to inspect</div></div>
+                                    <div className="flex items-center justify-center h-full"><div className="ui-body text-slate-500">Select a file to inspect</div></div>
                                 )}
                             </div>
                         </div>

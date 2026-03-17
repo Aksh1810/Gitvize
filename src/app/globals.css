@@ -320,6 +320,40 @@
     inset 0 0 30px rgba(99, 102, 241, 0.04);
 }
 
+/* ============================================================================
+   Consistent Typography + Spacing Scale
+   ============================================================================ */
+
+.ui-eyebrow {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ui-micro {
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.ui-body {
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+}
+
+.ui-title {
+  font-size: 1rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ui-section {
+  padding: 1rem;
+  gap: 0.75rem;
+}
+
 .surface-neo {
   background:
     linear-gradient(180deg, rgba(14, 20, 36, 0.94), rgba(8, 11, 20, 0.96)),

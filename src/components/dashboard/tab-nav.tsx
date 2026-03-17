@@ -37,7 +37,7 @@ export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
                         <button
                             key={tab.id}
                             onClick={() => onTabChange(tab.id)}
-                            className={`relative flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg pro-focus-ring transition-colors ${
+                            className={`relative flex items-center gap-2 px-4 py-2 ui-body font-medium rounded-lg pro-focus-ring transition-colors ${
                                 isActive
                                     ? "text-white"
                                     : "text-white/58 hover:text-white"

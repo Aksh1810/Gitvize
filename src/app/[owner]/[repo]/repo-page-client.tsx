@@ -420,7 +420,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <div className="max-w-[1800px] mx-auto">
                 <TabNav activeTab={activeTab} onTabChange={handleTabChange} />
 
-                <div className="flex flex-col lg:flex-row gap-4 p-4">
+                <div className="p-4">
                     {/* Main diagram area */}
                     <div className="flex-1 h-[calc(100vh-140px)]">
                         <AnimatePresence mode="wait">
@@ -430,8 +430,26 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                                 exit={{ opacity: 0, y: -12, filter: "blur(6px)" }}
                                 transition={transitions.soft}
-                                className="h-full diagram-shell diagram-grid overscroll-contain surface-neo mesh-grid"
+                                className="relative h-full diagram-shell diagram-grid overscroll-contain surface-neo mesh-grid"
                             >
+                                {activeTab === "architecture" && !isAnalyzing && (
+                                    <div className="absolute top-3 right-3 z-20">
+                                        <button
+                                            onClick={() => {
+                                                if (!hasUserAIKey) {
+                                                    setAISettingsOpen(true);
+                                                    toast.info("Add your API key for premium diagrams");
+                                                    return;
+                                                }
+                                                runAnalysis("premium");
+                                            }}
+                                            className="ui-micro px-3 py-2 pro-control pro-focus-ring"
+                                        >
+                                            Generate Premium Diagram
+                                        </button>
+                                    </div>
+                                )}
+
                                 {activeTab === "architecture" && analysis ? (
                                     <ArchitectureDiagram
                                         analysis={analysis.architecture}
@@ -483,38 +501,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             </motion.div>
                         </AnimatePresence>
                     </div>
-
-                    {/* Sidebar */}
-                    {activeTab !== "files" && (
-                    <div className="w-full lg:w-[340px] space-y-4">
-
-                        {activeTab === "architecture" && (
-                            <div className="surface-neo-soft p-3">
-                                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                                    Premium Diagram
-                                </div>
-                                <button
-                                    onClick={() => {
-                                        if (!hasUserAIKey) {
-                                            setAISettingsOpen(true);
-                                            toast.info("Add your API key for premium diagrams");
-                                            return;
-                                        }
-                                        runAnalysis("premium");
-                                    }}
-                                    className="w-full text-xs px-3 py-2 pro-control pro-focus-ring"
-                                >
-                                    Generate Premium Diagram
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Pipeline Status (compact) */}
-                        {isAnalyzing && (
-                            <PipelineStatusDisplay steps={pipelineSteps} />
-                        )}
-                    </div>
-                    )}
                 </div>
             </div>
 

@@ -78,7 +78,7 @@ export default function Navbar({
                 </Link>
 
                 {/* Breadcrumb */}
-                <div className="hidden md:flex items-center gap-2 text-sm">
+                <div className="hidden md:flex items-center gap-2 ui-body">
                     <a
                         href={`https://github.com/${owner}`}
                         target="_blank"
@@ -103,7 +103,7 @@ export default function Navbar({
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="pro-control pro-focus-ring text-xs"
+                            className="pro-control pro-focus-ring ui-micro"
                         >
                             <Star className="w-4 h-4 mr-1.5 text-amber-200" />
                             <span className="hidden sm:inline">Star</span>
@@ -114,7 +114,7 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={onAISettings}
-                        className="pro-control pro-focus-ring text-xs"
+                        className="pro-control pro-focus-ring ui-micro"
                     >
                         <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
                         <span className="hidden sm:inline">AI Key</span>
@@ -124,7 +124,7 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={onExport}
-                        className="pro-control pro-focus-ring text-xs"
+                        className="pro-control pro-focus-ring ui-micro"
                     >
                         <Download className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Export</span>
@@ -134,7 +134,7 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={handleShare}
-                        className="pro-control pro-focus-ring text-xs"
+                        className="pro-control pro-focus-ring ui-micro"
                     >
                         <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Share</span>
