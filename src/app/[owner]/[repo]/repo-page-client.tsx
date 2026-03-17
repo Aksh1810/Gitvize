@@ -5,7 +5,6 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "@/components/dashboard/navbar";
 import TabNav from "@/components/dashboard/tab-nav";
-import RepoOverview from "@/components/dashboard/repo-overview";
 import AISettingsModal, { loadAISettings } from "@/components/dashboard/ai-settings-modal";
 import PipelineStatusDisplay from "@/components/dashboard/pipeline-status";
 import ArchitectureDiagram from "@/components/diagrams/architecture-diagram";
@@ -13,7 +12,6 @@ import FileTreeGraph from "@/components/diagrams/file-tree-graph";
 import ContributorsNetwork from "@/components/diagrams/contributors-network";
 import BranchGraph from "@/components/diagrams/branch-graph";
 import DependencyGraph from "@/components/diagrams/dependency-graph";
-import LanguageDonut from "@/components/charts/language-donut";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
 import { getFileColor } from "@/lib/file-icons";
 import { consumeOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
@@ -457,6 +455,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         tree={repoData.fileTree.tree}
                                         owner={owner}
                                         repo={repo}
+                                        fileTypeLegend={fileTypeLegend}
                                     />
                                 ) : activeTab === "contributors" ? (
                                     <ContributorsNetwork
@@ -486,36 +485,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     </div>
 
                     {/* Sidebar */}
+                    {activeTab !== "files" && (
                     <div className="w-full lg:w-[340px] space-y-4">
-                        <RepoOverview
-                            metadata={repoData.metadata}
-                            analysis={analysis?.architecture}
-                            repo={repo}
-                        />
-
-                        {Object.keys(repoData.languages).length > 0 && (
-                            <LanguageDonut languages={repoData.languages} />
-                        )}
-
-                        {fileTypeLegend.length > 0 && (
-                            <div className="surface-neo-soft p-2.5">
-                                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                                    File Types
-                                </div>
-                                <div className="space-y-1">
-                                    {fileTypeLegend.map(({ ext, count, color }) => (
-                                        <div key={ext} className="flex items-center gap-1.5 text-[11px]">
-                                            <span
-                                                className="w-2 h-2 rounded-full inline-block flex-shrink-0"
-                                                style={{ backgroundColor: color }}
-                                            />
-                                            <span className="text-slate-300">.{ext}</span>
-                                            <span className="ml-auto text-slate-500 text-[10px]">{count}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
 
                         {activeTab === "architecture" && (
                             <div className="surface-neo-soft p-3">
@@ -543,6 +514,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             <PipelineStatusDisplay steps={pipelineSteps} />
                         )}
                     </div>
+                    )}
                 </div>
             </div>
 
