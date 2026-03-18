@@ -1486,7 +1486,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         >
                             <Search className="w-4 h-4" />
                         </button>
-                        <div className={`${showSearch ? "ml-2 max-w-[180px] opacity-100" : "ml-0 max-w-0 opacity-0"} overflow-hidden transition-all duration-200`}>
+                        <div className={`${showSearch ? "ml-2 max-w-[180px] opacity-100" : "ml-0 max-w-0 opacity-0"} overflow-hidden transition-all duration-500`}>
                             <div className="relative">
                                 <input
                                     type="text"
@@ -1509,9 +1509,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`} aria-label="Toggle filters"><Filter className="w-4 h-4" /></button>
                 </div>
 
-                <div className={`absolute top-0 right-0 bottom-0 z-20 transition-transform duration-200 ${showRightFilters ? "translate-x-0" : "translate-x-full"}`}>
-                    <div className="h-full w-60 bg-slate-900/95 backdrop-blur border-l border-slate-700 flex flex-col">
-                        <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-700">
+                <div className={`absolute top-0 right-0 bottom-0 z-20 transition-transform duration-900 ${showRightFilters ? "translate-x-0" : "translate-x-full"}`}>
+                    <div className="h-full w-55 bg-slate-900/95 backdrop-blur border-l border-slate-900 flex flex-col">
+                        <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-800">
                             <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
                             <button onClick={() => setShowRightFilters(false)} className="text-slate-400 hover:text-slate-200" aria-label="Close filters">
                                 <X className="w-4 h-4" />
