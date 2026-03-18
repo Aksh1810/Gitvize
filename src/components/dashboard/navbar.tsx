@@ -8,6 +8,7 @@ import {
     Share2,
     Star,
     Sparkles,
+    MessageCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -88,9 +89,14 @@ export default function Navbar({
                         {owner}
                     </a>
                     <span className="text-muted-foreground/50">/</span>
-                    <span className="text-muted-foreground">
+                    <a
+                        href={`https://github.com/${owner}/${repo}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1 rounded-full border border-white/14 bg-white/[0.03] text-muted-foreground hover:text-foreground transition-colors"
+                    >
                         {repo}
-                    </span>
+                    </a>
                 </div>
 
                 {/* Actions */}
@@ -117,7 +123,7 @@ export default function Navbar({
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
-                        <span className="hidden sm:inline">AI Key</span>
+                        <span className="hidden sm:inline">AI</span>
                     </Button>
 
                     <Button

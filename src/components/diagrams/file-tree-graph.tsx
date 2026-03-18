@@ -128,7 +128,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols] = useState(true);
+    const [showSymbols, setShowSymbols] = useState(true);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(true);
     const [showImportsEdges, setShowImportsEdges] = useState(true);
@@ -152,6 +152,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRightFilters, setShowRightFilters] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
     const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
+    const [symbolFiltersOpen, setSymbolFiltersOpen] = useState(true);
     const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(true);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
@@ -774,6 +775,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         const symbolRefs = elements.edges.filter((e) => e.data && ["imports", "calls", "extends", "implements"].includes(String((e.data as Record<string, unknown>).type ?? ""))).length;
         const symbolKinds = new Map<string, number>();
         const symbolTotals = new Map<string, number>();
+        const edgeTypeCounts = new Map<string, number>();
         // Count unique extensions
         const extMap = new Map<string, number>();
         elements.nodes.forEach((n) => {
@@ -787,6 +789,13 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 symbolKinds.set(kind, (symbolKinds.get(kind) || 0) + 1);
             }
         });
+        elements.edges.forEach((edge) => {
+            const data = (edge.data ?? {}) as Record<string, unknown>;
+            const type = typeof data.type === "string" ? data.type : null;
+            if (type) {
+                edgeTypeCounts.set(type, (edgeTypeCounts.get(type) || 0) + 1);
+            }
+        });
         symbolGraph.symbols.forEach((symbol) => {
             symbolTotals.set(symbol.kind, (symbolTotals.get(symbol.kind) || 0) + 1);
         });
@@ -795,7 +804,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             .sort((a, b) => b[1] - a[1])
             .slice(0, 8)
             .map(([ext, count]) => ({ ext, count, color: getFileColor(`file.${ext}`) }));
-        return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals };
+        return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
     const applyVisibility = useCallback((targetCy?: cytoscape.Core | null) => {
@@ -1532,16 +1541,47 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
 
                             <div>
+                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setSymbolFiltersOpen((prev) => !prev)}>
+                                    <span>Symbol Types</span>
+                                    {symbolFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                </button>
+                                {symbolFiltersOpen && (
+                                    <div className="space-y-1.5 mt-1.5">
+                                        
+                                        {SYMBOL_KIND_ORDER.map((kind) => {
+                                            const active = symbolKindVisibility[kind];
+                                            const kindColor = SYMBOL_KIND_STYLE[kind]?.color ?? "#94a3b8";
+                                            const visibleCount = clusterInfo.symbolKinds.get(kind) ?? 0;
+                                            const totalCount = clusterInfo.symbolTotals.get(kind) ?? visibleCount;
+                                            return (
+                                                <button
+                                                    key={kind}
+                                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${active ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                                    onClick={() => setSymbolKindVisibility((prev) => ({ ...prev, [kind]: !prev[kind] }))}
+                                                >
+                                                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: kindColor }} />
+                                                    <span className="flex-1 text-left text-slate-200 capitalize">{kind}</span>
+                                                    <span className="text-slate-500">{totalCount}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
                                 <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setEdgeFiltersOpen((prev) => !prev)}>
                                     <span>Edge Types</span>
                                     {edgeFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                 </button>
                                 {edgeFiltersOpen && (
                                     <div className="space-y-1.5 mt-1.5">
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowContainsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-emerald-400" /><span className="flex-1 text-left text-slate-200">Contains</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowDefinesEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-cyan-400" /><span className="flex-1 text-left text-slate-200">Defines</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImportsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-blue-500" /><span className="flex-1 text-left text-slate-200">Imports</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowCallsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-violet-500" /><span className="flex-1 text-left text-slate-200">Calls</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowContainsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-emerald-400" /><span className="flex-1 text-left text-slate-200">Contains</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("contains") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowDefinesEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-cyan-400" /><span className="flex-1 text-left text-slate-200">Defines</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("defines") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImportsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-blue-500" /><span className="flex-1 text-left text-slate-200">Imports</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("imports") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowCallsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-violet-500" /><span className="flex-1 text-left text-slate-200">Calls</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("calls") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowExtendsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-fuchsia-500" /><span className="flex-1 text-left text-slate-200">Extends</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("extends") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImplementsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-rose-500" /><span className="flex-1 text-left text-slate-200">Implements</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("implements") ?? 0}</span></button>
                                     </div>
                                 )}
                             </div>
