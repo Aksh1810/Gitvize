@@ -1361,7 +1361,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             className="h-7 w-7 text-slate-400 hover:text-slate-200"
                             aria-label={showExplorerInspector ? "Hide inspector" : "Show inspector"}
                         >
-                            {showExplorerInspector ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
+                            {showExplorerInspector ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
                         </Button>
                     </div>
                     <div className="relative flex-1 overflow-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
