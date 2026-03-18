@@ -1348,8 +1348,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     return (
         <div className="relative w-full h-full min-h-[800px] flex">
             <div
-                className="h-full shrink-0 border-r border-slate-700/80 bg-slate-950/95 backdrop-blur flex"
-                style={{ width: explorerWidth + (showExplorerInspector ? inspectorWidth : 0) }}
+                className="relative z-30 overflow-visible h-full shrink-0 border-r border-slate-700/80 bg-slate-950/95 backdrop-blur flex"
+                style={{ width: explorerWidth  }}
             >
                 <div className="h-full border-r border-slate-700 flex flex-col" style={{ width: explorerWidth }}>
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
@@ -1415,7 +1415,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
                 <div className="h-full w-1.5 cursor-col-resize bg-transparent" onMouseDown={() => { resizingRef.current = true; }} />
 
-                {showExplorerInspector && <div className="h-full" style={{ width: inspectorWidth }}>
+                {showExplorerInspector && <div className="absolute left-full top-0 h-full z-40" style={{ width: inspectorWidth }}>
                     <div className="h-full bg-[#070b15]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
                         <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
                             <div className="flex items-center justify-between px-3 py-2.5">
