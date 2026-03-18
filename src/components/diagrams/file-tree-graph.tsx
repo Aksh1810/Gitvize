@@ -1232,7 +1232,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 quality: "default",
                 randomize: true,
                 animate: true,
-                animationDuration: 1000,
+                animationDuration: 500,
                 fit: true,
                 nodeRepulsion: repulsion,
                 idealEdgeLength: edgeLen,
