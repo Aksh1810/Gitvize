@@ -1473,7 +1473,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
             <div className="relative flex-1 h-full">
                 <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                    <div className="flex items-center gap-3 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
+                    <div className="flex items-center gap-1 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
                         <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>
                         <span className="text-slate-600">|</span>
                         <span><strong className="text-slate-100">{elements.edges.length}</strong> edges</span>
@@ -1486,7 +1486,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         >
                             <Search className="w-4 h-4" />
                         </button>
-                        <div className={`ml-2 overflow-hidden transition-all duration-200 ${showSearch ? "max-w-[180px] opacity-100" : "max-w-0 opacity-0"}`}>
+                        <div className={`${showSearch ? "ml-2 max-w-[180px] opacity-100" : "ml-0 max-w-0 opacity-0"} overflow-hidden transition-all duration-200`}>
                             <div className="relative">
                                 <input
                                     type="text"
@@ -1590,7 +1590,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </div>
 
                 {fileTypeLegend.length > 0 && (
-                    <div className="absolute bottom-8 left-3 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-2">
+                    <div className="absolute bottom-4 left-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-2">
                         <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1.5">File Types</div>
                         <div className="space-y-1">
                             {fileTypeLegend.map(({ ext, count, color }) => (
