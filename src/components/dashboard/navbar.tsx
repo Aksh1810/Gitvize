@@ -8,9 +8,11 @@ import {
     Share2,
     Star,
     Sparkles,
+    MessageCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { transitions } from "@/lib/motion";
 
 interface NavbarProps {
     owner: string;
@@ -54,6 +56,9 @@ export default function Navbar({
     return (
         <motion.nav
             className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-2xl"
+            initial={{ y: -18, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={transitions.soft}
             style={{ backgroundColor: background, borderColor, boxShadow: shadow, borderBottomWidth: "1px" }}
         >
             <div className="absolute inset-0 nav-sheen" />
@@ -64,7 +69,7 @@ export default function Navbar({
                     className="flex items-center gap-3 group"
                 >
                     <div className="relative">
-                        <div className="relative w-9 h-9 rounded-2xl bg-black/70 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] flex items-center justify-center">
+                        <div className="relative w-9 h-9 rounded-2xl bg-black/70 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] flex items-center justify-center interactive-lift">
                             <GitBranch className="w-4 h-4 text-white/85 group-hover:text-white transition-colors" />
                         </div>
                     </div>
@@ -74,19 +79,24 @@ export default function Navbar({
                 </Link>
 
                 {/* Breadcrumb */}
-                <div className="hidden md:flex items-center gap-2 text-sm">
+                <div className="hidden md:flex items-center gap-2 ui-body">
                     <a
                         href={`https://github.com/${owner}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-3 py-1 rounded-full pro-muted-chip shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] text-muted-foreground hover:text-foreground transition-colors"
+                        className="px-3 py-1 rounded-full border border-white/14 bg-white/[0.03] text-muted-foreground hover:text-foreground transition-colors"
                     >
                         {owner}
                     </a>
                     <span className="text-muted-foreground/50">/</span>
-                    <span className="text-muted-foreground">
+                    <a
+                        href={`https://github.com/${owner}/${repo}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1 rounded-full border border-white/14 bg-white/[0.03] text-muted-foreground hover:text-foreground transition-colors"
+                    >
                         {repo}
-                    </span>
+                    </a>
                 </div>
 
                 {/* Actions */}
@@ -99,7 +109,7 @@ export default function Navbar({
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="pro-control pro-focus-ring text-xs"
+                            className="pro-control pro-focus-ring ui-micro"
                         >
                             <Star className="w-4 h-4 mr-1.5 text-amber-200" />
                             <span className="hidden sm:inline">Star</span>
@@ -110,17 +120,17 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={onAISettings}
-                        className="pro-control pro-focus-ring text-xs"
+                        className="pro-control pro-focus-ring ui-micro"
                     >
                         <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
-                        <span className="hidden sm:inline">AI Key</span>
+                        <span className="hidden sm:inline">AI</span>
                     </Button>
 
                     <Button
                         variant="ghost"
                         size="sm"
                         onClick={onExport}
-                        className="pro-control pro-focus-ring text-xs"
+                        className="pro-control pro-focus-ring ui-micro"
                     >
                         <Download className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Export</span>
@@ -130,7 +140,7 @@ export default function Navbar({
                         variant="ghost"
                         size="sm"
                         onClick={handleShare}
-                        className="pro-control pro-focus-ring text-xs"
+                        className="pro-control pro-focus-ring ui-micro"
                     >
                         <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
                         <span className="hidden sm:inline">Share</span>

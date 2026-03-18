@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import cytoscape from "cytoscape";
+import { List, type RowComponentProps } from "react-window";
 // @ts-expect-error fcose is an extension package without bundled TS types.
 import fcose from "cytoscape-fcose";
 import { getFileColor } from "@/lib/file-icons";
@@ -9,7 +10,7 @@ import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/s
 import type { TreeItem, FileNodeData } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, PanelLeftClose, PanelLeftOpen, Filter } from "lucide-react";
+import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
 import "prismjs/components/prism-javascript";
@@ -48,6 +49,7 @@ interface FileTreeGraphProps {
     tree: TreeItem[];
     owner: string;
     repo: string;
+    fileTypeLegend?: Array<{ ext: string; count: number; color: string }>;
 }
 
 interface ExplorerNode {
@@ -58,6 +60,29 @@ interface ExplorerNode {
     size?: number;
     extension?: string;
 }
+
+interface FlatExplorerRow {
+    path: string;
+    name: string;
+    depth: number;
+    type: "folder" | "file";
+    hasChildren: boolean;
+    isExpanded: boolean;
+    extension?: string;
+    size?: number;
+}
+
+interface CodeLineRow {
+    lineNumber: number;
+    raw: string;
+    html: string | null;
+    indentLevel: number;
+}
+
+const EXPLORER_ROW_HEIGHT = 30;
+const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
+const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
+const CODE_ROW_HEIGHT = 24;
 
 const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = {
     class: { color: "#f59e0b", shape: "hexagon" },
@@ -82,11 +107,15 @@ const BINARY_EXTENSIONS = new Set([
     "lock",
 ]);
 
-export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps) {
+export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const cyRef = useRef<cytoscape.Core | null>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
-    const codeScrollRef = useRef<HTMLDivElement>(null);
+    const codePanelRef = useRef<HTMLDivElement>(null);
+    const codeListRef = useRef<{
+        element: HTMLDivElement | null;
+        scrollToRow: (config: { index: number; align?: "auto" | "center" | "end" | "smart" | "start"; behavior?: "auto" | "instant" | "smooth" }) => void;
+    } | null>(null);
     const [selectedFile, setSelectedFile] = useState<FileNodeData | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [fileContent, setFileContent] = useState<string | null>(null);
@@ -94,10 +123,12 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const [fileError, setFileError] = useState<string | null>(null);
     const [symbolFocus, setSymbolFocus] = useState<string | null>(null);
     const [focusLine, setFocusLine] = useState<number | null>(null);
+    const [activeLine, setActiveLine] = useState(1);
+    const [codeViewportHeight, setCodeViewportHeight] = useState(520);
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols] = useState(true);
+    const [showSymbols, setShowSymbols] = useState(true);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(true);
     const [showImportsEdges, setShowImportsEdges] = useState(true);
@@ -114,21 +145,30 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     });
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
-    const [showExplorer, setShowExplorer] = useState(false);
+    const [showExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
-    const [explorerWidth, setExplorerWidth] = useState(220);
+    const [explorerWidth, setExplorerWidth] = useState(180);
+    const [explorerViewportHeight, setExplorerViewportHeight] = useState(560);
     const [showRightFilters, setShowRightFilters] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
     const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
+    const [symbolFiltersOpen, setSymbolFiltersOpen] = useState(true);
     const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(true);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
+    const [treeFocusPath, setTreeFocusPath] = useState<string>("");
+    const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const resizingRef = useRef(false);
-    const explorerWidthRef = useRef(220);
+    const explorerWidthRef = useRef(180);
+    const explorerBodyRef = useRef<HTMLDivElement>(null);
+    const explorerListRef = useRef<{
+        element: HTMLDivElement | null;
+        scrollToRow: (config: { index: number; align?: "auto" | "center" | "end" | "smart" | "start"; behavior?: "auto" | "instant" | "smooth" }) => void;
+    } | null>(null);
     const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
         symbols: [],
         references: [],
     });
-    const inspectorWidth = 360;
+    const inspectorWidth = 440;
     const visibilityRef = useRef({
         showRoot: true,
         showFolders: true,
@@ -209,6 +249,94 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         });
     }, []);
 
+    const explorerRows = useMemo<FlatExplorerRow[]>(() => {
+        const rows: FlatExplorerRow[] = [];
+
+        const walk = (node: ExplorerNode, depth: number) => {
+            const hasChildren = Boolean(node.children && node.children.length > 0);
+            const isExpanded = node.type === "folder" ? expandedFolders.has(node.path) : false;
+            rows.push({
+                path: node.path,
+                name: node.name,
+                depth,
+                type: node.type,
+                hasChildren,
+                isExpanded,
+                extension: node.extension,
+                size: node.size,
+            });
+
+            if (node.type === "folder" && hasChildren && isExpanded) {
+                node.children!.forEach((child) => walk(child, depth + 1));
+            }
+        };
+
+        walk(explorerTree, 0);
+        return rows;
+    }, [expandedFolders, explorerTree]);
+
+    const explorerRowIndexByPath = useMemo(() => {
+        const map = new Map<string, number>();
+        explorerRows.forEach((row, index) => {
+            map.set(row.path, index);
+        });
+        return map;
+    }, [explorerRows]);
+
+    const repoScopedExpandedKey = `${EXPLORER_EXPANDED_STORAGE_PREFIX}:${owner}/${repo}`;
+    const repoScopedScrollKey = `${EXPLORER_SCROLL_STORAGE_PREFIX}:${owner}/${repo}`;
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const rawExpanded = localStorage.getItem(repoScopedExpandedKey);
+            if (rawExpanded) {
+                const parsed = JSON.parse(rawExpanded) as string[];
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    setExpandedFolders(new Set(parsed));
+                }
+            }
+            const rawScroll = localStorage.getItem(repoScopedScrollKey);
+            if (rawScroll) {
+                const parsedOffset = Number(rawScroll);
+                if (Number.isFinite(parsedOffset)) {
+                    setExplorerScrollOffset(parsedOffset);
+                }
+            }
+        } catch {
+            // Ignore persisted UI state parsing issues.
+        }
+    }, [repoScopedExpandedKey, repoScopedScrollKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        localStorage.setItem(repoScopedExpandedKey, JSON.stringify(Array.from(expandedFolders)));
+    }, [expandedFolders, repoScopedExpandedKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        localStorage.setItem(repoScopedScrollKey, String(explorerScrollOffset));
+    }, [explorerScrollOffset, repoScopedScrollKey]);
+
+    useEffect(() => {
+        if (!showExplorer || !explorerBodyRef.current) return;
+        const observer = new ResizeObserver((entries) => {
+            const [entry] = entries;
+            if (!entry) return;
+            const nextHeight = Math.max(180, Math.floor(entry.contentRect.height));
+            setExplorerViewportHeight(nextHeight);
+        });
+        observer.observe(explorerBodyRef.current);
+        return () => observer.disconnect();
+    }, [showExplorer]);
+
+    useEffect(() => {
+        if (!showExplorer) return;
+        const element = explorerListRef.current?.element;
+        if (!element) return;
+        element.scrollTop = explorerScrollOffset;
+    }, [showExplorer, explorerScrollOffset]);
+
     useEffect(() => {
         explorerWidthRef.current = explorerWidth;
     }, [explorerWidth]);
@@ -216,7 +344,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
             if (!resizingRef.current) return;
-            const nextWidth = Math.min(340, Math.max(180, event.clientX));
+            const nextWidth = Math.min(260, Math.max(150, event.clientX));
             setExplorerWidth(nextWidth);
         };
 
@@ -278,6 +406,37 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         }
     }, [selectedFile, fetchFileContent]);
 
+    const highlightedLines = useMemo<CodeLineRow[]>(() => {
+        if (!fileContent) return [];
+        const ext = selectedFile?.extension?.toLowerCase() ?? "";
+        const lang = extToPrismLang[ext];
+        const grammar = lang ? Prism.languages[lang] : null;
+        const rawLines = fileContent.split("\n");
+        const highlighted = grammar ? Prism.highlight(fileContent, grammar, lang).split("\n") : [];
+
+        return rawLines.map((raw, index) => {
+            const leadingWhitespace = raw.match(/^[\t ]+/)?.[0] ?? "";
+            const spaces = leadingWhitespace.replace(/\t/g, "    ").length;
+            return {
+                lineNumber: index + 1,
+                raw,
+                html: grammar ? (highlighted[index] ?? "") : null,
+                indentLevel: Math.min(10, Math.floor(spaces / 4)),
+            };
+        });
+    }, [fileContent, selectedFile?.extension]);
+
+    useEffect(() => {
+        if (!showExplorerInspector || !codePanelRef.current) return;
+        const observer = new ResizeObserver((entries) => {
+            const [entry] = entries;
+            if (!entry) return;
+            setCodeViewportHeight(Math.max(220, Math.floor(entry.contentRect.height)));
+        });
+        observer.observe(codePanelRef.current);
+        return () => observer.disconnect();
+    }, [showExplorerInspector]);
+
     useEffect(() => {
         if (!fileContent || !symbolFocus) {
             setFocusLine(null);
@@ -291,14 +450,23 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     }, [fileContent, symbolFocus]);
 
     useEffect(() => {
-        if (!focusLine || !codeScrollRef.current) return;
-        const container = codeScrollRef.current;
-        const target = container.querySelector(`[data-line="${focusLine}"]`);
-        if (target instanceof HTMLElement) {
-            const targetTop = target.offsetTop - container.clientHeight * 0.4;
-            container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
-        }
+        if (!focusLine) return;
+        setActiveLine(focusLine);
     }, [focusLine]);
+
+    useEffect(() => {
+        if (!highlightedLines.length) return;
+        const bounded = Math.min(Math.max(activeLine, 1), highlightedLines.length);
+        if (bounded !== activeLine) {
+            setActiveLine(bounded);
+            return;
+        }
+        codeListRef.current?.scrollToRow({
+            index: bounded - 1,
+            align: "smart",
+            behavior: "auto",
+        });
+    }, [activeLine, highlightedLines.length]);
 
     useEffect(() => {
         let cancelled = false;
@@ -607,6 +775,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         const symbolRefs = elements.edges.filter((e) => e.data && ["imports", "calls", "extends", "implements"].includes(String((e.data as Record<string, unknown>).type ?? ""))).length;
         const symbolKinds = new Map<string, number>();
         const symbolTotals = new Map<string, number>();
+        const edgeTypeCounts = new Map<string, number>();
         // Count unique extensions
         const extMap = new Map<string, number>();
         elements.nodes.forEach((n) => {
@@ -620,6 +789,13 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 symbolKinds.set(kind, (symbolKinds.get(kind) || 0) + 1);
             }
         });
+        elements.edges.forEach((edge) => {
+            const data = (edge.data ?? {}) as Record<string, unknown>;
+            const type = typeof data.type === "string" ? data.type : null;
+            if (type) {
+                edgeTypeCounts.set(type, (edgeTypeCounts.get(type) || 0) + 1);
+            }
+        });
         symbolGraph.symbols.forEach((symbol) => {
             symbolTotals.set(symbol.kind, (symbolTotals.get(symbol.kind) || 0) + 1);
         });
@@ -628,7 +804,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 8)
             .map(([ext, count]) => ({ ext, count, color: getFileColor(`file.${ext}`) }));
-        return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals };
+        return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
     const applyVisibility = useCallback((targetCy?: cytoscape.Core | null) => {
@@ -737,9 +913,29 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
         }
     }, [isLargeRepo]);
 
-    const handleExplorerFileSelect = useCallback((node: ExplorerNode) => {
-        if (node.type !== "file") return;
-        setShowExplorer(true);
+    const expandParentFolders = useCallback((path: string) => {
+        const parts = path.split("/");
+        setExpandedFolders((prev) => {
+            const next = new Set(prev);
+            next.add("");
+            for (let index = 1; index < parts.length; index += 1) {
+                next.add(parts.slice(0, index).join("/"));
+            }
+            return next;
+        });
+    }, []);
+
+    const focusExplorerPath = useCallback((path: string) => {
+        setTreeFocusPath(path);
+        const nextIndex = explorerRowIndexByPath.get(path);
+        if (nextIndex !== undefined) {
+            explorerListRef.current?.scrollToRow({ index: nextIndex, align: "smart", behavior: "auto" });
+        }
+    }, [explorerRowIndexByPath]);
+
+    const handleExplorerFileSelect = useCallback((node: { name: string; path: string; extension?: string; size?: number }) => {
+        expandParentFolders(node.path);
+        setTreeFocusPath(node.path);
         setShowExplorerInspector(true);
         setSelectedFile({
             label: node.name,
@@ -760,7 +956,79 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 easing: "ease-out-quad",
             });
         }
-    }, [focusNodeNeighborhood]);
+    }, [expandParentFolders, focusNodeNeighborhood]);
+
+    const handleExplorerKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (!showExplorer || explorerRows.length === 0) return;
+
+        const activePath = treeFocusPath || selectedFile?.path || "";
+        const activeIndex = explorerRowIndexByPath.get(activePath) ?? 0;
+        const activeRow = explorerRows[activeIndex];
+
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            const nextIndex = Math.min(explorerRows.length - 1, activeIndex + 1);
+            focusExplorerPath(explorerRows[nextIndex].path);
+            return;
+        }
+
+        if (event.key === "ArrowUp") {
+            event.preventDefault();
+            const nextIndex = Math.max(0, activeIndex - 1);
+            focusExplorerPath(explorerRows[nextIndex].path);
+            return;
+        }
+
+        if (!activeRow) return;
+
+        if (event.key === "ArrowRight") {
+            event.preventDefault();
+            if (activeRow.type === "folder") {
+                if (!activeRow.isExpanded) {
+                    toggleFolder(activeRow.path);
+                    return;
+                }
+                const childIndex = activeIndex + 1;
+                if (explorerRows[childIndex]?.depth === activeRow.depth + 1) {
+                    focusExplorerPath(explorerRows[childIndex].path);
+                }
+            }
+            return;
+        }
+
+        if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            if (activeRow.type === "folder" && activeRow.isExpanded) {
+                toggleFolder(activeRow.path);
+                return;
+            }
+            const parentPath = getParentPath(activeRow.path);
+            if (parentPath !== null && explorerRowIndexByPath.has(parentPath)) {
+                focusExplorerPath(parentPath);
+            }
+            return;
+        }
+
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (activeRow.type === "folder") {
+                toggleFolder(activeRow.path);
+            } else {
+                handleExplorerFileSelect({
+                    name: activeRow.name,
+                    path: activeRow.path,
+                    extension: activeRow.extension,
+                    size: activeRow.size,
+                });
+            }
+        }
+    }, [showExplorer, explorerRows, treeFocusPath, selectedFile?.path, explorerRowIndexByPath, focusExplorerPath, toggleFolder, handleExplorerFileSelect]);
+
+    useEffect(() => {
+        if (!selectedFile?.path) return;
+        expandParentFolders(selectedFile.path);
+        setTreeFocusPath(selectedFile.path);
+    }, [selectedFile?.path, expandParentFolders]);
 
     // Search handler
     const handleSearch = useCallback((query: string) => {
@@ -964,7 +1232,7 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 quality: "default",
                 randomize: true,
                 animate: true,
-                animationDuration: 1000,
+                animationDuration: 500,
                 fit: true,
                 nodeRepulsion: repulsion,
                 idealEdgeLength: edgeLen,
@@ -993,7 +1261,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
             if (data.type === "file") {
                 setSymbolFocus(null);
                 setFocusLine(null);
-                setShowExplorer(true);
                 setShowExplorerInspector(true);
                 setSelectedFile({
                     label: data.label,
@@ -1008,7 +1275,6 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
                 const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
                 setSymbolFocus(String(data.label));
                 setFocusLine(null);
-                setShowExplorer(true);
                 setShowExplorerInspector(true);
                 setSelectedFile({
                     label: fileLabel,
@@ -1080,441 +1346,272 @@ export default function FileTreeGraph({ tree, owner, repo }: FileTreeGraphProps)
     const handleFit = () => cyRef.current?.fit(undefined, 50);
 
     return (
-        <div className="relative w-full h-full">
-            {/* Top right controls */}
-            <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                <div className="flex items-center gap-3 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
-                    <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>
-                    <span className="text-slate-600">|</span>
-                    <span><strong className="text-slate-100">{elements.edges.length}</strong> edges</span>
-                </div>
-                <button
-                    onClick={() => setShowRightFilters((prev) => !prev)}
-                    className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.35)]" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
-                    aria-label="Toggle filters"
-                >
-                    <Filter className="w-4 h-4" />
-                </button>
-                <div className="relative flex items-center">
-                    <button
-                        onClick={() => setShowSearch((prev) => !prev)}
-                        className={`flex items-center justify-center w-8 h-8 rounded-md border ${showSearch ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
-                        aria-label="Toggle search"
-                    >
-                        <Search className="w-4 h-4" />
-                    </button>
-                    <div className={`ml-2 overflow-hidden transition-all duration-200 ${showSearch ? "max-w-[140px] opacity-100" : "max-w-0 opacity-0"}`}>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                placeholder="Search"
-                                value={searchQuery}
-                                onChange={(e) => handleSearch(e.target.value)}
-                                className="pl-3 pr-7 h-8 w-[140px] text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50"
-                            />
-                            {searchQuery && (
-                                <Button
-                                    onClick={() => handleSearch("")}
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                                >
-                                    <X className="w-3 h-3" />
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {(symbolLoading || symbolError) && (
-                <div className="absolute top-14 right-3 z-10 px-3 py-1.5 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
-                    {symbolLoading ? "Analyzing symbols..." : symbolError}
-                </div>
-            )}
-
-            {/* Right filters drawer */}
-            <div className={`absolute top-0 right-0 bottom-0 z-30 transition-transform duration-200 ${showRightFilters ? "translate-x-0" : "translate-x-full"}`}>
-                <div className="h-full w-64 bg-slate-900/95 backdrop-blur border-l border-slate-700 flex flex-col">
-                    <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-700">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
-                        <button
-                            onClick={() => setShowRightFilters(false)}
-                            className="text-slate-400 hover:text-slate-200"
-                            aria-label="Close filters"
-                        >
-                            <X className="w-4 h-4" />
-                        </button>
-                    </div>
-                    <div className="flex-1 overflow-auto px-2.5 py-2.5 text-[10px] font-mono text-slate-300">
-                        <button
-                            className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
-                            onClick={() => setNodeFiltersOpen((prev) => !prev)}
-                        >
-                            <span>Node Types</span>
-                            {nodeFiltersOpen ? (
-                                <ChevronDown className="w-3 h-3" />
-                            ) : (
-                                <ChevronRight className="w-3 h-3" />
-                            )}
-                        </button>
-                        {nodeFiltersOpen && (
-                            <div className="space-y-1.5 mt-1.5">
-                                {[
-                                    { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-indigo-500" },
-                                    { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
-                                    { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
-                                ].map((item) => (
-                                    <button
-                                        key={item.key}
-                                        className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${item.on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                        onClick={() => item.setOn((prev: boolean) => !prev)}
-                                    >
-                                        <span className={`h-2.5 w-2.5 rounded-full ${item.color} shadow-[0_0_8px_rgba(99,102,241,0.35)]`} />
-                                        <span className="flex-1 text-left text-slate-200">{item.label}</span>
-                                        <span className="text-slate-500">{item.count}</span>
-                                        <span className={`ml-1 h-2 w-2 rounded-full ${item.on ? "bg-purple-500" : "bg-slate-700"}`} />
-                                    </button>
-                                ))}
-
-                                {SYMBOL_KIND_ORDER.map((kind) => {
-                                    const count = clusterInfo.symbolTotals.get(kind) || 0;
-                                    const on = symbolKindVisibility[kind];
-                                    const color = SYMBOL_KIND_STYLE[kind]?.color ?? "#22d3ee";
-                                    return (
-                                        <button
-                                            key={kind}
-                                            className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                            onClick={() =>
-                                                setSymbolKindVisibility((prev) => ({
-                                                    ...prev,
-                                                    [kind]: !prev[kind],
-                                                }))
-                                            }
-                                            disabled={!showSymbols}
-                                        >
-                                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
-                                            <span className="flex-1 text-left text-slate-200 capitalize">{kind}</span>
-                                            <span className="text-slate-500">{count}</span>
-                                            <span className={`ml-1 h-2 w-2 rounded-full ${on ? "bg-purple-500" : "bg-slate-700"}`} />
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-
-                        <button
-                            className="w-full flex items-center justify-between rounded px-2 py-1.5 mt-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60"
-                            onClick={() => setEdgeFiltersOpen((prev) => !prev)}
-                        >
-                            <span>Edge Types</span>
-                            {edgeFiltersOpen ? (
-                                <ChevronDown className="w-3 h-3" />
-                            ) : (
-                                <ChevronRight className="w-3 h-3" />
-                            )}
-                        </button>
-                        {edgeFiltersOpen && (
-                            <div className="space-y-1.5 mt-1.5">
-                                <button
-                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                    onClick={() => setShowContainsEdges((prev) => !prev)}
-                                >
-                                    <span className="h-1.5 w-7 rounded-full bg-emerald-400" />
-                                    <span className="flex-1 text-left text-slate-200">Contains</span>
-                                    <span className={`ml-1 h-2 w-2 rounded-full ${showContainsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                                </button>
-                                <button
-                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                    onClick={() => setShowDefinesEdges((prev) => !prev)}
-                                    disabled={!showSymbols}
-                                >
-                                    <span className="h-1.5 w-7 rounded-full bg-cyan-400" />
-                                    <span className="flex-1 text-left text-slate-200">Defines</span>
-                                    <span className={`ml-1 h-2 w-2 rounded-full ${showDefinesEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                                </button>
-                                <button
-                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                    onClick={() => setShowImportsEdges((prev) => !prev)}
-                                    disabled={!showSymbols}
-                                >
-                                    <span className="h-1.5 w-7 rounded-full bg-blue-500" />
-                                    <span className="flex-1 text-left text-slate-200">Imports</span>
-                                    <span className={`ml-1 h-2 w-2 rounded-full ${showImportsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                                </button>
-                                <button
-                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                    onClick={() => setShowCallsEdges((prev) => !prev)}
-                                    disabled={!showSymbols}
-                                >
-                                    <span className="h-1.5 w-7 rounded-full bg-violet-500" />
-                                    <span className="flex-1 text-left text-slate-200">Calls</span>
-                                    <span className={`ml-1 h-2 w-2 rounded-full ${showCallsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                                </button>
-                                <button
-                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                    onClick={() => setShowExtendsEdges((prev) => !prev)}
-                                    disabled={!showSymbols}
-                                >
-                                    <span className="h-1.5 w-7 rounded-full bg-orange-500" />
-                                    <span className="flex-1 text-left text-slate-200">Extends</span>
-                                    <span className={`ml-1 h-2 w-2 rounded-full ${showExtendsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                                </button>
-                                <button
-                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
-                                    onClick={() => setShowImplementsEdges((prev) => !prev)}
-                                    disabled={!showSymbols}
-                                >
-                                    <span className="h-1.5 w-7 rounded-full bg-pink-500" />
-                                    <span className="flex-1 text-left text-slate-200">Implements</span>
-                                    <span className={`ml-1 h-2 w-2 rounded-full ${showImplementsEdges ? "bg-purple-500" : "bg-slate-700"}`} />
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* File Explorer Panel */}
-            {showExplorer && (
-            <div className="absolute top-0 bottom-0 left-0 z-20">
-                <div
-                    className="h-full bg-slate-900/95 backdrop-blur border-r border-slate-700 flex flex-col"
-                    style={{ width: explorerWidth }}
-                >
+        <div className="relative w-full h-full min-h-[800px] flex">
+            <div
+                className="relative z-30 overflow-visible h-full shrink-0 border-r border-slate-700/80 bg-slate-950/95 backdrop-blur flex"
+                style={{ width: explorerWidth  }}
+            >
+                <div className="h-full border-r border-slate-700 flex flex-col" style={{ width: explorerWidth }}>
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Explorer</span>
-                        <div className="flex items-center gap-1">
-                            <button
-                                onClick={() => setShowExplorerInspector((prev) => !prev)}
-                                className="text-slate-400 hover:text-slate-200"
-                                aria-label="Toggle code inspector"
-                                title="Toggle code inspector"
-                            >
-                                {showExplorerInspector ? (
-                                    <ChevronDown className="w-4 h-4" />
-                                ) : (
-                                    <ChevronRight className="w-4 h-4" />
-                                )}
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setShowExplorer(false);
-                                    setShowExplorerInspector(false);
-                                }}
-                                className="text-slate-400 hover:text-slate-200"
-                                aria-label="Hide explorer"
-                            >
-                                <PanelLeftClose className="w-4 h-4" />
-                            </button>
-                        </div>
+                        <span className="ui-eyebrow text-slate-400">Explorer</span>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setShowExplorerInspector((prev) => !prev)}
+                            className="h-7 w-7 text-slate-400 hover:text-slate-200"
+                            aria-label={showExplorerInspector ? "Hide inspector" : "Show inspector"}
+                        >
+                            {showExplorerInspector ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
+                        </Button>
                     </div>
-                    <div className="flex-1 overflow-auto px-2 py-2 text-[11px] font-mono text-slate-300">
-                        {(() => {
-                            const renderNode = (node: ExplorerNode, depth: number) => {
-                                const isFolder = node.type === "folder";
-                                const isExpanded = expandedFolders.has(node.path);
-                                const hasChildren = node.children && node.children.length > 0;
+                    <div className="relative flex-1 overflow-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
+                        <List
+                            listRef={explorerListRef}
+                            style={{ height: explorerViewportHeight, width: explorerWidth }}
+                            rowCount={explorerRows.length}
+                            rowHeight={EXPLORER_ROW_HEIGHT}
+                            overscanCount={10}
+                            rowComponent={({ index, style, ariaAttributes, rows }: RowComponentProps<{ rows: FlatExplorerRow[] }>) => {
+                                const row = rows[index];
+                                const isFolder = row.type === "folder";
+                                const isSelected = selectedFile?.path === row.path;
+                                const isFocused = treeFocusPath === row.path;
+                                const iconColor = isFolder ? "#f472b6" : getFileColor(row.name);
                                 return (
-                                    <div key={node.path || "root"}>
+                                    <div style={style} key={row.path || "root"} className="px-1.5 py-0.5" {...ariaAttributes}>
                                         <button
-                                            className="w-full flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-slate-800/70"
-                                            style={{ paddingLeft: 6 + depth * 12 }}
+                                            className={`group relative w-full h-[28px] flex items-center gap-1.5 rounded-md border transition-colors duration-150 ${isSelected ? "bg-indigo-500/20 border-indigo-400/50 text-white shadow-[inset_2px_0_0_0_#818cf8]" : "border-transparent text-slate-300 hover:bg-slate-800/75 hover:text-slate-100"} ${isFocused && !isSelected ? "ring-1 ring-slate-500/70" : ""}`}
+                                            style={{ paddingLeft: 6 + row.depth * 14 }}
                                             onClick={() => {
+                                                setTreeFocusPath(row.path);
                                                 if (isFolder) {
-                                                    toggleFolder(node.path);
+                                                    toggleFolder(row.path);
                                                 } else {
-                                                    handleExplorerFileSelect(node);
+                                                    handleExplorerFileSelect({ name: row.name, path: row.path, extension: row.extension, size: row.size });
                                                 }
                                             }}
                                         >
+                                            {Array.from({ length: row.depth }).map((_, guideIdx) => (
+                                                <span key={`${row.path}-guide-${guideIdx}`} className="absolute top-1 bottom-1 w-px bg-slate-700/40" style={{ left: 12 + guideIdx * 14 }} />
+                                            ))}
                                             {isFolder ? (
-                                                hasChildren ? (
-                                                    isExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />
-                                                ) : (
-                                                    <span className="w-3 h-3" />
-                                                )
-                                            ) : (
-                                                <span className="w-3 h-3" />
-                                            )}
-                                            {isFolder ? (
-                                                <Folder className="w-3.5 h-3.5" style={{ color: "#f472b6" }} />
-                                            ) : (
-                                                <File className="w-3.5 h-3.5" style={{ color: getFileColor(node.name) }} />
-                                            )}
-                                            <span className="truncate text-left">{node.name}</span>
+                                                row.hasChildren ? <span className={`transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}><ChevronRight className="w-3 h-3 text-slate-400" /></span> : <span className="w-3 h-3" />
+                                            ) : <span className="w-3 h-3" />}
+                                            {isFolder ? (row.isExpanded ? <FolderOpen className="w-3.5 h-3.5" style={{ color: iconColor }} /> : <Folder className="w-3.5 h-3.5" style={{ color: iconColor }} />) : getExplorerFileIcon(row.name)}
+                                            <span className="truncate text-left">{row.name || repo}</span>
                                         </button>
-                                        {isFolder && isExpanded && hasChildren && (
-                                            <div>
-                                                {node.children!.map((child) => renderNode(child, depth + 1))}
-                                            </div>
-                                        )}
                                     </div>
                                 );
-                            };
-
-                            return renderNode(explorerTree, 0);
-                        })()}
+                            }}
+                            rowProps={{ rows: explorerRows }}
+                            onResize={(size) => setExplorerViewportHeight(Math.max(180, Math.floor(size.height)))}
+                            onScroll={(event) => {
+                                const target = event.currentTarget;
+                                if (target instanceof HTMLDivElement) setExplorerScrollOffset(target.scrollTop);
+                            }}
+                        />
                     </div>
                 </div>
-                <div
-                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-transparent"
-                    onMouseDown={() => {
-                        resizingRef.current = true;
-                    }}
-                />
-            </div>
-            )}
 
-            {/* Explorer Inspector Pane */}
-            {showExplorer && showExplorerInspector && (
-                <div
-                    className="absolute top-0 bottom-0 z-20"
-                    style={{ left: explorerWidth, width: inspectorWidth }}
-                >
-                    <div className="h-full bg-[#0a0e1a]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
-                        <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Inspector</span>
-                                <span className="text-[11px] font-semibold truncate">
-                                    {selectedFile?.label ?? ""}
-                                </span>
-                                {selectedFile?.extension && (
-                                    <Badge
-                                        variant="outline"
-                                        className="text-[9px] shrink-0"
-                                        style={{ borderColor: getFileColor(selectedFile.label) + "40", color: getFileColor(selectedFile.label) }}
-                                    >
-                                        .{selectedFile.extension}
-                                    </Badge>
-                                )}
-                            </div>
-                            <div className="flex items-center gap-1">
-                                {selectedFile && (
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="w-6 h-6 shrink-0"
-                                        onClick={() => setSelectedFile(null)}
-                                    >
-                                        <X className="w-3.5 h-3.5" />
-                                    </Button>
-                                )}
+                <div className="h-full w-1.5 cursor-col-resize bg-transparent" onMouseDown={() => { resizingRef.current = true; }} />
+
+                {showExplorerInspector && <div className="absolute left-full top-0 h-full z-40" style={{ width: inspectorWidth }}>
+                    <div className="h-full bg-[#070b15]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
+                        <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
+                            <div className="flex items-center justify-between px-3 py-2.5">
+                                <div className="min-w-0 flex items-center gap-1.5">
+                                    <span className="ui-eyebrow text-slate-400">Code Inspector</span>
+                                    <span className="ui-body font-semibold text-slate-100 truncate">{selectedFile?.label ?? ""}</span>
+                                </div>
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="w-6 h-6 shrink-0"
+                                    className="h-7 w-7 text-slate-400 hover:text-slate-200"
                                     onClick={() => setShowExplorerInspector(false)}
+                                    aria-label="Collapse inspector"
                                 >
-                                    <PanelLeftClose className="w-3.5 h-3.5" />
+                                    <X className="w-3.5 h-3.5" />
                                 </Button>
                             </div>
                         </div>
 
-                        {selectedFile && (
-                            <div className="px-3 py-2 border-b border-border/20 text-[10px] text-muted-foreground space-y-1">
-                                <div className="truncate">
-                                    <span className="font-medium text-foreground/80">Path:</span> {selectedFile.path}
-                                </div>
-                                {selectedFile.size !== undefined && (
-                                    <div>
-                                        <span className="font-medium text-foreground/80">Size:</span> {formatBytes(selectedFile.size)}
+                        <div className="flex-1 min-h-0 flex">
+                            <div className="flex-1 min-w-0 border-r border-slate-800/80 overflow-x-auto" ref={codePanelRef}>
+                                {fileLoading ? (
+                                    <div className="flex items-center justify-center h-full"><p className="ui-body text-slate-400">Loading file...</p></div>
+                                ) : fileError ? (
+                                    <div className="flex items-center justify-center h-full"><p className="ui-body text-slate-400 px-4 text-center">{fileError}</p></div>
+                                ) : fileContent !== null && selectedFile ? (
+                                    <List
+                                        listRef={codeListRef}
+                                        style={{ height: codeViewportHeight, width: "100%" }}
+                                        rowCount={highlightedLines.length}
+                                        rowHeight={CODE_ROW_HEIGHT}
+                                        overscanCount={14}
+                                        rowProps={{ rows: highlightedLines, activeLine, onLineSelect: (lineNumber: number) => setActiveLine(lineNumber) }}
+                                        rowComponent={({ index, style, ariaAttributes, rows, activeLine: currentActiveLine, onLineSelect }: RowComponentProps<{ rows: CodeLineRow[]; activeLine: number; onLineSelect: (lineNumber: number) => void }>) => {
+                                            const line = rows[index];
+                                            const isActive = currentActiveLine === line.lineNumber;
+                                            return (
+                                                <button type="button" style={style} {...ariaAttributes} onClick={() => onLineSelect(line.lineNumber)} className={`group relative min-w-full w-max flex items-center text-left font-mono text-[13px] leading-[1.62] ${isActive ? "bg-indigo-500/14" : "hover:bg-slate-800/40"}`}>
+                                                    <span className={`w-14 shrink-0 select-none text-right pr-3 border-r border-slate-800/70 ${isActive ? "text-indigo-200" : "text-slate-500 group-hover:text-slate-400"}`}>{line.lineNumber}</span>
+                                                    <span className="relative px-3 whitespace-pre text-left">
+                                                        {line.html ? <span className="relative z-[1] inline-block" dangerouslySetInnerHTML={{ __html: line.html || " " }} /> : <span className="relative z-[1] inline-block text-slate-200">{line.raw || " "}</span>}
+                                                    </span>
+                                                </button>
+                                            );
+                                        }}
+                                    />
+                                ) : (
+                                    <div className="flex items-center justify-center h-full"><div className="ui-body text-slate-500">Select a file to inspect</div></div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>}
+            </div>
+
+            <div className="relative flex-1 h-full">
+                <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                    <div className="flex items-center gap-1 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
+                        <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>
+                        <span className="text-slate-600">|</span>
+                        <span><strong className="text-slate-100">{elements.edges.length}</strong> edges</span>
+                    </div>
+                    <div className="relative flex items-center">
+                        <button
+                            onClick={() => setShowSearch((prev) => !prev)}
+                            className={`flex items-center justify-center w-8 h-8 rounded-md border ${showSearch ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
+                            aria-label="Toggle search"
+                        >
+                            <Search className="w-4 h-4" />
+                        </button>
+                        <div className={`${showSearch ? "ml-2 max-w-[180px] opacity-100" : "ml-0 max-w-0 opacity-0"} overflow-hidden transition-all duration-500`}>
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    placeholder="Search graph"
+                                    value={searchQuery}
+                                    onChange={(event) => handleSearch(event.target.value)}
+                                    className="pl-3 pr-7 h-8 w-[180px] text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40"
+                                />
+                                {searchQuery && (
+                                    <Button
+                                        onClick={() => handleSearch("")}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`} aria-label="Toggle filters"><Filter className="w-4 h-4" /></button>
+                </div>
+
+                <div className={`absolute top-0 right-0 bottom-0 z-20 transition-transform duration-900 ${showRightFilters ? "translate-x-0" : "translate-x-full"}`}>
+                    <div className="h-full w-55 bg-slate-900/95 backdrop-blur border-l border-slate-900 flex flex-col">
+                        <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-800">
+                            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
+                            <button onClick={() => setShowRightFilters(false)} className="text-slate-400 hover:text-slate-200" aria-label="Close filters">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-auto px-2.5 py-2.5 text-[10px] font-mono text-slate-300 space-y-3">
+                            <div>
+                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setNodeFiltersOpen((prev) => !prev)}>
+                                    <span>Node Types</span>
+                                    {nodeFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                </button>
+                                {nodeFiltersOpen && (
+                                    <div className="space-y-1.5 mt-1.5">
+                                        {[
+                                            { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-indigo-500" },
+                                            { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
+                                            { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
+                                        ].map((item) => (
+                                            <button key={item.key} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${item.on ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => item.setOn((prev: boolean) => !prev)}>
+                                                <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
+                                                <span className="flex-1 text-left text-slate-200">{item.label}</span>
+                                                <span className="text-slate-500">{item.count}</span>
+                                            </button>
+                                        ))}
                                     </div>
                                 )}
                             </div>
-                        )}
 
-                        <div className="flex-1 overflow-auto" ref={codeScrollRef}>
-                            {fileLoading ? (
-                                <div className="flex items-center justify-center h-full">
-                                    <div className="text-center">
-                                        <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                                        <p className="text-[10px] text-muted-foreground">Loading file...</p>
-                                    </div>
-                                </div>
-                            ) : fileError ? (
-                                <div className="flex items-center justify-center h-full">
-                                    <div className="text-center px-4">
-                                        <p className="text-[10px] text-muted-foreground">{fileError}</p>
-                                    </div>
-                                </div>
-                            ) : fileContent !== null && selectedFile ? (
-                                <pre className="text-[10px] leading-[1.55] font-mono" style={{ background: "transparent" }}>
-                                    <code>
-                                        {(() => {
-                                            const ext = selectedFile.extension?.toLowerCase() ?? "";
-                                            const lang = extToPrismLang[ext];
-                                            const grammar = lang && Prism.languages[lang];
-                                            const highlighted = grammar
-                                                ? Prism.highlight(fileContent!, grammar, lang)
-                                                : null;
-                                            const lines = highlighted
-                                                ? highlighted.split("\n")
-                                                : fileContent!.split("\n");
-                                            return lines.map((line, i) => (
-                                                <div
-                                                    key={i}
-                                                    data-line={i + 1}
-                                                    className={`flex group transition-colors duration-300 ${focusLine === i + 1 ? "bg-indigo-500/15 border-l-2 border-indigo-400/70" : "hover:bg-white/[0.03]"}`}
+                            <div>
+                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setSymbolFiltersOpen((prev) => !prev)}>
+                                    <span>Symbol Types</span>
+                                    {symbolFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                </button>
+                                {symbolFiltersOpen && (
+                                    <div className="space-y-1.5 mt-1.5">
+                                        
+                                        {SYMBOL_KIND_ORDER.map((kind) => {
+                                            const active = symbolKindVisibility[kind];
+                                            const kindColor = SYMBOL_KIND_STYLE[kind]?.color ?? "#94a3b8";
+                                            const visibleCount = clusterInfo.symbolKinds.get(kind) ?? 0;
+                                            const totalCount = clusterInfo.symbolTotals.get(kind) ?? visibleCount;
+                                            return (
+                                                <button
+                                                    key={kind}
+                                                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${active ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                                    onClick={() => setSymbolKindVisibility((prev) => ({ ...prev, [kind]: !prev[kind] }))}
                                                 >
-                                                    <span className="inline-block w-10 text-right pr-3 text-muted-foreground/40 select-none shrink-0 group-hover:text-muted-foreground/60">
-                                                        {i + 1}
-                                                    </span>
-                                                    {highlighted ? (
-                                                        <span
-                                                            className="flex-1 whitespace-pre pr-3 break-all"
-                                                            dangerouslySetInnerHTML={{ __html: line || " " }}
-                                                        />
-                                                    ) : (
-                                                        <span className="flex-1 text-slate-300 whitespace-pre pr-3 break-all">
-                                                            {line || " "}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            ));
-                                        })()}
-                                    </code>
-                                </pre>
-                            ) : (
-                                <div className="flex items-center justify-center h-full">
-                                    <div />
-                                </div>
-                            )}
+                                                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: kindColor }} />
+                                                    <span className="flex-1 text-left text-slate-200 capitalize">{kind}</span>
+                                                    <span className="text-slate-500">{totalCount}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setEdgeFiltersOpen((prev) => !prev)}>
+                                    <span>Edge Types</span>
+                                    {edgeFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                </button>
+                                {edgeFiltersOpen && (
+                                    <div className="space-y-1.5 mt-1.5">
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowContainsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-emerald-400" /><span className="flex-1 text-left text-slate-200">Contains</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("contains") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowDefinesEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-cyan-400" /><span className="flex-1 text-left text-slate-200">Defines</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("defines") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImportsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-blue-500" /><span className="flex-1 text-left text-slate-200">Imports</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("imports") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowCallsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-violet-500" /><span className="flex-1 text-left text-slate-200">Calls</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("calls") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowExtendsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-fuchsia-500" /><span className="flex-1 text-left text-slate-200">Extends</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("extends") ?? 0}</span></button>
+                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-slate-800/70 border-slate-600" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImplementsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-rose-500" /><span className="flex-1 text-left text-slate-200">Implements</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("implements") ?? 0}</span></button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
-            )}
 
-            {!showExplorer && (
-                <button
-                    onClick={() => {
-                        setShowExplorer(true);
-                        setShowExplorerInspector(false);
-                    }}
-                    className="absolute top-3 left-3 z-20 flex items-center gap-2 px-2 py-1.5 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300 hover:text-white"
-                >
-                    <PanelLeftOpen className="w-4 h-4" />
-                    Explorer
-                </button>
-            )}
+                {fileTypeLegend.length > 0 && (
+                    <div className="absolute bottom-4 left-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1.5">File Types</div>
+                        <div className="space-y-1">
+                            {fileTypeLegend.map(({ ext, count, color }) => (
+                                <div key={ext} className="flex items-center gap-1.5 text-[10px]">
+                                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+                                    <span className="text-slate-300 truncate">.{ext}</span>
+                                    <span className="ml-auto text-slate-500">{count}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
-            {/* Cytoscape Container */}
-            <div ref={containerRef} className="w-full h-full min-h-[800px] bg-slate-950 rounded-xl" />
+                <div ref={containerRef} className="w-full h-full min-h-[800px] bg-slate-950 rounded-xl" />
 
-            {/* Controls overlay */}
-            <div
-                className="absolute bottom-4 z-10 flex flex-col gap-2"
-                style={{ left: showExplorer ? explorerWidth + (showExplorerInspector ? inspectorWidth : 0) + 16 : 16 }}
-            >
-                <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 hover:bg-slate-800" onClick={handleZoomIn}>
-                    <ZoomIn className="w-4 h-4" />
-                </Button>
-                <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 hover:bg-slate-800" onClick={handleZoomOut}>
-                    <ZoomOut className="w-4 h-4" />
-                </Button>
-                <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 hover:bg-slate-800" onClick={handleFit}>
-                    <Maximize2 className="w-4 h-4" />
-                </Button>
+                <div className="absolute bottom-8 right-4 z-10 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
+                    <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
+                    <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
+                    <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleFit}><Maximize2 className="w-4 h-4" /></Button>
+                </div>
             </div>
-
         </div>
     );
 }
@@ -1523,6 +1620,33 @@ function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function getParentPath(path: string): string | null {
+    if (!path) return null;
+    const parts = path.split("/");
+    if (parts.length <= 1) return "";
+    return parts.slice(0, -1).join("/");
+}
+
+function getExplorerFileIcon(fileName: string) {
+    const extension = fileName.split(".").pop()?.toLowerCase() || "";
+    if (["ts", "tsx", "js", "jsx", "mjs", "cjs"].includes(extension)) {
+        return <FileCode2 className="w-3.5 h-3.5 text-cyan-400" />;
+    }
+    if (["json", "jsonc", "yaml", "yml"].includes(extension)) {
+        return <FileJson2 className="w-3.5 h-3.5 text-amber-300" />;
+    }
+    if (["md", "txt", "rst", "adoc"].includes(extension)) {
+        return <FileText className="w-3.5 h-3.5 text-slate-300" />;
+    }
+    if (["html", "css", "scss", "xml", "svg"].includes(extension)) {
+        return <FileType2 className="w-3.5 h-3.5 text-pink-300" />;
+    }
+    if (["py", "go", "rs", "java", "c", "cpp", "h", "hpp", "rb", "php"].includes(extension)) {
+        return <Braces className="w-3.5 h-3.5 text-emerald-300" />;
+    }
+    return <File className="w-3.5 h-3.5" style={{ color: getFileColor(fileName) }} />;
 }
 
 function escapeRegExp(value: string): string {

@@ -17,19 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import GitHubTokenModal, { setOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import { EXAMPLE_REPOS, HOW_IT_WORKS_STEPS } from "@/lib/constants";
-
-const container = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.08 },
-  },
-};
-
-const item = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0 },
-};
+import { fadeSlideUp, staggerContainer, transitions } from "@/lib/motion";
 
 const iconMap: Record<string, React.ReactNode> = {
   Link: <LinkIcon className="w-6 h-6" />,
@@ -105,7 +93,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 glass-card border-b border-border/50 px-6 py-3">
+      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#090d18]/75 backdrop-blur-2xl px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-indigo flex items-center justify-center">
@@ -128,11 +116,16 @@ export default function LandingPage() {
       {/* Hero */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 pt-20">
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          className="text-center max-w-3xl mx-auto mb-12"
+          variants={fadeSlideUp}
+          initial="hidden"
+          animate="show"
+          className="text-center max-w-4xl mx-auto mb-12 hero-glow"
         >
+
+          <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-500/10 px-3 py-1 ui-eyebrow text-indigo-100">
+            <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
+            Developer-first repository intelligence
+          </div>
 
           <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight mb-6">
             <span className="gradient-text">Visualize</span> Any
@@ -149,7 +142,7 @@ export default function LandingPage() {
           {/* Input */}
           <form
             onSubmit={handleSubmit}
-            className="flex flex-col sm:flex-row gap-3 max-w-xl mx-auto"
+            className="surface-neo mesh-grid flex flex-col sm:flex-row gap-3 max-w-3xl mx-auto p-3"
           >
             <div className="relative flex-1">
               <Input
@@ -157,7 +150,7 @@ export default function LandingPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="owner/repo or github.com/owner/repo"
-                className="h-14 text-lg pl-5 pr-4 bg-secondary/50 border-indigo/20 focus:border-indigo/50 focus:ring-2 focus:ring-indigo/20 rounded-xl"
+                className="h-14 text-base sm:text-lg pl-5 pr-4 bg-white/[0.03] border-white/15 focus:border-indigo/50 focus:ring-2 focus:ring-indigo/20 rounded-xl"
               />
             </div>
             <Button
@@ -182,24 +175,26 @@ export default function LandingPage() {
 
         {/* Example Repos */}
         <motion.div
-          variants={container}
+          variants={staggerContainer}
           initial="hidden"
           animate="show"
           className="w-full max-w-5xl mx-auto mb-20"
         >
-          <p className="text-center text-sm text-muted-foreground mb-6">
+          <p className="text-center ui-body text-muted-foreground mb-6">
             Or explore a popular repository
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {EXAMPLE_REPOS.map((repo) => (
               <motion.button
                 key={`${repo.owner}/${repo.repo}`}
-                variants={item}
+                variants={fadeSlideUp}
+                whileHover={{ y: -3 }}
+                transition={transitions.base}
                 onClick={() => {
                   setIsNavigating(true);
                   router.push(`/${repo.owner}/${repo.repo}`);
                 }}
-                className="glass-card glass-card-hover p-4 text-left group cursor-pointer"
+                className="surface-neo-soft interactive-lift p-4 text-left group cursor-pointer"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-foreground group-hover:text-indigo transition-colors">
@@ -213,11 +208,11 @@ export default function LandingPage() {
                     {repo.stars}
                   </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                <p className="ui-micro text-muted-foreground mb-2 line-clamp-2">
                   {repo.description}
                 </p>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground/60">
+                  <span className="ui-micro text-muted-foreground/60">
                     {repo.owner}
                   </span>
                   <span className="text-muted-foreground/30">·</span>
@@ -235,9 +230,10 @@ export default function LandingPage() {
 
         {/* How it Works */}
         <motion.section
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5, duration: 0.6 }}
+          variants={fadeSlideUp}
+          initial="hidden"
+          animate="show"
+          transition={{ ...transitions.soft, delay: 0.25 }}
           className="w-full max-w-4xl mx-auto mb-24"
         >
           <h2 className="text-3xl font-bold text-center mb-12">
@@ -247,7 +243,7 @@ export default function LandingPage() {
             {HOW_IT_WORKS_STEPS.map((step, i) => (
               <div
                 key={step.title}
-                className="glass-card p-6 text-center relative"
+                className="surface-neo-soft interactive-lift p-6 text-center relative"
               >
                 <div className="absolute -top-3 left-6 bg-indigo text-white text-xs font-bold px-2.5 py-1 rounded-full">
                   {i + 1}

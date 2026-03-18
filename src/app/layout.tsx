@@ -3,6 +3,7 @@ import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import AppMotionProvider from "@/components/motion/app-motion-provider";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -53,13 +54,15 @@ export default function RootLayout({
         className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased min-h-screen bg-background relative overflow-x-hidden`}
       >
         <TooltipProvider delayDuration={300}>
-          <div className="app-background" />
-          <div className="app-orb orb-1" />
-          <div className="app-orb orb-2" />
-          <div className="app-orb orb-3" />
-          <div className="stars-bg" />
-          <div className="app-noise" />
-          {children}
+          <AppMotionProvider>
+            <div className="app-background" />
+            <div className="app-orb orb-1" />
+            <div className="app-orb orb-2" />
+            <div className="app-orb orb-3" />
+            <div className="stars-bg" />
+            <div className="app-noise" />
+            {children}
+          </AppMotionProvider>
         </TooltipProvider>
         <Toaster
           position="bottom-right"

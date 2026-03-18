@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { RepoMetadata, ArchitectureAnalysis } from "@/types";
+import { transitions } from "@/lib/motion";
 
 interface RepoOverviewProps {
     metadata: RepoMetadata;
@@ -46,14 +47,15 @@ export default function RepoOverview({
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="pro-surface p-6 max-w-3xl"
+            transition={transitions.soft}
+            className="surface-neo p-6 max-w-3xl"
         >
             {/* Repo Name with GitHub link */}
             <a
                 href={metadata.htmlUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group mb-5 block rounded-xl border border-white/12 bg-white/[0.02] px-3 py-2.5 transition-colors hover:border-white/25 hover:bg-white/[0.05]"
+                className="group mb-5 block rounded-xl border border-white/12 bg-white/[0.02] px-3 py-2.5 transition-colors hover:border-indigo-300/35 hover:bg-white/[0.05]"
             >
                 <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                     <FolderGit2 className="h-3 w-3" />
@@ -72,7 +74,7 @@ export default function RepoOverview({
                 {statItems.map(({ key, icon: Icon, label }) => (
                     <div
                         key={key}
-                        className="flex flex-col items-center justify-center p-3 rounded-lg border border-white/12 bg-white/[0.03]"
+                        className="flex flex-col items-center justify-center p-3 rounded-lg border border-white/12 bg-white/[0.03] interactive-lift"
                     >
                         <Icon className="w-3.5 h-3.5 mb-1 text-white/70" />
                         <div className="text-lg font-bold text-white/95">
