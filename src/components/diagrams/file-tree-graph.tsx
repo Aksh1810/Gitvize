@@ -1346,7 +1346,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const handleFit = () => cyRef.current?.fit(undefined, 50);
 
     return (
-        <div className="relative w-full h-full min-h-[800px] flex">
+        <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
             <div
                 className="relative z-30 overflow-visible h-full shrink-0 border-r border-slate-700/80 bg-slate-950/95 backdrop-blur flex"
                 style={{ width: explorerWidth  }}
@@ -1613,7 +1613,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 )}
 
-                <div ref={containerRef} className="w-full h-full min-h-[800px] bg-slate-950 rounded-xl" />
+                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl" />
 
                 <div className="absolute bottom-8 right-4 z-10 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
                     <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
