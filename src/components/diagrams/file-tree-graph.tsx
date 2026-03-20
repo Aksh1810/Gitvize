@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import cytoscape from "cytoscape";
 import { List, type RowComponentProps } from "react-window";
 // @ts-expect-error fcose is an extension package without bundled TS types.
@@ -1424,7 +1425,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     <span className="w-0.5 h-0.5 rounded-full bg-slate-500 group-hover:bg-slate-300 transition-colors" />
                 </div>
 
-                {showExplorerInspector && <div className="absolute left-full top-0 h-full z-40" style={{ width: inspectorWidth }}>
+                <motion.div
+                    className="absolute left-full top-0 h-full z-40 overflow-hidden"
+                    initial={false}
+                    animate={{
+                        width: showExplorerInspector ? inspectorWidth : 0,
+                        opacity: showExplorerInspector ? 1 : 0,
+                    }}
+                    transition={{
+                        width: { type: "spring", stiffness: 300, damping: 30 },
+                        opacity: { duration: 0.3, ease: "easeInOut" },
+                    }}
+                >
+                    <div style={{ width: inspectorWidth }} className="h-full">
                     <div className="h-full bg-[#070b15]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
                         <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
                             <div className="flex items-center justify-between px-3 py-2.5">
@@ -1477,7 +1490,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
                         </div>
                     </div>
-                </div>}
+                    </div>
+                </motion.div>
             </div>
 
             <div className="relative flex-1 h-full">
