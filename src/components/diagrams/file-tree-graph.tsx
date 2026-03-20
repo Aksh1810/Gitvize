@@ -147,7 +147,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [symbolError, setSymbolError] = useState<string | null>(null);
     const [showExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
-    const [explorerWidth, setExplorerWidth] = useState(180);
+    const [explorerWidth, setExplorerWidth] = useState(220);
     const [explorerViewportHeight, setExplorerViewportHeight] = useState(560);
     const [showRightFilters, setShowRightFilters] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
@@ -158,7 +158,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const resizingRef = useRef(false);
-    const explorerWidthRef = useRef(180);
+    const explorerWidthRef = useRef(220);
     const explorerBodyRef = useRef<HTMLDivElement>(null);
     const explorerListRef = useRef<{
         element: HTMLDivElement | null;
@@ -344,7 +344,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
             if (!resizingRef.current) return;
-            const nextWidth = Math.min(260, Math.max(150, event.clientX));
+            const nextWidth = Math.min(360, Math.max(180, event.clientX));
             setExplorerWidth(nextWidth);
         };
 
@@ -1392,7 +1392,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                             }}
                                         >
                                             {Array.from({ length: row.depth }).map((_, guideIdx) => (
-                                                <span key={`${row.path}-guide-${guideIdx}`} className="absolute top-1 bottom-1 w-px bg-slate-700/40" style={{ left: 12 + guideIdx * 14 }} />
+                                                <span key={`${row.path}-guide-${guideIdx}`} className="absolute top-1 bottom-1 bg-slate-600/50" style={{ left: 12 + guideIdx * 14, width: '1.5px' }} />
                                             ))}
                                             {isFolder ? (
                                                 row.hasChildren ? <span className={`shrink-0 transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}><ChevronRight className="shrink-0 w-3 h-3 text-slate-400" /></span> : <span className="shrink-0 w-3 h-3" />
@@ -1400,7 +1400,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                             <div className="shrink-0 flex items-center justify-center">
                                                 {isFolder ? (row.isExpanded ? <FolderOpen className="w-3.5 h-3.5" style={{ color: iconColor }} /> : <Folder className="w-3.5 h-3.5" style={{ color: iconColor }} />) : getExplorerFileIcon(row.name)}
                                             </div>
-                                            <span className="truncate text-left min-w-0">{row.name || repo}</span>
+                                            <span className="truncate text-left min-w-0" title={row.path || row.name || repo}>{row.name || repo}</span>
                                         </button>
                                     </div>
                                 );
@@ -1415,7 +1415,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 </div>
 
-                <div className="h-full w-1.5 cursor-col-resize bg-transparent" onMouseDown={() => { resizingRef.current = true; }} />
+                <div
+                    className="h-full w-2 cursor-col-resize flex flex-col items-center justify-center gap-1 group hover:bg-slate-700/40 transition-colors"
+                    onMouseDown={() => { resizingRef.current = true; }}
+                >
+                    <span className="w-0.5 h-0.5 rounded-full bg-slate-500 group-hover:bg-slate-300 transition-colors" />
+                    <span className="w-0.5 h-0.5 rounded-full bg-slate-500 group-hover:bg-slate-300 transition-colors" />
+                    <span className="w-0.5 h-0.5 rounded-full bg-slate-500 group-hover:bg-slate-300 transition-colors" />
+                </div>
 
                 {showExplorerInspector && <div className="absolute left-full top-0 h-full z-40" style={{ width: inspectorWidth }}>
                     <div className="h-full bg-[#070b15]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">

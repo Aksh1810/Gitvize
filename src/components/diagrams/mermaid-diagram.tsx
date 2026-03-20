@@ -424,8 +424,8 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick }: Merm
 
     return (
         <div className="relative h-full w-full overflow-hidden diagram-grid">
-            {/* Controls */}
-            <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+            {/* Controls — positioned on the LEFT to avoid overlap with parent's "Generate Premium Diagram" button on the right */}
+            <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
                 <Button
                     variant="outline"
                     size="sm"

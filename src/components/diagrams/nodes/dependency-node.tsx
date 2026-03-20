@@ -9,6 +9,7 @@ function DependencyNode({ data }: NodeProps) {
     const d = data as unknown as DependencyNodeData;
     const baseSize = 48;
     const size = Math.min(baseSize + d.dependentCount * 4, 120);
+    const nodeWidth = Math.max(size + 80, 140);
 
     return (
         <>
@@ -19,7 +20,7 @@ function DependencyNode({ data }: NodeProps) {
                     background: "rgba(15, 23, 42, 0.8)",
                     border: `1px solid ${d.isDirect ? "rgba(99, 102, 241, 0.3)" : "rgba(148, 163, 184, 0.15)"}`,
                     backdropFilter: "blur(8px)",
-                    width: `${size + 60}px`,
+                    width: `${nodeWidth}px`,
                     minHeight: `${size}px`,
                 }}
             >
@@ -28,10 +29,10 @@ function DependencyNode({ data }: NodeProps) {
                     style={{
                         width: `${Math.min(16 + d.dependentCount, 24)}px`,
                         height: `${Math.min(16 + d.dependentCount, 24)}px`,
-                        color: d.isDirect ? "#6366f1" : "#64748b",
+                        color: d.isDirect ? "#6366f1" : "#a855f7",
                     }}
                 />
-                <span className="text-xs font-medium text-foreground truncate max-w-full">
+                <span className="text-xs font-medium text-foreground truncate max-w-full" title={d.name}>
                     {d.name}
                 </span>
                 {d.version && (

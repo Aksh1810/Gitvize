@@ -415,7 +415,7 @@ export default function BranchGraph({
                                                         )}
 
                                                         <div className="flex-1 min-w-0">
-                                                            <p className="text-sm text-foreground leading-snug truncate group-hover:text-white transition-colors">
+                                                            <p className="text-sm text-foreground leading-snug truncate group-hover:text-white transition-colors" title={commit.message}>
                                                                 {commit.message}
                                                             </p>
                                                             <div className="flex items-center gap-2 mt-1">

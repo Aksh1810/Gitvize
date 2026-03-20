@@ -76,7 +76,7 @@ export default function DependencyGraph({
                     version: "",
                     isDirect: false,
                     dependentCount: devDeps.length,
-                    color: "#64748b",
+                    color: "#a855f7",
                 } satisfies DependencyNodeData & { color: string },
             });
             rawEdges.push({
@@ -103,7 +103,7 @@ export default function DependencyGraph({
                         version: dep.version,
                         isDirect: dep.isDirect,
                         dependentCount: 1,
-                        color: dep.isDirect ? "#6366f1" : "#64748b",
+                        color: dep.isDirect ? "#6366f1" : "#a855f7",
                     } satisfies DependencyNodeData & { color: string },
                 });
 
@@ -137,7 +137,7 @@ export default function DependencyGraph({
 
         return getLayoutedElements(rawNodes, rawEdges, {
             direction: "LR",
-            nodeWidth: 200,
+            nodeWidth: 240,
             nodeHeight: 60,
             rankSep: 150,
             nodeSep: 50,
