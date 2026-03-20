@@ -113,3 +113,4 @@ Interactions:
 - **Import unused:** Remove unused imports before building — they cause warnings that can mask real errors
 - **Label persistence in large repos:** If focused labels disappear on hover-out, ensure `keepLabel` is set during focus and cleared only in `clearNodeFocus`
 - **Symbol graph limits:** Keep file-size/file-count/reference caps in place to avoid rate-limit and render-performance regressions
+- **Flexbox Squishing on Sidebar Resize:** Always apply `shrink-0` to icons and fixed-width elements inside flex containers, and `min-w-0 flex-1 truncate` to text elements alongside them, else they will squish uncontrollably when the parent sidebar shrinks.

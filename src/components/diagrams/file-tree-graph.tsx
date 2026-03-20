@@ -1364,10 +1364,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             {showExplorerInspector ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
                         </Button>
                     </div>
-                    <div className="relative flex-1 overflow-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
+                    <div className="relative flex-1 overflow-x-auto overflow-y-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
                         <List
                             listRef={explorerListRef}
-                            style={{ height: explorerViewportHeight, width: explorerWidth }}
+                            style={{ height: explorerViewportHeight, width: Math.max(180, explorerWidth) }}
                             rowCount={explorerRows.length}
                             rowHeight={EXPLORER_ROW_HEIGHT}
                             overscanCount={10}
@@ -1395,10 +1395,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                                 <span key={`${row.path}-guide-${guideIdx}`} className="absolute top-1 bottom-1 w-px bg-slate-700/40" style={{ left: 12 + guideIdx * 14 }} />
                                             ))}
                                             {isFolder ? (
-                                                row.hasChildren ? <span className={`transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}><ChevronRight className="w-3 h-3 text-slate-400" /></span> : <span className="w-3 h-3" />
-                                            ) : <span className="w-3 h-3" />}
-                                            {isFolder ? (row.isExpanded ? <FolderOpen className="w-3.5 h-3.5" style={{ color: iconColor }} /> : <Folder className="w-3.5 h-3.5" style={{ color: iconColor }} />) : getExplorerFileIcon(row.name)}
-                                            <span className="truncate text-left">{row.name || repo}</span>
+                                                row.hasChildren ? <span className={`shrink-0 transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}><ChevronRight className="shrink-0 w-3 h-3 text-slate-400" /></span> : <span className="shrink-0 w-3 h-3" />
+                                            ) : <span className="shrink-0 w-3 h-3" />}
+                                            <div className="shrink-0 flex items-center justify-center">
+                                                {isFolder ? (row.isExpanded ? <FolderOpen className="w-3.5 h-3.5" style={{ color: iconColor }} /> : <Folder className="w-3.5 h-3.5" style={{ color: iconColor }} />) : getExplorerFileIcon(row.name)}
+                                            </div>
+                                            <span className="truncate text-left min-w-0">{row.name || repo}</span>
                                         </button>
                                     </div>
                                 );
