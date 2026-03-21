@@ -51,7 +51,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased min-h-screen bg-background relative overflow-x-hidden`}
+        className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased h-screen bg-background relative overflow-hidden`}
       >
         <TooltipProvider delayDuration={300}>
           <AppMotionProvider>

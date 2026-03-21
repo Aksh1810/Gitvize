@@ -91,7 +91,7 @@ export default function LandingPage() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen overflow-y-auto overflow-x-hidden flex flex-col">
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#090d18]/75 backdrop-blur-2xl px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">

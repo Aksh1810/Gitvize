@@ -151,11 +151,15 @@
   }
 
   html {
+    height: 100%;
+    overflow: hidden;
     scroll-behavior: smooth;
   }
 
   body {
     @apply bg-background text-foreground;
+    min-height: 100%;
+    overflow: hidden;
     font-family: var(--font-space-grotesk), system-ui, -apple-system, sans-serif;
   }
 

@@ -331,7 +331,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // Loading state
     if (loading) {
         return (
-            <div className="min-h-screen pt-14">
+            <div className="h-screen overflow-y-auto overflow-x-hidden pt-14">
                 <Navbar
                     owner={owner}
                     repo={repo}
@@ -360,7 +360,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // Error state
     if (error) {
         return (
-            <div className="min-h-screen pt-14">
+            <div className="h-screen overflow-y-auto overflow-x-hidden pt-14">
                 <Navbar
                     owner={owner}
                     repo={repo}
@@ -398,7 +398,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     if (!repoData) return null;
 
     return (
-        <div className="min-h-screen pt-14">
+        <div className="h-screen overflow-hidden pt-14">
             <Navbar
                 owner={owner}
                 repo={repo}
@@ -417,12 +417,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }}
             />
 
-            <div className="max-w-[1800px] mx-auto">
+            <div className="max-w-[1800px] mx-auto h-full flex flex-col">
                 <TabNav activeTab={activeTab} onTabChange={handleTabChange} />
 
-                <div className="p-4">
+                <div className="p-4 flex-1 min-h-0">
                     {/* Main diagram area */}
-                    <div className="flex-1 h-[calc(100vh-140px)]">
+                    <div className="flex-1 h-full min-h-0">
                         <AnimatePresence mode="wait">
                             <motion.div
                                 key={activeTab}
