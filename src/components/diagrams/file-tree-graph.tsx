@@ -417,7 +417,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
             if (!resizingRef.current) return;
-            const nextWidth = Math.min(360, Math.max(180, event.clientX));
+            const nextWidth = Math.min(360, Math.max(180, explorerWidthRef.current + event.movementX));
             setExplorerWidth(nextWidth);
         };
 
@@ -1421,10 +1421,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     return (
         <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
             <div
-                className="relative z-30 overflow-visible h-full shrink-0 border-r border-slate-700/80 bg-slate-950/95 backdrop-blur flex"
+                className="relative z-30 overflow-visible h-full shrink-0 flex"
                 style={{ width: explorerWidth  }}
             >
-                <div className="h-full border-r border-slate-700 flex flex-col" style={{ width: explorerWidth }}>
+                <div className="h-full w-full rounded-2xl border border-slate-700/80 bg-slate-950/95 backdrop-blur flex flex-col overflow-hidden" style={{ width: explorerWidth }}>
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                         <span className="ui-eyebrow text-slate-400">Explorer</span>
                         <Button
@@ -1437,10 +1437,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             {showExplorerInspector ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
                         </Button>
                     </div>
-                    <div className="relative flex-1 overflow-x-auto overflow-y-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
+                    <div className="relative flex-1 overflow-x-hidden overflow-y-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
                         <List
                             listRef={explorerListRef}
-                            style={{ height: explorerViewportHeight, width: Math.max(180, explorerWidth) }}
+                            style={{ height: explorerViewportHeight, width: "100%" }}
                             rowCount={explorerRows.length}
                             rowHeight={EXPLORER_ROW_HEIGHT}
                             overscanCount={10}
@@ -1489,13 +1489,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </div>
 
                 <div
-                    className="h-full w-2 cursor-col-resize flex flex-col items-center justify-center gap-1 group hover:bg-slate-700/40 transition-colors"
+                    className="absolute top-0 right-0 h-full w-2 cursor-col-resize z-20 group"
                     onMouseDown={() => { resizingRef.current = true; }}
-                >
-                    <span className="w-0.5 h-0.5 rounded-full bg-slate-500 group-hover:bg-slate-300 transition-colors" />
-                    <span className="w-0.5 h-0.5 rounded-full bg-slate-500 group-hover:bg-slate-300 transition-colors" />
-                    <span className="w-0.5 h-0.5 rounded-full bg-slate-500 group-hover:bg-slate-300 transition-colors" />
-                </div>
+                ><span className="absolute top-0 bottom-0 right-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>
 
                 <motion.div
                     className="absolute left-full top-0 h-full z-40 overflow-hidden"
@@ -1510,7 +1506,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     }}
                 >
                     <div style={{ width: inspectorWidth }} className="h-full">
-                    <div className="h-full bg-[#070b15]/95 backdrop-blur-xl border-r border-border/30 flex flex-col">
+                    <div className="h-full rounded-2xl bg-[#070b15]/95 backdrop-blur-xl border border-border/30 flex flex-col overflow-hidden">
                         <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
                             <div className="flex items-center justify-between px-3 py-2.5">
                                 <div className="min-w-0 flex items-center gap-1.5">
@@ -1616,7 +1612,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         opacity: { duration: 0.5, ease: "easeInOut" },
                     }}
                 >
-                    <div style={{ width: FILTER_PANEL_WIDTH }} className="h-full bg-slate-900/95 backdrop-blur border-l border-slate-900 flex flex-col">
+                    <div style={{ width: FILTER_PANEL_WIDTH }} className="h-full rounded-2xl bg-slate-900/95 backdrop-blur border border-slate-700/80 flex flex-col overflow-hidden">
                         <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-800">
                             <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
                             <button onClick={() => setShowRightFilters(false)} className="text-slate-400 hover:text-slate-200" aria-label="Close filters">
@@ -1712,7 +1708,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
                 <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl" />
 
-                <div className="absolute bottom-8 right-4 z-10 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
+                <div className="absolute bottom-2 right-2 z-10 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
                     <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
                     <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
                     <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleFit}><Maximize2 className="w-4 h-4" /></Button>
