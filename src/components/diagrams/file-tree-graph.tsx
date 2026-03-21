@@ -85,6 +85,57 @@ const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
 const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
 const CODE_ROW_HEIGHT = 24;
 
+const FOLDER_SORT_PRIORITY: Record<string, number> = {
+    src: 0,
+    app: 1,
+    lib: 2,
+    components: 3,
+    pages: 4,
+    api: 5,
+    public: 6,
+    assets: 7,
+    docs: 90,
+    examples: 91,
+    test: 92,
+    tests: 92,
+    __tests__: 92,
+};
+
+const FILE_EXTENSION_SORT_PRIORITY: Record<string, number> = {
+    ts: 0,
+    tsx: 0,
+    js: 0,
+    jsx: 0,
+    mjs: 0,
+    cjs: 0,
+    py: 1,
+    go: 1,
+    rs: 1,
+    java: 1,
+    c: 1,
+    cpp: 1,
+    h: 1,
+    hpp: 1,
+    json: 2,
+    yml: 2,
+    yaml: 2,
+    toml: 2,
+    ini: 2,
+    css: 3,
+    scss: 3,
+    less: 3,
+    html: 3,
+    xml: 3,
+    md: 9,
+    mdx: 9,
+    txt: 9,
+    rst: 9,
+    svg:9,
+};
+
+const DEFAULT_FOLDER_SORT_PRIORITY = 50;
+const DEFAULT_FILE_EXTENSION_SORT_PRIORITY = 5;
+
 const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = {
     class: { color: "#f59e0b", shape: "hexagon" },
     function: { color: "#22c55e", shape: "ellipse" },
@@ -225,10 +276,30 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             });
         });
 
+        const getFolderSortPriority = (name: string) => {
+            const normalized = name.toLowerCase();
+            return FOLDER_SORT_PRIORITY[normalized] ?? DEFAULT_FOLDER_SORT_PRIORITY;
+        };
+
+        const getFileSortPriority = (name: string, extension?: string) => {
+            const normalizedExtension = (extension ?? name.split(".").pop() ?? "").toLowerCase();
+            return FILE_EXTENSION_SORT_PRIORITY[normalizedExtension] ?? DEFAULT_FILE_EXTENSION_SORT_PRIORITY;
+        };
+
         const sortNodes = (node: ExplorerNode) => {
             if (!node.children) return;
             node.children.sort((a, b) => {
                 if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+
+                if (a.type === "folder" && b.type === "folder") {
+                    const folderPriorityDiff = getFolderSortPriority(a.name) - getFolderSortPriority(b.name);
+                    if (folderPriorityDiff !== 0) return folderPriorityDiff;
+                    return a.name.localeCompare(b.name);
+                }
+
+                const filePriorityDiff = getFileSortPriority(a.name, a.extension) - getFileSortPriority(b.name, b.extension);
+                if (filePriorityDiff !== 0) return filePriorityDiff;
+
                 return a.name.localeCompare(b.name);
             });
             node.children.forEach(sortNodes);
