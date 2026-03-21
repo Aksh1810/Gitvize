@@ -84,6 +84,7 @@ const EXPLORER_ROW_HEIGHT = 30;
 const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
 const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
 const CODE_ROW_HEIGHT = 24;
+const FILTER_PANEL_WIDTH = 220;
 
 const FOLDER_SORT_PRIORITY: Record<string, number> = {
     src: 0,
@@ -1505,7 +1506,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     }}
                     transition={{
                         width: { type: "spring", stiffness: 300, damping: 30 },
-                        opacity: { duration: 0.3, ease: "easeInOut" },
+                        opacity: { duration: 0.5, ease: "easeInOut" },
                     }}
                 >
                     <div style={{ width: inspectorWidth }} className="h-full">
@@ -1603,8 +1604,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`} aria-label="Toggle filters"><Filter className="w-4 h-4" /></button>
                 </div>
 
-                <div className={`absolute top-0 right-0 bottom-0 z-20 transition-transform duration-900 ${showRightFilters ? "translate-x-0" : "translate-x-full"}`}>
-                    <div className="h-full w-55 bg-slate-900/95 backdrop-blur border-l border-slate-900 flex flex-col">
+                <motion.div
+                    className="absolute top-0 right-0 bottom-0 z-20 overflow-hidden"
+                    initial={false}
+                    animate={{
+                        width: showRightFilters ? FILTER_PANEL_WIDTH : 0,
+                        opacity: showRightFilters ? 1 : 0,
+                    }}
+                    transition={{
+                        width: { type: "spring", stiffness: 300, damping: 30 },
+                        opacity: { duration: 0.5, ease: "easeInOut" },
+                    }}
+                >
+                    <div style={{ width: FILTER_PANEL_WIDTH }} className="h-full bg-slate-900/95 backdrop-blur border-l border-slate-900 flex flex-col">
                         <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-800">
                             <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
                             <button onClick={() => setShowRightFilters(false)} className="text-slate-400 hover:text-slate-200" aria-label="Close filters">
@@ -1681,7 +1693,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
                         </div>
                     </div>
-                </div>
+                </motion.div>
 
                 {fileTypeLegend.length > 0 && (
                     <div className="absolute bottom-4 left-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-2">
