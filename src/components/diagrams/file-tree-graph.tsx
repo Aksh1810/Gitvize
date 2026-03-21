@@ -1696,7 +1696,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </motion.div>
 
                 {fileTypeLegend.length > 0 && (
-                    <div className="absolute bottom-4 left-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-2">
+                    <div className="absolute bottom-2 left-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/55 backdrop-blur p-2">
                         <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1.5">File Types</div>
                         <div className="space-y-1">
                             {fileTypeLegend.map(({ ext, count, color }) => (
