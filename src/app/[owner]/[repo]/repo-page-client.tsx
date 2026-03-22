@@ -78,6 +78,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         const token = consumeOneTimeGitHubToken();
         return token || null;
     });
+    const [mountedTabs, setMountedTabs] = useState<DiagramTab[]>(() => [initialTab]);
 
     // One-time PAT token passed from the landing flow.
     const getToken = useCallback((): string | null => {
@@ -299,6 +300,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         [owner, repo, router, searchParams]
     );
 
+    useEffect(() => {
+        setMountedTabs((prev) => (prev.includes(activeTab) ? prev : [...prev, activeTab]));
+    }, [activeTab]);
+
     // Parse dependencies
     const dependencies: ParsedDependency[] = useMemo(() => {
         if (!repoData?.dependencyFiles) return [];
@@ -333,6 +338,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 color: getFileColor(`file.${ext}`),
             }));
     }, [repoData?.fileTree?.tree]);
+
+    const isTabMounted = useCallback((tab: DiagramTab) => mountedTabs.includes(tab), [mountedTabs]);
 
     // Loading state
     if (loading) {
@@ -429,63 +436,123 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 <div className="p-4 flex-1 min-h-0">
                     {/* Main diagram area */}
                     <div className="flex-1 h-full min-h-0">
-                        <AnimatePresence mode="wait">
-                            <motion.div
-                                key={activeTab}
-                                initial={{ opacity: 0, y: 12, filter: "blur(6px)" }}
-                                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                                exit={{ opacity: 0, y: -12, filter: "blur(6px)" }}
-                                transition={transitions.soft}
-                                className={`relative h-full diagram-shell overscroll-contain surface-neo ${useDotFieldBackground ? "diagram-dot-field" : "diagram-grid"} mesh-grid`}
-                            >
-                                {activeTab === "architecture" && !isAnalyzing && (
-                                    <div className="absolute top-3 right-3 z-20">
-                                        <button
-                                            onClick={() => {
-                                                if (!hasUserAIKey) {
-                                                    setAISettingsOpen(true);
-                                                    toast.info("Add your API key for premium diagrams");
-                                                    return;
-                                                }
-                                                runAnalysis("premium");
-                                            }}
-                                            className="ui-micro px-3 py-2 pro-control pro-focus-ring"
-                                        >
-                                            Generate Premium Diagram
-                                        </button>
-                                    </div>
-                                )}
+                        <motion.div
+                            initial={false}
+                            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                            transition={transitions.soft}
+                            className={`relative h-full diagram-shell overscroll-contain surface-neo ${useDotFieldBackground ? "diagram-dot-field" : "diagram-grid"} mesh-grid`}
+                        >
+                            {isTabMounted("architecture") && (
+                                <motion.div
+                                    initial={false}
+                                    animate={{
+                                        opacity: activeTab === "architecture" ? 1 : 0,
+                                        y: activeTab === "architecture" ? 0 : 6,
+                                        filter: activeTab === "architecture" ? "blur(0px)" : "blur(3px)",
+                                    }}
+                                    transition={transitions.soft}
+                                    className={`absolute inset-0 ${activeTab === "architecture" ? "pointer-events-auto" : "pointer-events-none"}`}
+                                    aria-hidden={activeTab !== "architecture"}
+                                >
+                                    {activeTab === "architecture" && !isAnalyzing && (
+                                        <div className="absolute top-3 right-3 z-20">
+                                            <button
+                                                onClick={() => {
+                                                    if (!hasUserAIKey) {
+                                                        setAISettingsOpen(true);
+                                                        toast.info("Add your API key for premium diagrams");
+                                                        return;
+                                                    }
+                                                    runAnalysis("premium");
+                                                }}
+                                                className="ui-micro px-3 py-2 pro-control pro-focus-ring"
+                                            >
+                                                Generate Premium Diagram
+                                            </button>
+                                        </div>
+                                    )}
 
-                                {activeTab === "architecture" && analysis ? (
-                                    <ArchitectureDiagram
-                                        analysis={analysis.architecture}
-                                        owner={owner}
-                                        repo={repo}
-                                        tree={repoData.fileTree?.tree}
-                                    />
-                                ) : activeTab === "architecture" && isAnalyzing ? (
-                                    <div className="flex items-center justify-center h-full">
-                                        <PipelineStatusDisplay steps={pipelineSteps} />
-                                    </div>
-                                ) : activeTab === "architecture" && repoData.fileTree ? (
-                                    <ArchitectureDiagram
-                                        analysis={null}
-                                        owner={owner}
-                                        repo={repo}
-                                        tree={repoData.fileTree.tree}
-                                    />
-                                ) : activeTab === "files" && repoData.fileTree ? (
-                                    <FileTreeGraph
-                                        tree={repoData.fileTree.tree}
-                                        owner={owner}
-                                        repo={repo}
-                                        fileTypeLegend={fileTypeLegend}
-                                    />
-                                ) : activeTab === "contributors" ? (
-                                    <ContributorsNetwork
-                                        contributors={repoData.contributors}
-                                    />
-                                ) : activeTab === "branches" ? (
+                                    {analysis ? (
+                                        <ArchitectureDiagram
+                                            analysis={analysis.architecture}
+                                            owner={owner}
+                                            repo={repo}
+                                            tree={repoData.fileTree?.tree}
+                                        />
+                                    ) : isAnalyzing ? (
+                                        <div className="flex items-center justify-center h-full">
+                                            <PipelineStatusDisplay steps={pipelineSteps} />
+                                        </div>
+                                    ) : repoData.fileTree ? (
+                                        <ArchitectureDiagram
+                                            analysis={null}
+                                            owner={owner}
+                                            repo={repo}
+                                            tree={repoData.fileTree.tree}
+                                        />
+                                    ) : (
+                                        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                                            No data available for this view.
+                                        </div>
+                                    )}
+                                </motion.div>
+                            )}
+
+                            {isTabMounted("files") && (
+                                <motion.div
+                                    initial={false}
+                                    animate={{
+                                        opacity: activeTab === "files" ? 1 : 0,
+                                        y: activeTab === "files" ? 0 : 6,
+                                        filter: activeTab === "files" ? "blur(0px)" : "blur(3px)",
+                                    }}
+                                    transition={transitions.soft}
+                                    className={`absolute inset-0 ${activeTab === "files" ? "pointer-events-auto" : "pointer-events-none"}`}
+                                    aria-hidden={activeTab !== "files"}
+                                >
+                                    {repoData.fileTree ? (
+                                        <FileTreeGraph
+                                            tree={repoData.fileTree.tree}
+                                            owner={owner}
+                                            repo={repo}
+                                            fileTypeLegend={fileTypeLegend}
+                                        />
+                                    ) : (
+                                        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                                            No data available for this view.
+                                        </div>
+                                    )}
+                                </motion.div>
+                            )}
+
+                            {isTabMounted("contributors") && (
+                                <motion.div
+                                    initial={false}
+                                    animate={{
+                                        opacity: activeTab === "contributors" ? 1 : 0,
+                                        y: activeTab === "contributors" ? 0 : 6,
+                                        filter: activeTab === "contributors" ? "blur(0px)" : "blur(3px)",
+                                    }}
+                                    transition={transitions.soft}
+                                    className={`absolute inset-0 ${activeTab === "contributors" ? "pointer-events-auto" : "pointer-events-none"}`}
+                                    aria-hidden={activeTab !== "contributors"}
+                                >
+                                    <ContributorsNetwork contributors={repoData.contributors} />
+                                </motion.div>
+                            )}
+
+                            {isTabMounted("branches") && (
+                                <motion.div
+                                    initial={false}
+                                    animate={{
+                                        opacity: activeTab === "branches" ? 1 : 0,
+                                        y: activeTab === "branches" ? 0 : 6,
+                                        filter: activeTab === "branches" ? "blur(0px)" : "blur(3px)",
+                                    }}
+                                    transition={transitions.soft}
+                                    className={`absolute inset-0 ${activeTab === "branches" ? "pointer-events-auto" : "pointer-events-none"}`}
+                                    aria-hidden={activeTab !== "branches"}
+                                >
                                     <BranchGraph
                                         branches={repoData.branches}
                                         commits={repoData.commits}
@@ -494,18 +561,28 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                         repo={repo}
                                         mergedPRs={repoData.mergedPRs}
                                     />
-                                ) : activeTab === "dependencies" ? (
+                                </motion.div>
+                            )}
+
+                            {isTabMounted("dependencies") && (
+                                <motion.div
+                                    initial={false}
+                                    animate={{
+                                        opacity: activeTab === "dependencies" ? 1 : 0,
+                                        y: activeTab === "dependencies" ? 0 : 6,
+                                        filter: activeTab === "dependencies" ? "blur(0px)" : "blur(3px)",
+                                    }}
+                                    transition={transitions.soft}
+                                    className={`absolute inset-0 ${activeTab === "dependencies" ? "pointer-events-auto" : "pointer-events-none"}`}
+                                    aria-hidden={activeTab !== "dependencies"}
+                                >
                                     <DependencyGraph
                                         dependencies={dependencies}
                                         projectName={repo}
                                     />
-                                ) : (
-                                    <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                                        No data available for this view.
-                                    </div>
-                                )}
-                            </motion.div>
-                        </AnimatePresence>
+                                </motion.div>
+                            )}
+                        </motion.div>
                     </div>
                 </div>
             </div>
