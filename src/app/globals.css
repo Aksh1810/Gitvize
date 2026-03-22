@@ -530,6 +530,14 @@
   background-position: 0 0;
 }
 
+.diagram-dot-field {
+  background-color: rgba(8, 11, 18, 0.92);
+  background-image:
+    radial-gradient(circle, rgba(226, 232, 240, 0.34) 2px, transparent 2.6px);
+  background-size: 56px 56px;
+  background-position: 0 0;
+}
+
 /* ============================================================================
    Node Glow Effects
    ============================================================================ */

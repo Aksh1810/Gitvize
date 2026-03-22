@@ -307,6 +307,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         );
     }, [repoData?.dependencyFiles]);
 
+    const useDotFieldBackground =
+        activeTab === "architecture" ||
+        activeTab === "contributors" ||
+        activeTab === "branches" ||
+        activeTab === "dependencies";
+
     const fileTypeLegend = useMemo(() => {
         const extCounts = new Map<string, number>();
         const items = repoData?.fileTree?.tree ?? [];
@@ -430,7 +436,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                                 exit={{ opacity: 0, y: -12, filter: "blur(6px)" }}
                                 transition={transitions.soft}
-                                className="relative h-full diagram-shell diagram-grid overscroll-contain surface-neo mesh-grid"
+                                className={`relative h-full diagram-shell overscroll-contain surface-neo ${useDotFieldBackground ? "diagram-dot-field" : "diagram-grid"} mesh-grid`}
                             >
                                 {activeTab === "architecture" && !isAnalyzing && (
                                     <div className="absolute top-3 right-3 z-20">
