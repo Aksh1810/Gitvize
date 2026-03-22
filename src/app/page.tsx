@@ -96,7 +96,7 @@ export default function LandingPage() {
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#090d18]/75 backdrop-blur-2xl px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-indigo flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg border border-white/25 bg-white/5 flex items-center justify-center text-slate-100">
               <GitBranch className="w-4 h-4 text-white" />
             </div>
             <span className="text-xl font-bold gradient-text">Gitvize</span>
@@ -105,7 +105,7 @@ export default function LandingPage() {
             href="https://github.com/Aksh1810/Gitvize"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5 text-sm"
+            className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-white/20 bg-white/[0.03] text-slate-300 hover:text-white hover:border-white/35 hover:bg-white/[0.08] transition-colors"
           >
             <ExternalLink className="w-4 h-4" />
             GitHub
@@ -152,14 +152,14 @@ export default function LandingPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="owner/repo or github.com/owner/repo"
-                className="h-14 text-base sm:text-lg pl-5 pr-4 bg-white/[0.03] border-white/15 focus:border-indigo/50 focus:ring-2 focus:ring-indigo/20 rounded-xl"
+                className="h-14 text-base sm:text-lg pl-5 pr-4 bg-white/[0.03] border-white/15 focus:border-slate-300/55 focus:ring-2 focus:ring-slate-200/20 rounded-xl"
               />
             </div>
             <Button
               type="submit"
               size="lg"
               disabled={isNavigating}
-              className="h-14 px-8 text-lg rounded-xl bg-indigo hover:bg-indigo/90 text-white shadow-lg shadow-indigo/20 transition-all hover:shadow-indigo/40"
+              className="h-14 px-8 text-lg rounded-xl border border-white/30 bg-white/[0.92] text-slate-950 hover:bg-white hover:border-white shadow-lg shadow-black/30 transition-all"
             >
               {isNavigating ? (
                 <span className="animate-spin mr-2">⟳</span>
