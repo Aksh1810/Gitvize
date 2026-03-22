@@ -91,7 +91,7 @@ export default function LandingPage() {
   );
 
   return (
-    <div className="h-screen overflow-y-auto overflow-x-hidden flex flex-col">
+    <div className="landing-schematic landing-scroll-shell h-screen overflow-y-auto overflow-x-hidden flex flex-col">
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#090d18]/75 backdrop-blur-2xl px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -113,8 +113,10 @@ export default function LandingPage() {
         </div>
       </nav>
 
+      <div className="landing-graph-overlay" aria-hidden="true" />
+
       {/* Hero */}
-      <main className="flex-1 flex flex-col items-center justify-center px-4 pt-20">
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 pt-20">
         <motion.div
           variants={fadeSlideUp}
           initial="hidden"
