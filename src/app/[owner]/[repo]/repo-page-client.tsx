@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import Navbar from "@/components/dashboard/navbar";
 import TabNav from "@/components/dashboard/tab-nav";
 import AISettingsModal, { loadAISettings } from "@/components/dashboard/ai-settings-modal";
