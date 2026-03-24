@@ -45,7 +45,8 @@ yarn-error.log*
 
 # editors/ide
 .idea/
-.vscode/settings.json
+.vscode/
+.gemini/
 
 # typescript
 *.tsbuildinfo

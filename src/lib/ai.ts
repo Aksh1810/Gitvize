@@ -60,7 +60,7 @@ function getDefaultConfig(): AIConfig {
     return {
         provider,
         apiKey: geminiKey || genericKey || "",
-        model: geminiKey ? "gemini-2.0-flash" : (process.env.AI_MODEL ?? "gpt-4o"),
+        model: geminiKey ? "gemini-2.5-flash" : (process.env.AI_MODEL ?? "gpt-4o"),
         baseUrl:
             process.env.AI_BASE_URL ??
             (provider === "anthropic"
@@ -189,7 +189,7 @@ async function aiCompletionInner(
                     ],
                     generationConfig: {
                         temperature: 0.3,
-                        maxOutputTokens: 8192,
+                        maxOutputTokens: 65536,
                         ...(jsonMode ? { responseMimeType: "application/json" } : {}),
                     },
                 }),
@@ -216,7 +216,7 @@ async function aiCompletionInner(
             },
             body: JSON.stringify({
                 model: cfg.model,
-                max_tokens: 8192,
+                max_tokens: 65536,
                 system: systemPrompt,
                 messages: [{ role: "user", content: userPrompt }],
             }),
@@ -245,7 +245,7 @@ async function aiCompletionInner(
                 { role: "user", content: userPrompt },
             ],
             temperature: 0.3,
-            max_tokens: 8192,
+            max_tokens: 65536,
             ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
         }),
     });
@@ -259,201 +259,44 @@ async function aiCompletionInner(
     return data.choices[0].message.content;
 }
 
-// --- Prompts ---
-
-const ANALYSIS_SYSTEM_PROMPT = `You are a senior software architect who creates detailed architecture diagrams like GitDiagram. Your job is to analyze a repository and produce a DETAILED, FILE-LEVEL architecture graph that shows:
-- Every important file as a named node with a specific role label
-- Precise relationships between files (renders, composes, imports, orchestrates, tests, styles, configures, etc.)
-- Logical groupings (UI/View Components, Controller/Orchestration, Core Engine, Tests, Config/Tooling, etc.)
-
-You MUST respond with valid JSON matching the exact schema. Be extremely thorough — include ALL important files, not just a handful. The diagram should have 20-60 file nodes for a typical project.
-
-IMPORTANT: Use SPECIFIC, DESCRIPTIVE edge labels like GitDiagram does:
-- "renders" "composes" "wraps" for UI relationships
-- "click/tap" "onMove" for user interactions 
-- "prop_drill(GameState)" "setState" for data flow
-- "orchestrates" "dispatches" for control flow
-- "styles" "animate" for visual relationships  
-- "tests" "validates" for test relationships
-- "configures" "builds" "lint" for tooling
-- "reads/writes" "queries" for data access
-Never use generic labels like "depends on" — always be specific about HOW they relate.`;
-
-function buildAnalysisUserPrompt(
-    owner: string,
-    repo: string,
-    tree: TreeItem[],
-    readme: string
-): string {
-    const trimmedTree = tree.slice(0, 500).map((t) => t.path);
-
-    return `Analyze the GitHub repository "${owner}/${repo}" and create a GitDiagram-style architecture diagram.
-
-## File Tree
-\`\`\`
-${trimmedTree.join("\n")}
-\`\`\`
-
-## README
-\`\`\`
-${readme.substring(0, 3000)}
-\`\`\`
-
-Produce a JSON object with this exact schema:
-{
-  "techStack": ["technologies used"],
-  "architecturePattern": "pattern name",
-  "description": "2-3 sentence summary",
-  "modules": [
-    {
-      "name": "module name",
-      "type": "one of: api, ui, database, config, utility, test, build, docs, core, middleware, service, model, controller, view, other",
-      "description": "what this module does",
-      "files": ["file paths"],
-      "dependencies": ["other module names"],
-      "entryPoint": "optional main file"
-    }
-  ],
-  "entryPoints": ["main entry file paths"],
-  "dataFlow": [
-    { "from": "module name", "to": "module name", "description": "flow description" }
-  ],
-  "groups": [
-    {
-      "name": "group_id",
-      "label": "Human Readable Group Label (e.g. 'UI / View Components', 'Controller / Orchestration', 'Core Game Engine', 'Dev / Tooling / Deploy', 'Tests')",
-      "color": "hex color (blue=#3b82f6 for UI, purple=#8b5cf6 for controllers/hooks, green=#22c55e for core logic, red=#ef4444 for tests, orange=#f97316 for external/platform, gray=#64748b for config/tooling, cyan=#06b6d4 for types/models, pink=#ec4899 for styles)"
-    }
-  ],
-  "fileNodes": [
-    {
-      "path": "exact file path from tree",
-      "label": "Short descriptive label like 'GameCell (cell interactions)' or 'useGame (state machine + AI)' or 'layout.tsx + globals.css'",
-      "group": "group_id from groups array",
-      "role": "specific role like 'React component', 'Custom hook', 'Game engine', 'Test suite', 'Config file', 'Type definitions'"
-    }
-  ],
-  "fileEdges": [
-    {
-      "from": "source file path",
-      "to": "target file path",
-      "label": "specific relationship like 'renders', 'composes', 'click/tap', 'orchestrates', 'prop_drill(State)', 'styles', 'tests', 'configures', 'lint', 'builds'"
-    }
-  ]
-}
-
-IMPORTANT RULES:
-1. Include 20-60 fileNodes — cover ALL important files, not just a few
-2. Include 30-80 fileEdges — show ALL meaningful relationships between files
-3. Create 4-8 groups that represent architectural layers (like "UI / View Components", "Controller / Orchestration", "Core Engine", "Tests", "Config / Tooling")
-4. Each fileNode label should describe WHAT the file does, not just its name (e.g. "useGame (state machine + AI integration)" not just "useGame")
-5. Each fileEdge label should be SPECIFIC about the relationship type (e.g. "renders_atoms" not just "uses")
-6. Include config/root files too (package.json, next.config, eslint, etc.) in a "Dev / Tooling" group
-7. Include a "Player" or "User" node if applicable to show user interactions entering the system
-8. Group files logically by architectural role, NOT by directory structure`;
-}
-
-const ANNOTATION_SYSTEM_PROMPT = `You are annotating repository files with their architectural roles. For each file, provide a one-line description and identify which architectural module it belongs to.
-
-Respond with valid JSON only.`;
-
-function buildAnnotationUserPrompt(
-    files: string[],
-    modules: string[]
-): string {
-    const trimmedFiles = files.slice(0, 200);
-
-    return `Given these modules: ${JSON.stringify(modules)}
-
-Annotate these files:
-${trimmedFiles.map((f) => `- ${f}`).join("\n")}
-
-Respond with JSON:
-{
-  "annotations": [
-    {
-      "path": "file path",
-      "role": "short role label (e.g. API endpoint, React component, DB model, config, test, utility)",
-      "description": "one-line description of what this file does",
-      "module": "which module this belongs to"
-    }
-  ]
-}`;
-}
-
-// ============================================================================
-// GitDiagram-style 3-Prompt Chain
+/// ============================================================================
+// Simplified 2-Step AI Pipeline
 // ============================================================================
 //
-// Prompt 1: Architecture Explanation  (tree + readme → natural-language analysis)
-// Prompt 2: Component → File Mapping  (explanation + tree → JSON mapping)
-// Prompt 3: Mermaid Code Generation   (explanation + mapping → raw Mermaid code)
+// Step 1: Generate Mermaid diagram code directly (tree + readme → Mermaid)
+//         This is the PRIMARY output — no JSON parsing involved.
+// Step 2: Generate lightweight metadata JSON (techStack, description, modules)
+//         Small schema that fits easily within token limits.
 // ============================================================================
 
-const EXPLAIN_SYSTEM_PROMPT = `You are tasked with explaining to a principal software engineer how to draw the best and most accurate system design diagram / architecture of a given project.
+const MERMAID_DIRECT_SYSTEM_PROMPT = `You are a principal software engineer creating a system design / architecture diagram using Mermaid.js for a GitHub repository. You will receive the file tree and README.
 
-Based on the file tree and README provided:
-1. Determine the project type (full-stack app, CLI tool, library, compiler, game, etc.)
-2. Identify the key architectural patterns (MVC, microservices, monorepo, component-based, etc.)
-3. List the main architectural layers and components (frontend, backend, database, services, etc.)
-4. Note configuration files, build scripts, deployment-related files
-5. Describe the data flow and how components interact
-6. Identify entry points and the user-facing surface
+You MUST output ONLY valid Mermaid code. No markdown fences, no explanation, no commentary. Just pure Mermaid code starting with "flowchart TB".
 
-Produce a detailed natural-language explanation of how to represent this project's architecture as a diagram. Describe WHAT to draw and WHY — the components, their relationships, the groupings, and how data flows through the system. Do NOT produce any diagram code, just the explanation.`;
+Diagram Requirements:
+1. Use "flowchart TB" (top-to-bottom) for vertical, readable layout
+2. Use subgraph blocks to group related components (e.g. "Frontend", "Backend / API", "Core Logic", "Config / Tooling", "Tests")
+3. Create 3-6 subgraphs representing architectural layers
+4. Include 15-40 nodes covering ALL important files — entry points, components, hooks, core logic, tests, configs
+5. Use appropriate node shapes: rectangles ["..."] for services/components, cylinders [("...")] for databases, rounded ("...") for processes
+6. Use SPECIFIC edge labels: "renders", "fetches", "queries", "wraps", "configures", "tests", "imports", "orchestrates", "styles" — NEVER generic "depends on" or "uses"
+7. Use solid arrows --> for direct dependencies and dotted -.-> for optional/runtime relationships
+8. Attach click events to EVERY node: click nodeId "https://github.com/{owner}/{repo}/blob/main/{filepath}"
+9. Node IDs must be safe alphanumeric (use underscores, no dots or special chars)
+10. Node labels inside ["..."] should describe WHAT the file does (e.g. "GameBoard - grid rendering" not just "GameBoard")
+11. Include a "User" external node showing how user input enters the system
+12. Add ALL classDef styles at the end
 
-function buildExplainPrompt(tree: TreeItem[], readme: string): string {
-    const trimmedTree = tree.slice(0, 500).map((t) => t.path);
-    return `<file_tree>\n${trimmedTree.join("\n")}\n</file_tree>\n\n<readme>\n${readme.substring(0, 4000)}\n</readme>\n\nExplain how to draw the architecture diagram for this project.`;
-}
+CRITICAL MERMAID SYNTAX RULES:
+- Edge labels MUST use pipe syntax: A -->|"renders"| B
+- NEVER use colon syntax: A --> B : renders  (THIS IS INVALID and will break the parser)
+- Every edge label MUST be inside |"..."| pipes
+- Example correct edges:
+  User -->|"navigates"| HomePage
+  HomePage -->|"renders"| GameBoard
+  GameBoard -.->|"uses"| GameEngine
 
-const MAPPING_SYSTEM_PROMPT = `You are mapping architectural components to their actual file paths in a repository. Given an architecture explanation and a file tree, produce a JSON mapping of component names to their file paths.
-
-For each identified component or module in the explanation, find the matching file(s) in the file tree.
-
-Respond with ONLY valid JSON in this format:
-{
-  "components": [
-    {
-      "name": "Component Name (e.g. Auth Service, GameBoard, useGame hook)",
-      "description": "One-line description of what this component does",
-      "paths": ["src/components/GameBoard.tsx"],
-      "type": "one of: ui, hook, core, api, service, config, test, doc, style, other"
-    }
-  ]
-}`;
-
-function buildMappingPrompt(
-    explanation: string,
-    tree: TreeItem[],
-    owner: string,
-    repo: string
-): string {
-    const trimmedTree = tree.slice(0, 500).map((t) => t.path);
-    return `<explanation>\n${explanation}\n</explanation>\n\n<file_tree>\n${trimmedTree.join("\n")}\n</file_tree>\n\nRepository: ${owner}/${repo}\n\nMap each architectural component from the explanation to its actual file path(s) in the file tree. Include ALL important files. Respond with JSON only.`;
-}
-
-const MERMAID_GEN_SYSTEM_PROMPT = `You are a principal software engineer creating a system design diagram using Mermaid.js.
-
-You will receive:
-1. A detailed architecture explanation
-2. A component-to-file-path mapping with click URLs
-
-You MUST output ONLY valid Mermaid code. No markdown fences, no explanation, no commentary. Just pure Mermaid code.
-
-Rules:
-- Use "flowchart TB" (top-to-bottom) for vertical, readable layout
-- Use subgraph blocks to group related components (e.g. "Frontend", "Backend", "Database", "Config")
-- Use appropriate node shapes: rectangles ["..."] for services, cylinders [("...")] for databases, rounded ("...") for processes
-- Use SPECIFIC edge labels: "renders", "fetches", "queries", "wraps", "configures", "tests", "imports" — NEVER generic "depends on"
-- Use solid arrows --> for direct dependencies and dotted -.-> for optional/runtime relationships
-- Attach click events to EVERY node: click nodeId "https://github.com/..."
-- Node IDs must be safe alphanumeric (use underscores, no dots or special chars)
-- Node labels inside ["..."] must escape any special characters
-- Include a "User" external node showing how user input enters the system
-- Add classDef styles at the end for color-coding
-
-Required classDef styles (MUST include at end of diagram):
+Required classDef styles (MUST include at end):
 classDef external fill:#0b1220,stroke:#94a3b8,color:#e2e8f0,stroke-width:1px
 classDef ui fill:#0b3a6a,stroke:#93c5fd,color:#eff6ff,stroke-width:1px
 classDef hooks fill:#3b1d5a,stroke:#d8b4fe,color:#f5f3ff,stroke-width:1px
@@ -463,13 +306,97 @@ classDef platform fill:#334155,stroke:#cbd5e1,color:#f1f5f9,stroke-width:1px
 classDef test fill:#3f3f46,stroke:#a1a1aa,color:#fafafa,stroke-width:1px
 classDef doc fill:#1f2937,stroke:#fbbf24,color:#fffbeb,stroke-width:1px`;
 
-function buildMermaidGenPrompt(
-    explanation: string,
-    componentMap: string,
+function buildMermaidDirectPrompt(
     owner: string,
-    repo: string
+    repo: string,
+    tree: TreeItem[],
+    readme: string
 ): string {
-    return `<explanation>\n${explanation}\n</explanation>\n\n<component_mapping>\n${componentMap}\n</component_mapping>\n\nRepository: ${owner}/${repo}\nGitHub base URL for click events: https://github.com/${owner}/${repo}/blob/main/\n\nGenerate the complete Mermaid diagram code. Use the component mapping to create click events for every node. Output ONLY the Mermaid code, starting with "flowchart TB".`;
+    const trimmedTree = tree.slice(0, 300).map((t) => t.path);
+
+    return `Generate a detailed Mermaid architecture diagram for the GitHub repository "${owner}/${repo}".
+
+## File Tree
+${trimmedTree.join("\n")}
+
+## README (excerpt)
+${readme.substring(0, 2500)}
+
+GitHub base URL for click events: https://github.com/${owner}/${repo}/blob/main/
+
+Output ONLY the Mermaid code, starting with "flowchart TB". Include click events for every node pointing to the correct GitHub file URL.`;
+}
+
+const METADATA_SYSTEM_PROMPT = `You are analyzing a GitHub repository and producing a BRIEF metadata summary. Respond with ONLY valid JSON matching the exact schema below. Keep it concise — short descriptions, no large arrays.
+
+{
+  "techStack": ["max 8 technologies"],
+  "architecturePattern": "pattern name",
+  "description": "1-2 sentence summary of the project",
+  "modules": [
+    {
+      "name": "module name",
+      "type": "one of: api, ui, config, utility, test, build, docs, core, other",
+      "description": "one-line description",
+      "files": ["top 5 file paths only"],
+      "dependencies": ["other module names"]
+    }
+  ],
+  "entryPoints": ["main entry file paths (max 3)"]
+}`;
+
+function buildMetadataPrompt(
+    owner: string,
+    repo: string,
+    tree: TreeItem[],
+    readme: string
+): string {
+    const trimmedTree = tree.slice(0, 200).map((t) => t.path);
+
+    return `Analyze "${owner}/${repo}" and return the metadata JSON.
+
+File tree (truncated):
+${trimmedTree.join("\n")}
+
+README (excerpt):
+${readme.substring(0, 1500)}`;
+}
+
+// --- Strip markdown fences and sanitize Mermaid output ---
+
+function stripMermaidFences(raw: string): string {
+    return raw
+        .replace(/^```mermaid\n?/i, "")
+        .replace(/^```\n?/i, "")
+        .replace(/\n?```$/i, "")
+        .trim();
+}
+
+/**
+ * Fix common Mermaid syntax issues from AI output:
+ * - Convert "A --> B : label" to 'A -->|"label"| B'
+ * - Convert "A -.-> B : label" to 'A -.->|"label"| B'
+ */
+function sanitizeMermaidCode(code: string): string {
+    const lines = code.split("\n");
+    const fixed = lines.map(line => {
+        // Match: NodeA --> NodeB : some label
+        // Match: NodeA -.-> NodeB : some label
+        const edgeWithColon = line.match(/^(\s*)(\S+)\s+(--+>|-\.->)\s+(\S+)\s*:\s*(.+)$/);
+        if (edgeWithColon) {
+            const [, indent, from, arrow, to, label] = edgeWithColon;
+            const cleanLabel = label.trim().replace(/"/g, "'");
+            return `${indent}${from} ${arrow}|"${cleanLabel}"| ${to}`;
+        }
+        return line;
+    });
+    return fixed.join("\n");
+}
+
+function cleanJsonString(raw: string): string {
+    let clean = raw.replace(/^```(json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+    clean = clean.replace(/,\s*([\]}])/g, "$1"); // trailing comma removal
+    return clean;
 }
 
 // --- Pipeline Steps ---
@@ -483,86 +410,74 @@ export async function analyzeRepository(
     aiConfig?: AIConfig
 ): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[]; source: "ai" | "fallback"; fallbackReason?: string }> {
     try {
-        // Step 1: Understand — analyze the codebase
-        onProgress?.("understand", "Analyzing codebase architecture with AI...");
+        // ── Step 1: Generate Mermaid diagram directly ──────────────────
+        // This is the critical path — outputs raw Mermaid code, not JSON.
+        // No JSON parsing === no truncation failures.
+        onProgress?.("understand", "Generating AI architecture diagram...");
 
-        const analysisRaw = await aiCompletion(
-            ANALYSIS_SYSTEM_PROMPT,
-            buildAnalysisUserPrompt(owner, repo, tree, readme),
-            true,
-            aiConfig
-        );
+        let mermaidCode: string;
+        try {
+            const mermaidRaw = await aiCompletion(
+                MERMAID_DIRECT_SYSTEM_PROMPT,
+                buildMermaidDirectPrompt(owner, repo, tree, readme),
+                false, // NOT json mode — plain text output
+                aiConfig
+            );
+            mermaidCode = stripMermaidFences(mermaidRaw);
+            mermaidCode = sanitizeMermaidCode(mermaidCode);
+
+            // Basic validation: must start with "flowchart"
+            if (!mermaidCode.toLowerCase().startsWith("flowchart")) {
+                console.warn("AI Mermaid output doesn't start with 'flowchart', falling back");
+                mermaidCode = generateMermaidFromTree(tree, owner, repo);
+            }
+        } catch (err) {
+            console.error("AI Mermaid generation failed, using fallback:", err);
+            mermaidCode = generateMermaidFromTree(tree, owner, repo);
+        }
+
+        // ── Step 2: Generate lightweight metadata ─────────────────────
+        // Small JSON schema that always fits within token limits.
+        onProgress?.("enrich", "Generating project metadata...");
 
         let architecture: ArchitectureAnalysis;
         try {
-            architecture = JSON.parse(analysisRaw);
-        } catch {
-            throw new Error("Failed to parse AI analysis response as JSON");
-        }
-
-        // Step 2: GitDiagram-style 3-prompt chain for Mermaid generation
-        try {
-            // Prompt 1: Architecture explanation
-            onProgress?.("explain", "Analyzing architecture (step 1/3)...");
-            const explanation = await aiCompletion(
-                EXPLAIN_SYSTEM_PROMPT,
-                buildExplainPrompt(tree, readme),
-                false,
+            const metadataRaw = await aiCompletion(
+                METADATA_SYSTEM_PROMPT,
+                buildMetadataPrompt(owner, repo, tree, readme),
+                true, // json mode
                 aiConfig
             );
 
-            // Prompt 2: Component → file path mapping
-            onProgress?.("mapping", "Mapping components to files (step 2/3)...");
-            const componentMapRaw = await aiCompletion(
-                MAPPING_SYSTEM_PROMPT,
-                buildMappingPrompt(explanation, tree, owner, repo),
-                true,
-                aiConfig
-            );
+            const cleaned = cleanJsonString(metadataRaw);
+            const metadata = JSON.parse(cleaned);
 
-            // Prompt 3: Mermaid code generation
-            onProgress?.("diagram", "Generating Mermaid diagram (step 3/3)...");
-            const mermaidCode = await aiCompletion(
-                MERMAID_GEN_SYSTEM_PROMPT,
-                buildMermaidGenPrompt(explanation, componentMapRaw, owner, repo),
-                false,
-                aiConfig
-            );
-
-            // Strip markdown code fences if present
-            architecture.mermaidDiagram = mermaidCode
-                .replace(/^```mermaid\n?/i, "")
-                .replace(/^```\n?/i, "")
-                .replace(/\n?```$/i, "")
-                .trim();
+            architecture = {
+                techStack: metadata.techStack ?? [],
+                architecturePattern: metadata.architecturePattern ?? "Unknown",
+                description: metadata.description ?? `${owner}/${repo}`,
+                modules: (metadata.modules ?? []).map((m: Record<string, unknown>) => ({
+                    name: m.name ?? "Unknown",
+                    type: m.type ?? "other",
+                    description: m.description ?? "",
+                    files: (m.files as string[]) ?? [],
+                    dependencies: (m.dependencies as string[]) ?? [],
+                })),
+                entryPoints: metadata.entryPoints ?? [],
+                dataFlow: [],
+                mermaidDiagram: mermaidCode,
+            };
         } catch (err) {
-            console.error("3-prompt Mermaid chain failed, using fallback generator:", err);
-            // Mermaid generation failed but analysis succeeded — use fallback generator
-            architecture.mermaidDiagram = generateMermaidFromTree(tree, owner, repo);
+            console.warn("Metadata generation failed, using minimal metadata:", err);
+            // Metadata failed but Mermaid succeeded — still a win, use mock metadata
+            const mock = getMockAnalysis(owner, repo, tree);
+            architecture = {
+                ...mock.architecture,
+                mermaidDiagram: mermaidCode,
+            };
         }
 
-        // Step 3: Enrich — annotate files
-        onProgress?.("enrich", "Enriching file annotations...");
-
-        const filePaths = tree.filter((t) => t.type === "blob").map((t) => t.path);
-        const moduleNames = architecture.modules.map((m) => m.name);
-
-        let annotations: FileAnnotation[];
-        try {
-            const annotationRaw = await aiCompletion(
-                ANNOTATION_SYSTEM_PROMPT,
-                buildAnnotationUserPrompt(filePaths, moduleNames),
-                true,
-                aiConfig
-            );
-            const parsed = JSON.parse(annotationRaw);
-            annotations = parsed.annotations ?? [];
-        } catch {
-            // Annotation failed — return empty annotations
-            annotations = [];
-        }
-
-        return { architecture, annotations, source: "ai" };
+        return { architecture, annotations: [], source: "ai" };
     } catch (err) {
         // ALL AI failed — fall back to mock analysis entirely
         console.error("AI pipeline failed entirely, using mock analysis:", err);

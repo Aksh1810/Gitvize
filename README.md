@@ -9,9 +9,9 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 ### 📐 Architecture Diagram
 
 - Auto-generated **Mermaid flowcharts** showing how files relate to each other
+- **💎 Premium AI Diagramming**: Seamlessly leverages `gemini-2.5-flash` to generate ultra-accurate, context-aware architectural diagrams from your repository's code and README
 - Files grouped into layers: App Routes, UI Components, Logic/Core, Config, Tests, Docs
-- Draggable nodes, pan/zoom, export to PNG, and copy Mermaid code
-- Interactive Mermaid rendering with pan/zoom + export
+- Interactive Mermaid rendering with pan/zoom, draggable nodes, and export to PNG / Mermaid code
 
 ### 🌳 File Tree
 
@@ -68,6 +68,7 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 1. Paste any GitHub repository URL (e.g. `https://github.com/facebook/react`)
 2. Gitvize fetches the repo's file tree, branches, commits, and dependencies
 3. Switch between tabs: **Architecture**, **File Tree**, **Branches**, **Dependencies**, **Contributors**
+4. **For AI Features:** Click the "AI" or "Settings" button in the header, enter your Gemini API key, and generate Premium Diagrams!
 
 ## 📁 Project Structure
 

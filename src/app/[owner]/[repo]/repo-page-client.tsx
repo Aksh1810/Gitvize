@@ -137,8 +137,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             let aiSettings: { provider: string; apiKey: string; model: string } | undefined;
             if (typeof window !== "undefined") {
                 try {
-                    const raw = localStorage.getItem("gitviz_ai_settings");
-                    if (raw) aiSettings = JSON.parse(raw);
+                    const saved = loadAISettings();
+                    if (saved) aiSettings = saved;
                 } catch { /* ignore */ }
             }
 

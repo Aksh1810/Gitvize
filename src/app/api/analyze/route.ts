@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
                     provider: aiSettings!.provider,
                     apiKey: clientKey,
                     model: aiSettings!.model ?? (aiSettings!.provider === "gemini"
-                        ? "gemini-2.0-flash"
+                        ? "gemini-2.5-flash"
                         : aiSettings!.provider === "anthropic"
                             ? "claude-3-5-sonnet-20241022"
                             : "gpt-4o-mini"),

@@ -30,7 +30,7 @@ const PROVIDER_DOCS = {
 function inferProviderAndModel(apiKey: string): { provider: AISettings["provider"]; model: string } | null {
     const key = apiKey.trim();
     if (key.startsWith("AIza")) {
-        return { provider: "gemini", model: "gemini-2.0-flash" };
+        return { provider: "gemini", model: "gemini-2.5-flash" };
     }
     if (key.startsWith("sk-ant-")) {
         return { provider: "anthropic", model: "claude-3-5-sonnet-20241022" };
@@ -47,20 +47,34 @@ const LEGACY_STORAGE_KEY = "gitviz_ai_settings";
 export function loadAISettings(): AISettings | null {
     if (typeof window === "undefined") return null;
     try {
-        const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+        // In case they had old settings stored permanently, clean them up
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+
+        const raw = sessionStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(LEGACY_STORAGE_KEY);
         if (!raw) return null;
-        return JSON.parse(raw) as AISettings;
+        const parsed = JSON.parse(raw) as AISettings;
+        if (parsed.model === "gemini-2.0-flash") {
+            parsed.model = "gemini-2.5-flash";
+        }
+        return parsed;
     } catch {
         return null;
     }
 }
 
 export function saveAISettings(settings: AISettings) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    sessionStorage.removeItem(LEGACY_STORAGE_KEY);
+    // Cleanup any permanent traces
+    localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
 export function clearAISettings() {
+    sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(LEGACY_STORAGE_KEY);
+    // Cleanup any permanent traces
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
