@@ -291,10 +291,12 @@ CRITICAL MERMAID SYNTAX RULES:
 - Edge labels MUST use pipe syntax: A -->|"renders"| B
 - NEVER use colon syntax: A --> B : renders  (THIS IS INVALID and will break the parser)
 - Every edge label MUST be inside |"..."| pipes
-- Example correct edges:
-  User -->|"navigates"| HomePage
-  HomePage -->|"renders"| GameBoard
-  GameBoard -.->|"uses"| GameEngine
+- TO APPLY STYLES, append the style class directly to the node with \`:::\` (e.g. \`HomePage["Home Page"]:::ui\`)
+- NEVER use the "class" keyword to apply styles (e.g. \`class HomePage ui\` is STRICTLY FORBIDDEN)
+- Example correct edges and nodes:
+  User -->|"navigates"| HomePage:::ui
+  HomePage -->|"renders"| GameBoard:::core
+  GameBoard -.->|"uses"| GameEngine:::core
 
 Required classDef styles (MUST include at end):
 classDef external fill:#0b1220,stroke:#94a3b8,color:#e2e8f0,stroke-width:1px
@@ -388,6 +390,12 @@ function sanitizeMermaidCode(code: string): string {
             const cleanLabel = label.trim().replace(/"/g, "'");
             return `${indent}${from} ${arrow}|"${cleanLabel}"| ${to}`;
         }
+        
+        // Strip invalid `class Node1,Node2 style` lines (but keep classDef)
+        if (/^\s*class\s+(?!Def\b)/.test(line)) {
+            return `%% Removed invalid styling line: ${line.trim()}`;
+        }
+        
         return line;
     });
     return fixed.join("\n");

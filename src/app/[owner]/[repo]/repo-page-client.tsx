@@ -126,6 +126,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         const cached = getCachedDiagram(owner, repo);
 
         setIsAnalyzing(true);
+        let toastId: string | number | undefined;
+        if (mode === "premium") {
+            toastId = toast.loading("Generating Premium Architecture Diagram...");
+        }
+
         setPipelineSteps([
             { step: "ingest", status: "running", message: "Fetching file tree..." },
             { step: "understand", status: "pending", message: "Waiting..." },
@@ -207,17 +212,20 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     if (source === "ai") {
                         cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "ai");
                         toast.success("Premium AI diagram generated", {
+                            id: toastId,
                             description: "Generated a fresh diagram for this repository",
                         });
                     } else {
                         if (cached) {
                             setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
                             toast.warning("Premium AI unavailable", {
+                                id: toastId,
                                 description: "Showing cached diagram",
                             });
                         } else {
                             cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback");
                             toast.warning("Premium AI unavailable", {
+                                id: toastId,
                                 description: analysisResult.fallbackReason
                                     ? analysisResult.fallbackReason.slice(0, 180)
                                     : "Showing smart diagram",
@@ -248,26 +256,45 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai");
                     if (!data.mock) {
                         toast.success("Premium AI diagram generated", {
+                            id: toastId,
                             description: "Generated a fresh diagram for this repository",
                         });
+                    } else if (toastId) {
+                        toast.dismiss(toastId);
                     }
                 }
             }
         } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
             setPipelineSteps((prev) =>
                 prev.map((s) =>
                     s.status === "running"
-                        ? { ...s, status: "error" as const, message: String(err) }
+                        ? { ...s, status: "error" as const, message: errorMsg }
                         : s
                 )
             );
             // If AI failed, try serving from cache
-            if (mode === "premium" && cached) {
-                setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
-                toast.warning("AI analysis failed, showing cached diagram");
+            if (mode === "premium") {
+                if (cached) {
+                    setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
+                    toast.error("Analysis Failed", {
+                        id: toastId,
+                        description: `${errorMsg} — Showing cached diagram instead.`,
+                    });
+                } else {
+                    toast.error("Analysis Failed", {
+                        id: toastId,
+                        description: errorMsg,
+                    });
+                }
             }
         } finally {
             setIsAnalyzing(false);
+            // If toastId is still visible as loading and wasn't swept by success/error (e.g. edge cases), dismiss it safely.
+            // Sonner ignores dismiss() if it's already updated to a strict state like success/error/warning that auto-closes.
+            if (toastId) {
+                setTimeout(() => toast.dismiss(toastId), 5000); 
+            }
         }
     }, [repoData, owner, repo]);
 
@@ -350,6 +377,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     owner={owner}
                     repo={repo}
                     tree={repoData?.fileTree?.tree}
+                    onFallback={() => setAnalysis(null)}
                 />
             );
         }

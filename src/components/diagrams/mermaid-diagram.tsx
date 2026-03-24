@@ -13,9 +13,10 @@ import { Button } from "@/components/ui/button";
 interface MermaidDiagramProps {
     code: string;
     onNodeClick?: (path: string) => void;
+    onFallback?: () => void;
 }
 
-export default function MermaidDiagram({ code, onNodeClick: _onNodeClick }: MermaidDiagramProps) {
+export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFallback }: MermaidDiagramProps) {
     void _onNodeClick;
     const containerRef = useRef<HTMLDivElement>(null);
     const [svgContent, setSvgContent] = useState<string>("");
@@ -409,6 +410,17 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick }: Merm
                         Diagram Render Error
                     </h3>
                     <p className="text-sm text-gray-400 mb-4">{error}</p>
+                    
+                    {onFallback && (
+                        <Button 
+                            variant="outline" 
+                            onClick={onFallback}
+                            className="w-full mb-4 bg-slate-900 border-white/10 hover:bg-slate-800 text-white"
+                        >
+                            Show Smart Diagram Instead
+                        </Button>
+                    )}
+
                     <details className="text-left">
                         <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
                             View Mermaid Code

@@ -17,6 +17,7 @@ interface ArchitectureDiagramProps {
     owner: string;
     repo: string;
     tree?: TreeItem[];
+    onFallback?: () => void;
 }
 
 export default function ArchitectureDiagram({
@@ -24,6 +25,7 @@ export default function ArchitectureDiagram({
     owner,
     repo,
     tree,
+    onFallback,
 }: ArchitectureDiagramProps) {
     const router = useRouter();
 
@@ -56,6 +58,6 @@ export default function ArchitectureDiagram({
     }
 
     return (
-        <MermaidDiagram code={mermaidCode} onNodeClick={handleNodeClick} />
+        <MermaidDiagram code={mermaidCode} onNodeClick={handleNodeClick} onFallback={onFallback} />
     );
 }
