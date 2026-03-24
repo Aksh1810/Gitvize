@@ -61,6 +61,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const [analysis, setAnalysis] = useState<{
         architecture: ArchitectureAnalysis;
         annotations: FileAnnotation[];
+        source?: "ai" | "fallback" | "smart";
     } | null>(null);
     const [pipelineSteps, setPipelineSteps] = useState<
         Array<{ step: PipelineStep; status: PipelineStatusType; message: string }>
@@ -196,7 +197,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                                     if (event.data) {
                                         analysisResult = event.data;
-                                        setAnalysis(event.data);
+                                        setAnalysis({
+                                            ...event.data,
+                                            source: event.data.source ?? "ai"
+                                        });
                                     }
                                 } catch {
                                     // Skip malformed events
@@ -217,7 +221,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         });
                     } else {
                         if (cached) {
-                            setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
+                            setAnalysis({ architecture: cached.architecture, annotations: cached.annotations, source: cached.source });
                             toast.warning("Premium AI unavailable", {
                                 id: toastId,
                                 description: "Showing cached diagram",
@@ -241,6 +245,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 const result = {
                     architecture: data.architecture,
                     annotations: data.annotations,
+                    source: data.mode === "smart" ? ("smart" as const) : (data.mock ? ("fallback" as const) : ("ai" as const)),
                 };
 
                 setPipelineSteps([
@@ -276,7 +281,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             // If AI failed, try serving from cache
             if (mode === "premium") {
                 if (cached) {
-                    setAnalysis({ architecture: cached.architecture, annotations: cached.annotations });
+                    setAnalysis({ architecture: cached.architecture, annotations: cached.annotations, source: cached.source });
                     toast.error("Analysis Failed", {
                         id: toastId,
                         description: `${errorMsg} — Showing cached diagram instead.`,
@@ -560,7 +565,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                     aria-hidden={activeTab !== "architecture"}
                                 >
                                     {activeTab === "architecture" && !isAnalyzing && (
-                                        <div className="absolute top-3 right-3 z-20">
+                                        <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+                                            {analysis?.source === "ai" && (
+                                                <button
+                                                    onClick={() => setAnalysis(null)}
+                                                    className="ui-micro px-3 py-2 pro-control pro-focus-ring bg-slate-800 text-white border border-slate-700 hover:bg-slate-700 font-medium shadow-sm transition-all"
+                                                >
+                                                    Show Normal Diagram
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => {
                                                     if (!hasUserAIKey) {
