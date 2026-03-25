@@ -192,6 +192,9 @@ export interface DependencyNodeData {
   version?: string;
   isDirect: boolean;
   dependentCount: number;
+  role?: "project" | "group" | "dependency";
+  isSelected?: boolean;
+  isDimmed?: boolean;
 }
 
 // --- UI Types ---

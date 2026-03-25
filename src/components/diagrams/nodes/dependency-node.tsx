@@ -10,6 +10,8 @@ function DependencyNode({ data }: NodeProps) {
     const baseSize = 48;
     const size = Math.min(baseSize + d.dependentCount * 4, 120);
     const nodeWidth = Math.max(size + 80, 140);
+    const isSelected = Boolean(d.isSelected);
+    const isDimmed = Boolean(d.isDimmed);
 
     return (
         <>
@@ -18,10 +20,14 @@ function DependencyNode({ data }: NodeProps) {
                 className="node-glow rounded-xl flex flex-col items-center justify-center cursor-pointer p-3"
                 style={{
                     background: "rgba(15, 23, 42, 0.8)",
-                    border: `1px solid ${d.isDirect ? "rgba(99, 102, 241, 0.3)" : "rgba(148, 163, 184, 0.15)"}`,
+                    border: isSelected
+                        ? "1px solid rgba(250, 204, 21, 0.95)"
+                        : `1px solid ${d.isDirect ? "rgba(99, 102, 241, 0.3)" : "rgba(148, 163, 184, 0.15)"}`,
                     backdropFilter: "blur(8px)",
                     width: `${nodeWidth}px`,
                     minHeight: `${size}px`,
+                    opacity: isDimmed ? 0.28 : 1,
+                    boxShadow: isSelected ? "0 0 0 1px rgba(250,204,21,0.45), 0 0 24px rgba(250,204,21,0.2)" : "none",
                 }}
             >
                 <Package

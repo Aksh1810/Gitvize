@@ -20,6 +20,7 @@ interface FlowWrapperProps {
     initialEdges: Edge[];
     nodeTypes?: NodeTypes;
     onNodeClick?: (event: React.MouseEvent, node: Node) => void;
+    onPaneClick?: (event: React.MouseEvent) => void;
     className?: string;
     fitViewOptions?: { padding?: number; maxZoom?: number };
 }
@@ -29,6 +30,7 @@ export default function FlowWrapper({
     initialEdges,
     nodeTypes,
     onNodeClick,
+    onPaneClick,
     className = "",
     fitViewOptions = { padding: 0.2, maxZoom: 1.5 },
 }: FlowWrapperProps) {
@@ -48,6 +50,13 @@ export default function FlowWrapper({
         [onNodeClick]
     );
 
+    const handlePaneClick = useCallback(
+        (event: React.MouseEvent) => {
+            onPaneClick?.(event);
+        },
+        [onPaneClick]
+    );
+
     return (
         <div className={`w-full h-full ${className}`}>
             <ReactFlow
@@ -56,6 +65,7 @@ export default function FlowWrapper({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onNodeClick={handleNodeClick}
+                onPaneClick={handlePaneClick}
                 nodeTypes={nodeTypes}
                 fitView
                 fitViewOptions={fitViewOptions}
