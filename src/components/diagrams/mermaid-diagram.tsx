@@ -16,12 +16,31 @@ interface MermaidDiagramProps {
     onFallback?: () => void;
 }
 
+function sanitizeMermaidForRender(raw: string): string {
+    const withoutFences = raw
+        .replace(/^```mermaid\n?/i, "")
+        .replace(/^```\n?/i, "")
+        .replace(/\n?```$/i, "")
+        .trim();
+
+    return withoutFences
+        .split("\n")
+        .map((line) => {
+            const edgeWithColon = line.match(/^(\s*)(\S+)\s+(--+>|-\.->)\s+(\S+)\s*:\s*(.+)$/);
+            if (!edgeWithColon) return line;
+            const [, indent, from, arrow, to, label] = edgeWithColon;
+            return `${indent}${from} ${arrow}|"${label.trim().replace(/"/g, "'")}"| ${to}`;
+        })
+        .join("\n");
+}
+
 export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFallback }: MermaidDiagramProps) {
     void _onNodeClick;
     const containerRef = useRef<HTMLDivElement>(null);
     const [svgContent, setSvgContent] = useState<string>("");
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+    const [showStaleWarning, setShowStaleWarning] = useState(false);
     const [viewTransform, setViewTransform] = useState({ scale: 1, x: 0, y: 0 });
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
@@ -29,6 +48,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     const panStartRef = useRef({ x: 0, y: 0 });
     const panOriginRef = useRef({ x: 0, y: 0 });
     const fitRafRef = useRef<number[]>([]);
+    const lastGoodSvgRef = useRef<string>("");
     const viewTransformRef = useRef(viewTransform);
     const panOffsetRef = useRef(panOffset);
 
@@ -123,9 +143,9 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
         if (!code) return;
 
         let cancelled = false;
-
-        async function renderMermaid() {
+        const debounceTimer = window.setTimeout(async () => {
             setIsRendering(true);
+            setShowStaleWarning(false);
             setError(null);
 
             try {
@@ -164,30 +184,37 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                 });
 
                 const uniqueId = `mermaid-${Date.now()}`;
-                const { svg } = await mermaid.render(uniqueId, code);
+                const sanitizedCode = sanitizeMermaidForRender(code);
+                const { svg } = await mermaid.render(uniqueId, sanitizedCode);
 
                 if (!cancelled) {
-                    // Set HTML content
                     setSvgContent(svg);
+                    lastGoodSvgRef.current = svg;
                     setIsRendering(false);
                 }
             } catch (err) {
                 if (!cancelled) {
                     console.error("Mermaid render error:", err);
-                    setError(
-                        err instanceof Error
-                            ? err.message
-                            : "Failed to render diagram"
-                    );
+
+                    if (lastGoodSvgRef.current) {
+                        setSvgContent(lastGoodSvgRef.current);
+                        setShowStaleWarning(true);
+                        setError(null);
+                    } else {
+                        setError(
+                            err instanceof Error
+                                ? err.message
+                                : "Failed to render diagram"
+                        );
+                    }
                     setIsRendering(false);
                 }
             }
-        }
-
-        renderMermaid();
+        }, 120);
 
         return () => {
             cancelled = true;
+            window.clearTimeout(debounceTimer);
         };
     }, [code]);
 
@@ -436,6 +463,11 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
 
     return (
         <div className="relative h-full w-full overflow-hidden diagram-dot-field">
+            {showStaleWarning && (
+                <div className="absolute top-4 right-4 z-20 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 backdrop-blur-sm">
+                    Showing last valid diagram. Current Mermaid output has syntax issues.
+                </div>
+            )}
             {/* Controls — positioned on the LEFT to avoid overlap with parent's "Generate Premium Diagram" button on the right */}
             <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
                 <Button

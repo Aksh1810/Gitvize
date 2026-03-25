@@ -114,6 +114,41 @@ function classifyFile(path: string): { layer: ArchLayer; roleLabel: string } {
     return { layer: "other", roleLabel: baseName };
 }
 
+function scorePathForArchitecture(path: string): number {
+    const lower = path.toLowerCase();
+    const name = lower.split("/").pop() || "";
+    let score = 0;
+
+    if (!path.includes("/")) score += 30;
+    if (name === "package.json" || name === "tsconfig.json" || name === "next.config.ts") score += 35;
+    if (name === "layout.tsx" || name === "layout.ts") score += 45;
+    if (name === "page.tsx" || name === "page.ts") score += 42;
+    if (name === "route.ts" || name === "route.js") score += 40;
+    if (name.startsWith("index.") || name.startsWith("main.") || name.startsWith("app.")) score += 28;
+
+    if (lower.includes("/app/")) score += 24;
+    if (lower.includes("/api/")) score += 22;
+    if (lower.includes("/components/")) score += 18;
+    if (lower.includes("/lib/") || lower.includes("/core/") || lower.includes("/services/")) score += 16;
+    if (lower.includes("/types/")) score += 12;
+    if (lower.includes("/test") || lower.includes(".spec.") || lower.includes(".test.")) score += 8;
+    if (lower.endsWith(".md")) score -= 4;
+
+    const depth = path.split("/").length;
+    score += Math.max(0, 6 - depth);
+
+    return score;
+}
+
+function computeAdaptiveMaxFiles(tree: TreeItem[]): number {
+    const blobCount = tree.filter((t) => t.type === "blob").length;
+    if (blobCount <= 80) return 28;
+    if (blobCount <= 200) return 36;
+    if (blobCount <= 500) return 46;
+    if (blobCount <= 1200) return 56;
+    return 64;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Smart file selection for large repos                               */
 /* ------------------------------------------------------------------ */
@@ -158,9 +193,14 @@ function selectImportantFiles(tree: TreeItem[], maxFiles: number = 60): TreeItem
         }
     }
 
+    const byScoreDesc = (a: TreeItem, b: TreeItem) => scorePathForArchitecture(b.path) - scorePathForArchitecture(a.path);
+    tier1.sort(byScoreDesc);
+    tier2.sort(byScoreDesc);
+    tier3.sort(byScoreDesc);
+
     // Take from each tier to fill up to maxFiles
     const result: TreeItem[] = [];
-    const budget1 = Math.min(tier1.length, Math.ceil(maxFiles * 0.3));
+    const budget1 = Math.min(tier1.length, Math.ceil(maxFiles * 0.35));
     const budget2 = Math.min(tier2.length, maxFiles - budget1);
     const budget3 = Math.min(tier3.length, maxFiles - budget1 - budget2);
 
@@ -168,7 +208,7 @@ function selectImportantFiles(tree: TreeItem[], maxFiles: number = 60): TreeItem
     result.push(...tier2.slice(0, budget2));
     result.push(...tier3.slice(0, budget3));
 
-    return result.slice(0, maxFiles);
+    return result.slice(0, maxFiles).sort(byScoreDesc);
 }
 
 /* ------------------------------------------------------------------ */
@@ -219,13 +259,18 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
         });
     });
 
-    // 3. Pages/routes → UI components
+    // 3. Pages/routes → UI components (prefer nearby files by path overlap)
     const appFiles = files.filter(f => f.layer === "app");
     const uiFiles = files.filter(f => f.layer === "ui" && f.baseName !== "index");
     if (appFiles.length > 0 && uiFiles.length > 0) {
-        appFiles.slice(0, 4).forEach(p => {
-            uiFiles.slice(0, 3).forEach(c => {
-                addEdge(safeId(p.path), safeId(c.path), "shows");
+        appFiles.slice(0, 8).forEach(p => {
+            const routeSegment = p.dir.split("/").pop() || "";
+            const preferred = uiFiles
+                .filter((c) => routeSegment && c.path.toLowerCase().includes(routeSegment.toLowerCase()))
+                .slice(0, 2);
+            const fallback = uiFiles.slice(0, preferred.length > 0 ? 1 : 3);
+            [...preferred, ...fallback].slice(0, 3).forEach(c => {
+                addEdge(safeId(p.path), safeId(c.path), "renders");
             });
         });
     }
@@ -233,8 +278,12 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
     // 4. UI components → logic (hooks, utils, core)
     const logicFiles = files.filter(f => f.layer === "logic" && f.baseName !== "index");
     if (uiFiles.length > 0 && logicFiles.length > 0) {
-        uiFiles.slice(0, 4).forEach(u => {
-            logicFiles.slice(0, 3).forEach(l => {
+        uiFiles.slice(0, 10).forEach(u => {
+            const preferred = logicFiles
+                .filter((l) => l.baseName.toLowerCase().includes(u.baseName.toLowerCase()) || u.baseName.toLowerCase().includes(l.baseName.toLowerCase()))
+                .slice(0, 2);
+            const fallback = logicFiles.slice(0, preferred.length > 0 ? 1 : 3);
+            [...preferred, ...fallback].slice(0, 3).forEach(l => {
                 addEdge(safeId(u.path), safeId(l.path), "uses");
             });
         });
@@ -242,8 +291,10 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
 
     // 5. App → logic
     if (appFiles.length > 0 && logicFiles.length > 0) {
-        appFiles.slice(0, 3).forEach(a => {
-            logicFiles.slice(0, 2).forEach(l => {
+        appFiles.slice(0, 6).forEach(a => {
+            const preferred = logicFiles.filter((l) => l.path.includes("/api/") || l.baseName === "route" || l.baseName.includes("service")).slice(0, 2);
+            const fallback = logicFiles.slice(0, preferred.length > 0 ? 1 : 2);
+            [...preferred, ...fallback].slice(0, 2).forEach(l => {
                 addEdge(safeId(a.path), safeId(l.path), "calls");
             });
         });
@@ -253,8 +304,8 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
     const typeFiles = logicFiles.filter(f => f.baseName.includes("type") || f.baseName.includes("interface"));
     const nonTypeLogic = logicFiles.filter(f => !f.baseName.includes("type") && !f.baseName.includes("interface"));
     if (typeFiles.length > 0 && nonTypeLogic.length > 0) {
-        nonTypeLogic.slice(0, 4).forEach(c => {
-            typeFiles.slice(0, 2).forEach(t => {
+        nonTypeLogic.slice(0, 8).forEach(c => {
+            typeFiles.slice(0, 3).forEach(t => {
                 addEdge(safeId(t.path), safeId(c.path), "defines types for");
             });
         });
@@ -278,8 +329,17 @@ function inferEdges(files: ClassifiedFile[]): MermaidEdge[] {
         }
     });
 
-    // Cap total edges at 60 to keep diagram readable
-    return edges.slice(0, 60);
+    // 8. API route/service nodes connect to core utilities
+    const apiLike = logicFiles.filter((f) => f.path.includes("/api/") || f.baseName === "route" || f.baseName.includes("service"));
+    const utilityLike = logicFiles.filter((f) => f.path.includes("/lib/") || f.path.includes("/utils/") || f.baseName.includes("util"));
+    apiLike.slice(0, 8).forEach((apiNode) => {
+        utilityLike.slice(0, 2).forEach((utilNode) => {
+            addEdge(safeId(apiNode.path), safeId(utilNode.path), "orchestrates", true);
+        });
+    });
+
+    // Cap total edges to keep diagram readable and renderer-safe.
+    return edges.slice(0, 90);
 }
 
 /* ------------------------------------------------------------------ */
@@ -292,7 +352,7 @@ export function generateMermaidFromTree(
     repo: string
 ): string {
     // Select the most important files
-    const selectedTrees = selectImportantFiles(tree, 25);
+    const selectedTrees = selectImportantFiles(tree, computeAdaptiveMaxFiles(tree));
 
     // Classify files
     const files: ClassifiedFile[] = selectedTrees.map(t => {
@@ -319,7 +379,7 @@ export function generateMermaidFromTree(
     });
 
     const lines: string[] = [];
-    lines.push("flowchart LR");
+    lines.push("flowchart TB");
 
     // Render subgraphs in a logical order
     const layerOrder: ArchLayer[] = ["config", "app", "ui", "logic", "test", "docs", "other"];
@@ -345,6 +405,7 @@ export function generateMermaidFromTree(
     // External nodes
     lines.push("");
     lines.push(`  User["User"]:::external`);
+    lines.push(`  GitHubAPI["GitHub API"]:::external`);
 
     // Connect user to first app/page
     const firstApp = files.find(f => f.layer === "app" && (f.baseName === "page" || f.baseName === "Home"));
@@ -352,11 +413,16 @@ export function generateMermaidFromTree(
         lines.push(`  User -->|"visits"| ${safeId(firstApp.path)}`);
     }
 
+    const apiTarget = files.find((f) => f.path.includes("/api/") || f.baseName === "route" || f.baseName.includes("service"));
+    if (apiTarget) {
+        lines.push(`  ${safeId(apiTarget.path)} -->|"fetches"| GitHubAPI`);
+    }
+
     // Infer and render edges
     const edges = inferEdges(files);
     if (edges.length > 0) {
         lines.push("");
-        edges.slice(0, 20).forEach(e => {
+        edges.slice(0, 40).forEach(e => {
             const arrow = e.dotted ? "-.->" : "-->";
             const label = safeLabel(e.label);
             lines.push(`  ${e.fromId} ${arrow}|"${label}"| ${e.toId}`);
