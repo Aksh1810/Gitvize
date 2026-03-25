@@ -60,39 +60,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
         panOffsetRef.current = panOffset;
     }, [panOffset]);
 
-    const getDiagramBBox = useCallback((svgEl: SVGSVGElement): DOMRect | null => {
-        // Prefer full SVG content bounds first (closest to what users visually perceive).
-        try {
-            const b = svgEl.getBBox();
-            if (b.width > 0 && b.height > 0) {
-                return new DOMRect(b.x, b.y, b.width, b.height);
-            }
-        } catch {
-            // Fall through to group/viewBox fallback.
-        }
-
-        // Mermaid often nests graph geometry under a group; use it as a fallback.
-        const group = svgEl.querySelector("g");
-        if (group instanceof SVGGElement) {
-            try {
-                const b = group.getBBox();
-                if (b.width > 0 && b.height > 0) {
-                    return new DOMRect(b.x, b.y, b.width, b.height);
-                }
-            } catch {
-                // Ignore and fall through.
-            }
-        }
-
-        const viewBox = svgEl.viewBox?.baseVal;
-        if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
-            return new DOMRect(viewBox.x, viewBox.y, viewBox.width, viewBox.height);
-        }
-
-        return null;
-    }, []);
-
-    const computeFitTransform = useCallback((forcedScale?: number) => {
+    const computeFitTransform = useCallback(() => {
         const container = containerRef.current;
         if (!container) return { scale: 1, x: 0, y: 0 };
 
@@ -103,30 +71,32 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
         const containerHeight = container.clientHeight;
         if (!containerWidth || !containerHeight) return { scale: 1, x: 0, y: 0 };
 
-        const bbox = getDiagramBBox(svgEl);
+        // Measure the SVG's natural CSS pixel size by un-applying our own scale transform.
+        // getBoundingClientRect() returns post-transform screen pixels; dividing by the
+        // current scale recovers the natural (unscaled) rendered pixel dimensions.
+        // This is in the same unit space as containerWidth/containerHeight, unlike getBBox()
+        // which returns SVG user-coordinate units that differ from CSS pixels.
+        const currentScale = viewTransformRef.current.scale || 1;
+        const rect = svgEl.getBoundingClientRect();
+        const svgW = rect.width / currentScale;
+        const svgH = rect.height / currentScale;
 
-        if (!bbox || bbox.width <= 0 || bbox.height <= 0) {
-            return { scale: 1, x: 0, y: 0 };
-        }
+        if (!svgW || !svgH) return { scale: 1, x: 0, y: 0 };
 
         const paddingFactor = 0.92;
-        const fitScale = Math.min(containerWidth / bbox.width, containerHeight / bbox.height) * paddingFactor;
-        const scale = forcedScale ?? fitScale;
-
-        const clampedScale = Math.max(0.1, Math.min(3, scale));
-        const centerX = bbox.x + bbox.width / 2;
-        const centerY = bbox.y + bbox.height / 2;
+        const fitScale = Math.min(containerWidth / svgW, containerHeight / svgH) * paddingFactor;
+        const clampedScale = Math.max(0.1, Math.min(3, fitScale));
 
         return {
             scale: clampedScale,
-            x: containerWidth / 2 - centerX * clampedScale,
-            y: containerHeight / 2 - centerY * clampedScale,
+            x: containerWidth / 2 - (svgW * clampedScale) / 2,
+            y: containerHeight / 2 - (svgH * clampedScale) / 2,
         };
-    }, [getDiagramBBox]);
+    }, []);
 
     const centerInitialView = useCallback(() => {
-        setViewTransform(computeFitTransform(1));
-        setPanOffset({ x: 500, y: 500 });
+        setViewTransform(computeFitTransform());
+        setPanOffset({ x: 0, y: 0 });
     }, [computeFitTransform]);
 
     const clearPendingFitFrames = useCallback(() => {
@@ -244,16 +214,31 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     useEffect(() => {
         if (!svgContent || !containerRef.current) return;
         const container = containerRef.current;
+        // Track whether the container was previously dimensionless (e.g. hidden tab).
+        let wasDimensionless = container.clientWidth === 0 || container.clientHeight === 0;
+
         const observer = new ResizeObserver(() => {
-            // Only auto-center when user has not panned away.
-            if (Math.abs(panOffset.x) < 1 && Math.abs(panOffset.y) < 1) {
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            if (w === 0 || h === 0) {
+                wasDimensionless = true;
+                return;
+            }
+            if (wasDimensionless) {
+                // Tab just became visible — always fit.
+                wasDimensionless = false;
+                setViewTransform(computeFitTransform());
+                setPanOffset({ x: 0, y: 0 });
+                panOriginRef.current = { x: 0, y: 0 };
+            } else if (Math.abs(panOffsetRef.current.x) < 1 && Math.abs(panOffsetRef.current.y) < 1) {
+                // Window resize while visible and user hasn't panned away.
                 setViewTransform(computeFitTransform());
                 setPanOffset({ x: 0, y: 0 });
             }
         });
         observer.observe(container);
         return () => observer.disconnect();
-    }, [svgContent, computeFitTransform, panOffset.x, panOffset.y]);
+    }, [svgContent, computeFitTransform]);
 
     useEffect(() => {
         return () => {

@@ -1,4 +1,6 @@
-# GitViz — Agent Instructions
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -22,6 +24,7 @@ Always run `npm run build` to verify TypeScript correctness before considering a
 - `/` — Landing page (`src/app/page.tsx`)
 - `/[owner]/[repo]` — Dashboard (`src/app/[owner]/[repo]/repo-page-client.tsx`) — main state hub
 - `/api/github/repo` — All GitHub data fetching (`src/app/api/github/repo/route.ts`)
+- `/api/github/repo/access` — Pre-flight repo accessibility check (public/private, 404) (`src/app/api/github/repo/access/route.ts`)
 - `/api/analyze` — AI analysis endpoint (`src/app/api/analyze/route.ts`)
 
 ### Data Flow
@@ -40,19 +43,42 @@ Always run `npm run build` to verify TypeScript correctness before considering a
 | `branch-graph.tsx` | Custom HTML timeline | — |
 | `merge-graph.tsx` | Custom HTML timeline | — |
 | `dependency-graph.tsx` | React Flow | dagre |
+| `knowledge-graph.tsx` | Custom Canvas/WebGL (no lib) | `src/lib/force-layout.ts` |
+| `commit-history-rail.tsx` | Custom HTML | — |
+| `git-rail-graph.tsx` | Custom HTML | — |
+| `mermaid-diagram.tsx` | mermaid | — |
+
+Custom React Flow node types live in `src/components/diagrams/nodes/` (`module-node.tsx`, `commit-node.tsx`, `file-node.tsx`, `dependency-node.tsx`, `contributor-node.tsx`).
+
+### Charts (`src/components/charts/`)
+- `commit-heatmap.tsx` — recharts-based commit activity heatmap
+- `language-donut.tsx` — recharts donut for language breakdown
+- `commit-activity-chart.tsx` — recharts bar chart for commit history
+
+### Key Library Files (`src/lib/`)
+| File | Purpose |
+|------|---------|
+| `github.ts` | `ghFetch<T>()`, `fetchAllRepoData()`, `checkRepoAccess()` |
+| `ai.ts` | AI service layer — Gemini key pool, `getMockAnalysis()`, `runAIPipeline()` |
+| `graph-builder.ts` | Builds `GraphNode[]` / `GraphEdge[]` for `KnowledgeGraph` |
+| `symbol-parser.ts` | Class/function/interface/type extraction + cross-file reference inference |
+| `dep-parser.ts` | Parses `package.json`, `requirements.txt`, etc. into `ParsedDependency[]` |
+| `mermaid-generator.ts` | Generates Mermaid diagram source from file tree |
+| `impact-analyzer.ts` | Change-impact heuristics for file nodes |
+| `search-engine.ts` | Client-side fuzzy search over repo nodes |
+| `diagram-cache.ts` | `getCachedDiagram()` / `cacheDiagram()` — sessionStorage-backed cache |
+| `dagre-layout.ts` | Shared dagre layout helper for React Flow diagrams |
+| `force-layout.ts` | Custom force-directed layout engine for `KnowledgeGraph` |
+| `motion.ts` | Shared framer-motion animation presets |
+| `constants.ts` | `DIAGRAM_TABS`, `FILE_EXTENSION_COLORS`, `MODULE_TYPE_COLORS`, example repos |
 
 ### Type System
 All shared types live in `src/types/index.ts` — treat it as the single source of truth. Never duplicate types.
 
-### Key Libraries
-- **Cytoscape.js** — `file-tree-graph.tsx`, `contributors-network.tsx`; register plugins inside `if (typeof window !== 'undefined')` guard
-- **React Flow** (`@xyflow/react`) — architecture + dependency graphs
-- **framer-motion** — all animations (initial `opacity: 0, y: 10` → animate `opacity: 1, y: 0`)
-- **lucide-react** — icons only (never other icon libraries)
-- **recharts** — charts in dashboard overview
-- **mermaid** — `mermaid-diagram.tsx` for generated diagrams
-- **sonner** — toast notifications
-- **Symbol parsing utility** — `src/lib/symbol-parser.ts` for class/function/interface/type/method/variable extraction and cross-file reference inference
+### AI Analysis Modes
+The `/api/analyze` endpoint supports two modes (passed as `mode` in the POST body):
+- **`smart`** (default) — deterministic, no external API call, uses `getMockAnalysis()` from `src/lib/ai.ts`
+- **`premium`** — calls an external AI API (Gemini by default); requires `GEMINI_API_KEY`, `GEMINI_API_KEYS` (comma-separated pool), or `AI_API_KEY` env vars, or a client-provided key via `aiSettings`
 
 ## Visual Design Rules (Non-Negotiable)
 
@@ -60,32 +86,34 @@ All shared types live in `src/types/index.ts` — treat it as the single source 
 - **Glassmorphism:** `backdrop-blur-xl`, `border-border/20`, `bg-white/5`
 - **No flat/standard web design** — every surface uses glass + blur + neon accents
 - **Neon palette:** indigo/violet (#6366f1), pink (#ec4899), cyan (#06b6d4), amber (#f59e0b)
-- **Animation:** always `framer-motion`, never plain CSS transitions for enter/exit
+- **Animation:** always `framer-motion` (`motion.ts` presets), never plain CSS transitions for enter/exit
 
 ## Conventions
 
 ### API Calls
-- GitHub REST via `ghFetch<T>()` in `src/lib/github.ts` — includes ISR revalidation (5 min)
+- GitHub REST via `ghFetch<T>()` in `src/lib/github.ts` — includes ISR revalidation (5 min default)
 - Raw file content: `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path}`
 - Always pass `token` through — users supply GitHub PAT for higher rate limits
 
 ### Cytoscape Patterns
-- Never put `layout:` key in the `cytoscape({...})` constructor — always run explicit `cy.layout({...}).run()` after init to avoid double-layout
+- Never put `layout:` key in the `cytoscape({...})` constructor — always run explicit `cy.layout({...}).run()` after init
 - Hook `layoutstop` for post-layout callbacks (label culling, positioning)
 - Re-run label adjustments on `zoom` and `pan` events
+- Register plugins inside `if (typeof window !== 'undefined')` guard (SSR safe)
+- Clean up instances: `cy.destroy()` in `useEffect` return
 
 ### Component State
 - `repo-page-client.tsx` owns all repo data state; diagram components receive it as props
-- Diagram components manage their own Cytoscape/ReactFlow instance via `useRef` + `useEffect`
-- Clean up Cytoscape instances: `cy.destroy()` in `useEffect` return
+- Diagram components manage their own Cytoscape/ReactFlow/Canvas instance via `useRef` + `useEffect`
+- No `useLayoutEffect` without SSR guard in Cytoscape/React Flow components
 
 ### Large Repo Handling
-- `isLargeRepo` flag (threshold: total nodes > some limit) gates performance-heavy features
-- Label culling, reduced animations, and disabled auto-features activate for large repos
+- `isLargeRepo` flag gates performance-heavy features: label culling, reduced animations, disabled auto-features
+- Symbol graph: prefer high-confidence edges for large repos, reduce cross-file reference density
 
 ## File-Tree Graph Specifics
 
-Key data fields per Cytoscape node:
+Key Cytoscape node data fields:
 - `displayLabel` — disambiguated name (adds parent path for duplicate filenames)
 - `compactLabel` — truncated with ellipsis (max 24 chars)
 - `showLabel` — `1` for root-level or high-fanout (≥10 children) folders, `0` otherwise
@@ -94,23 +122,17 @@ Key data fields per Cytoscape node:
 
 Symbol graph behavior:
 - `showSymbols` toggle (default ON) enables/disables symbol overlay without changing base file-tree graph
-- Symbol nodes are attached to file nodes via `symbolContains` edges
-- Cross-file references use `symbolRef` edges with confidence levels (`high` from imports, `medium` from identifier inference)
-- Large repos reduce symbol edge density by preferring high-confidence edges
-
-Interactions:
-- `focusNodeNeighborhood(cy, node)` — dims non-connected nodes to 0.12/0.06 opacity, highlights neighborhood
-- `clearNodeFocus(cy)` — resets all to full opacity
-- Focused neighborhood nodes are tagged with `keepLabel=1` so labels remain visible after hover-out until focus is cleared
-- Clicking a symbol node opens its parent file in the existing right-side preview panel
+- Symbol nodes attached via `symbolContains` edges; cross-file refs use `symbolRef` edges with confidence levels (`high` from imports, `medium` from identifier inference)
+- Clicking a symbol node opens its parent file in the right-side preview panel
+- `focusNodeNeighborhood(cy, node)` — dims non-connected nodes to 0.12/0.06 opacity; `clearNodeFocus(cy)` resets
+- Focused nodes tagged with `keepLabel=1` so labels persist after hover-out until focus is cleared
 
 ## Common Pitfalls
 
-- **Double layout execution:** Don't put `layout:` in `cytoscape({})` constructor AND call `.layout().run()` — pick one (use explicit run)
+- **Double layout:** Don't put `layout:` in `cytoscape({})` constructor AND call `.layout().run()` — use explicit run only
 - **`text-max-width` type:** Must be a string `'150px'`, not a number `150`
-- **Plugin registration:** `cytoscape.use(fcose)` must be inside `typeof window !== 'undefined'` guard (SSR safe)
-- **No `useLayoutEffect` without SSR guard** in Cytoscape/React Flow components
-- **Import unused:** Remove unused imports before building — they cause warnings that can mask real errors
-- **Label persistence in large repos:** If focused labels disappear on hover-out, ensure `keepLabel` is set during focus and cleared only in `clearNodeFocus`
-- **Symbol graph limits:** Keep file-size/file-count/reference caps in place to avoid rate-limit and render-performance regressions
-- **Flexbox Squishing on Sidebar Resize:** Always apply `shrink-0` to icons and fixed-width elements inside flex containers, and `min-w-0 flex-1 truncate` to text elements alongside them, else they will squish uncontrollably when the parent sidebar shrinks.
+- **Flexbox squishing in sidebar:** Apply `shrink-0` to icons/fixed-width elements; `min-w-0 flex-1 truncate` to text elements
+- **Import unused:** Remove unused imports before building — they mask real errors
+- **`text-max-width` type:** Must be a string `'150px'`, not a number `150`
+- **Knowledge graph Canvas:** `knowledge-graph.tsx` renders via `<canvas>` + `requestAnimationFrame` — do not attempt to swap in a graph library without understanding `src/lib/force-layout.ts`
+- **diagram-cache:** Keyed by `${owner}/${repo}` + diagram type — clear on token change to avoid stale data
