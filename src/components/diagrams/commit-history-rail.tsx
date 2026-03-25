@@ -14,6 +14,7 @@ interface RailItem {
     laneIndex: number;
     isMerge: boolean;
     mergeFromLane?: number;
+    branchName?: string;
 }
 
 interface Segment {
@@ -21,6 +22,13 @@ interface Segment {
     y1: number;
     y2: number;
     lane: number;
+}
+
+interface BranchStartEnd {
+    type: "start" | "end";
+    lane: number;
+    x: number;
+    y: number;
 }
 
 interface Connection {
@@ -44,10 +52,10 @@ const LANE_COLORS = [
 
 const MAX_LANES = 8;
 const ROW_HEIGHT = 44;
-const LANE_SPACING = 20;
-const LANE_START_X = 24;
-const DOT_R = 5;
-const MERGE_DOT_R = 6;
+const LANE_SPACING = 24;
+const LANE_START_X = 32;
+const DOT_R = 5.5;
+const MERGE_DOT_R = 7;
 
 function laneFromCommit(commit: Commit): { key: string; isMerge: boolean; mergeSource?: string } {
     const msg = commit.message;
@@ -88,31 +96,37 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
         const items: RailItem[] = limited.map((commit) => {
             const lane = laneFromCommit(commit);
             let laneIndex = 0;
+            let branchName: string | undefined;
 
             if (!lane.isMerge) {
                 if (!laneByKey.has(lane.key)) {
                     laneByKey.set(lane.key, nextLane);
-                    if (!labels.has(nextLane))
-                        labels.set(nextLane, lane.key.replace(/^dependabot\//, "dep/"));
+                    if (!labels.has(nextLane)) {
+                        const cleanName = lane.key.replace(/^dependabot\//, "dep/");
+                        labels.set(nextLane, cleanName);
+                    }
                     nextLane += 1;
                     if (nextLane >= MAX_LANES) nextLane = 1;
                 }
                 laneIndex = laneByKey.get(lane.key) ?? 0;
+                branchName = lane.key;
             }
 
             let mergeFromLane: number | undefined;
             if (lane.isMerge && lane.mergeSource) {
                 if (!laneByKey.has(lane.mergeSource)) {
                     laneByKey.set(lane.mergeSource, nextLane);
-                    if (!labels.has(nextLane))
-                        labels.set(nextLane, lane.mergeSource.replace(/^dependabot\//, "dep/"));
+                    if (!labels.has(nextLane)) {
+                        const cleanName = lane.mergeSource.replace(/^dependabot\//, "dep/");
+                        labels.set(nextLane, cleanName);
+                    }
                     nextLane += 1;
                     if (nextLane >= MAX_LANES) nextLane = 1;
                 }
                 mergeFromLane = laneByKey.get(lane.mergeSource);
             }
 
-            return { commit, laneIndex, isMerge: lane.isMerge, mergeFromLane };
+            return { commit, laneIndex, isMerge: lane.isMerge, mergeFromLane, branchName };
         });
 
         // laneCount must cover the highest lane index actually used
@@ -143,7 +157,7 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
     const midY = ROW_HEIGHT / 2;
 
     // ── Compute graph geometry: segments, connections, dots ──
-    const { segments, mergeConns, branchConns, dots } = useMemo(() => {
+    const { segments, mergeConns, branchConns, branchEnds, dots } = useMemo(() => {
         // Group row indices by lane
         const byLane = new Map<number, number[]>();
         railItems.forEach((item, i) => {
@@ -168,6 +182,32 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                     lane,
                 });
             }
+        });
+
+        // Branch start/end markers
+        const bEnds: BranchStartEnd[] = [];
+        byLane.forEach((rows, lane) => {
+            if (lane === 0 || rows.length === 0) return;
+            const lx = laneXs[lane];
+            if (lx === undefined) return;
+
+            // Branch start: at the oldest (highest index) commit on the branch
+            const oldestRow = rows[rows.length - 1];
+            bEnds.push({
+                type: "start",
+                lane,
+                x: lx,
+                y: oldestRow * ROW_HEIGHT + midY,
+            });
+
+            // Branch end: at the newest (lowest index) commit on the branch
+            const newestRow = rows[0];
+            bEnds.push({
+                type: "end",
+                lane,
+                x: lx,
+                y: newestRow * ROW_HEIGHT + midY,
+            });
         });
 
         // Merge connections: branch → main (diagonal from nearest branch commit to merge commit)
@@ -238,6 +278,7 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
             segments: segs,
             mergeConns: merges,
             branchConns: branches,
+            branchEnds: bEnds,
             dots: commitDots,
         };
     }, [railItems, laneXs, midY]);
@@ -253,7 +294,6 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                             Commit History
                         </h3>
                     </div>
-                    
                 </div>
                 <div className="text-[11px] text-muted-foreground">
                     {railItems.length} commits · {laneCount} lanes
@@ -306,17 +346,17 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                     viewBox="0 0 10 8"
                                     refX="9"
                                     refY="4"
-                                    markerWidth="8"
-                                    markerHeight="7"
+                                    markerWidth="10"
+                                    markerHeight="8"
                                     orient="auto"
                                 >
                                     <path
                                         d="M 0 0 L 10 4 L 0 8 Z"
                                         fill={color}
-                                        fillOpacity={0.85}
+                                        fillOpacity={0.9}
                                     />
                                 </marker>
-                            ))}
+                            ))}{" "}
                         </defs>
 
                         {/* Vertical lane segments */}
@@ -328,12 +368,13 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                 x2={seg.x}
                                 y2={seg.y2}
                                 stroke={LANE_COLORS[seg.lane % LANE_COLORS.length]}
-                                strokeWidth={2}
-                                strokeOpacity={0.4}
+                                strokeWidth={2.5}
+                                strokeOpacity={0.5}
+                                strokeLinecap="round"
                             />
                         ))}
 
-                        {/* Branch divergence curves (dashed, behind merges) */}
+                        {/* Branch divergence curves (dashed) */}
                         {branchConns.map((c, i) => {
                             const color =
                                 LANE_COLORS[c.lane % LANE_COLORS.length];
@@ -344,9 +385,9 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                     d={`M ${c.fromX} ${c.fromY} C ${c.fromX} ${cpY}, ${c.toX} ${cpY}, ${c.toX} ${c.toY}`}
                                     fill="none"
                                     stroke={color}
-                                    strokeWidth={1.6}
-                                    strokeOpacity={0.45}
-                                    strokeDasharray="5 3"
+                                    strokeWidth={2}
+                                    strokeOpacity={0.5}
+                                    strokeDasharray="6 4"
                                     strokeLinecap="round"
                                 />
                             );
@@ -368,12 +409,32 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                     d={d}
                                     fill="none"
                                     stroke={color}
-                                    strokeWidth={2}
-                                    strokeOpacity={0.75}
+                                    strokeWidth={2.5}
+                                    strokeOpacity={0.85}
                                     strokeLinecap="round"
                                     markerEnd={`url(#rail-arrow-${c.lane % LANE_COLORS.length})`}
                                 />
                             );
+                        })}
+
+                        {/* Branch start/end indicators */}
+                        {branchEnds.map((be, i) => {
+                            const color =
+                                LANE_COLORS[be.lane % LANE_COLORS.length];
+                            const size = be.type === "start" ? 7 : 5;
+                            return be.type === "start" ? (
+                                <circle
+                                    key={`be${i}`}
+                                    cx={be.x}
+                                    cy={be.y}
+                                    r={size}
+                                    fill="none"
+                                    stroke={color}
+                                    strokeWidth={2.5}
+                                    strokeOpacity={0.6}
+                                    strokeDasharray="3 2"
+                                />
+                            ) : null;
                         })}
 
                         {/* Commit dots (on top) */}
@@ -382,6 +443,7 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                 LANE_COLORS[dot.lane % LANE_COLORS.length];
                             return dot.isMerge ? (
                                 <g key={`d${i}`}>
+                                    {/* Merge dot: larger outer ring + inner dot */}
                                     <circle
                                         cx={dot.cx}
                                         cy={dot.cy}
@@ -389,12 +451,14 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                         fill="#0a0e1a"
                                         stroke={color}
                                         strokeWidth={2.5}
+                                        strokeOpacity={0.95}
                                     />
                                     <circle
                                         cx={dot.cx}
                                         cy={dot.cy}
-                                        r={2.2}
+                                        r={2.5}
                                         fill={color}
+                                        fillOpacity={0.9}
                                     />
                                 </g>
                             ) : (
@@ -406,6 +470,7 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                     fill={color}
                                     stroke="#0a0e1a"
                                     strokeWidth={1.5}
+                                    fillOpacity={0.9}
                                 />
                             );
                         })}
@@ -445,7 +510,7 @@ export default function CommitHistoryRail({ commits, defaultBranch }: CommitHist
                                 </span>
                                 <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 shrink-0">
                                     <GitBranch className="w-2.5 h-2.5" />
-                                    {item.commit.sha}
+                                    {item.commit.sha.slice(0, 7)}
                                 </span>
                             </div>
                         </div>
