@@ -229,7 +229,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
     const [symbolDiagnostics, setSymbolDiagnostics] = useState<SymbolDiagnostics>(EMPTY_SYMBOL_DIAGNOSTICS);
-    const [showExplorer] = useState(true);
+    const [showExplorer, setShowExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const [explorerWidth, setExplorerWidth] = useState(220);
     const [explorerViewportHeight, setExplorerViewportHeight] = useState(560);
@@ -243,6 +243,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
+    const dragStartXRef = useRef(0);
+    const dragStartWidthRef = useRef(220);
     const explorerBodyRef = useRef<HTMLDivElement>(null);
     const explorerListRef = useRef<{
         element: HTMLDivElement | null;
@@ -448,13 +450,23 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
             if (!resizingRef.current) return;
-            const nextWidth = Math.min(360, Math.max(180, explorerWidthRef.current + event.movementX));
-            setExplorerWidth(nextWidth);
+            const delta = event.clientX - dragStartXRef.current;
+            const nextWidth = Math.min(360, Math.max(180, dragStartWidthRef.current + delta));
+            explorerWidthRef.current = nextWidth;
+            // Directly update DOM to avoid React re-render lag during drag
+            const el = document.getElementById("file-explorer-panel");
+            if (el) el.style.width = `${nextWidth}px`;
+            const inner = document.getElementById("file-explorer-inner");
+            if (inner) inner.style.width = `${nextWidth}px`;
         };
 
         const handleMouseUp = () => {
             if (!resizingRef.current) return;
             resizingRef.current = false;
+            document.body.style.userSelect = "";
+            document.body.style.cursor = "";
+            // Commit final width to React state once
+            setExplorerWidth(explorerWidthRef.current);
         };
 
         window.addEventListener("mousemove", handleMouseMove);
@@ -1493,21 +1505,33 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     return (
         <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
             <div
-                className="relative z-30 overflow-visible h-full shrink-0 flex"
-                style={{ width: explorerWidth  }}
+                id="file-explorer-panel"
+                className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200"
+                style={{ width: showExplorer ? explorerWidth : 0 }}
             >
-                <div className="h-full w-full rounded-2xl border border-slate-700/80 bg-slate-950/95 backdrop-blur flex flex-col overflow-hidden" style={{ width: explorerWidth }}>
+                <div id="file-explorer-inner" className="h-full w-full rounded-2xl border border-slate-700/80 bg-slate-950/95 backdrop-blur flex flex-col overflow-hidden" style={{ width: showExplorer ? explorerWidth : 0 }}>
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                         <span className="ui-eyebrow text-slate-400">Explorer</span>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setShowExplorerInspector((prev) => !prev)}
-                            className="h-7 w-7 text-slate-400 hover:text-slate-200"
-                            aria-label={showExplorerInspector ? "Hide inspector" : "Show inspector"}
-                        >
-                            {showExplorerInspector ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setShowExplorerInspector((prev) => !prev)}
+                                className="h-7 w-7 text-slate-400 hover:text-slate-200"
+                                aria-label={showExplorerInspector ? "Hide inspector" : "Show inspector"}
+                            >
+                                {showExplorerInspector ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setShowExplorer(false)}
+                                className="h-7 w-7 text-slate-400 hover:text-slate-200"
+                                aria-label="Collapse explorer"
+                            >
+                                <ChevronDown className="w-3.5 h-3.5 rotate-90" />
+                            </Button>
+                        </div>
                     </div>
                     <div className="relative flex-1 overflow-x-hidden overflow-y-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
                         <List
@@ -1560,10 +1584,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 </div>
 
-                <div
+                {showExplorer && <div
                     className="absolute top-0 right-0 h-full w-2 cursor-col-resize z-20 group"
-                    onMouseDown={() => { resizingRef.current = true; }}
-                ><span className="absolute top-0 bottom-0 right-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>
+                    onMouseDown={(e) => {
+                        resizingRef.current = true;
+                        dragStartXRef.current = e.clientX;
+                        dragStartWidthRef.current = explorerWidthRef.current;
+                        document.body.style.userSelect = "none";
+                        document.body.style.cursor = "col-resize";
+                    }}
+                ><span className="absolute top-0 bottom-0 right-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>}
 
                 <motion.div
                     className="absolute left-full top-0 h-full z-40 overflow-hidden"
@@ -1635,6 +1665,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             </div>
 
             <div className="relative flex-1 h-full">
+                {!showExplorer && (
+                    <button
+                        onClick={() => setShowExplorer(true)}
+                        className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur text-slate-300 hover:text-white hover:border-slate-500 text-xs"
+                        aria-label="Show explorer"
+                    >
+                        <ChevronRight className="w-3.5 h-3.5" />
+                        Explorer
+                    </button>
+                )}
                 <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
                     <div className="flex items-center gap-1 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
                         <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>

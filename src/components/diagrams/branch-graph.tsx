@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import CommitActivityChart from "@/components/charts/commit-activity-chart";
 import GitRailGraph from "./git-rail-graph";
 import CommitHistoryRail from "./commit-history-rail";
 import type { Branch, Commit, MergedPR } from "@/types";
@@ -263,14 +262,14 @@ export default function BranchGraph({
             ) : view === "history" ? (
                 <>
                     <div className="flex-1 overflow-auto custom-scrollbar">
-                        <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+                        <div className="px-6 py-6 space-y-6">
                             <CommitHistoryRail commits={filteredCommits} defaultBranch={defaultBranch} />
                         </div>
                     </div>
 
                     {(hasMore || rateLimitHit) && (
                         <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
-                            <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+                            <div className="flex items-center justify-between gap-4">
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                                     <GitCommit className="w-3.5 h-3.5" />
                                     <span>{allCommits.length} loaded</span>
@@ -332,9 +331,7 @@ export default function BranchGraph({
                 <>
                     {/* Scrollable content */}
                     <div className="flex-1 overflow-auto custom-scrollbar">
-                        <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
-
-                            <CommitActivityChart commits={allCommits} />
+                        <div className="px-6 py-6 space-y-6">
 
                             {/* Branches Section */}
                             <div className="glass-card p-5">
@@ -565,7 +562,7 @@ export default function BranchGraph({
                     {/* Sticky Bottom Bar — always visible, no scrolling needed */}
                     {(hasMore || rateLimitHit) && (
                         <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
-                            <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+                            <div className="flex items-center justify-between gap-4">
                                 {/* Left: commit count */}
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                                     <GitCommit className="w-3.5 h-3.5" />

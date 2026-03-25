@@ -635,19 +635,21 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }}
             />
 
-            <div className="max-w-[1800px] mx-auto h-full flex flex-col">
-                <TabNav activeTab={activeTab} onTabChange={handleTabChange} />
-
-                <div className="px-4 pt-3">
-                    <button
-                        type="button"
-                        onClick={openOnboarding}
-                        className="inline-flex items-center gap-2 rounded-md border border-border/30 bg-slate-900/55 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800/70"
-                    >
-                        <HelpCircle className="w-3.5 h-3.5" />
-                        Show Quick Tips
-                    </button>
-                </div>
+            <div className="max-w-[1800px] mx-auto h-full flex flex-col ">
+                <TabNav
+                    activeTab={activeTab}
+                    onTabChange={handleTabChange}
+                    rightAction={
+                        <button
+                            type="button"
+                            onClick={openOnboarding}
+                            className="inline-flex items-center gap-2 rounded-md border border-border/30 bg-slate-900/55 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800/70 shrink-0"
+                        >
+                            <HelpCircle className="w-3.5 h-3.5" />
+                            Show Quick Tips
+                        </button>
+                    }
+                />
 
                 <div className="p-4 flex-1 min-h-0">
                     {/* Main diagram area */}

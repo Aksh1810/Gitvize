@@ -25,11 +25,12 @@ const iconMap: Record<string, React.ReactNode> = {
 interface TabNavProps {
     activeTab: DiagramTab;
     onTabChange: (tab: DiagramTab) => void;
+    rightAction?: React.ReactNode;
 }
 
-export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
+export default function TabNav({ activeTab, onTabChange, rightAction }: TabNavProps) {
     return (
-        <div className="flex items-center gap-3 px-4 py-3 overflow-x-auto border-b border-white/10 bg-[#0b111f]/45">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 overflow-x-auto border-b border-white/10 bg-[#0b111f]/45">
             <div className="tab-track surface-neo-soft flex items-center gap-1 p-1">
                 {DIAGRAM_TABS.map((tab) => {
                     const isActive = activeTab === tab.id;
@@ -58,6 +59,7 @@ export default function TabNav({ activeTab, onTabChange }: TabNavProps) {
                     );
                 })}
             </div>
+            {rightAction}
         </div>
     );
 }
