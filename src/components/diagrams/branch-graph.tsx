@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import CommitActivityChart from "@/components/charts/commit-activity-chart";
 import GitRailGraph from "./git-rail-graph";
 import type { Branch, Commit, MergedPR } from "@/types";
 
@@ -252,6 +253,8 @@ export default function BranchGraph({
                     {/* Scrollable content */}
                     <div className="flex-1 overflow-auto custom-scrollbar">
                         <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
+
+                            <CommitActivityChart commits={allCommits} />
 
                             {/* Branches Section */}
                             <div className="glass-card p-5">
