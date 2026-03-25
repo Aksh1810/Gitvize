@@ -16,11 +16,13 @@ import {
     AlertTriangle,
     Network,
     List,
+    History,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CommitActivityChart from "@/components/charts/commit-activity-chart";
 import GitRailGraph from "./git-rail-graph";
+import CommitHistoryRail from "./commit-history-rail";
 import type { Branch, Commit, MergedPR } from "@/types";
 
 const branchColors = [
@@ -73,7 +75,7 @@ export default function BranchGraph({
     repo,
     mergedPRs,
 }: BranchGraphProps) {
-    const [view, setView] = useState<"graph" | "timeline">(mergedPRs.length === 0 ? "timeline" : "graph");
+    const [view, setView] = useState<"graph" | "timeline" | "history">(mergedPRs.length === 0 ? "timeline" : "graph");
     const [showAllBranches, setShowAllBranches] = useState(false);
     const [selectedCommit, setSelectedCommit] = useState<Commit | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
@@ -236,6 +238,16 @@ export default function BranchGraph({
                         <List className="w-3 h-3" />
                         Timeline
                     </button>
+                    <button
+                        onClick={() => setView("history")}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "history"
+                            ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20"
+                            : "text-muted-foreground hover:text-foreground border border-transparent"
+                            }`}
+                    >
+                        <History className="w-3 h-3" />
+                        History
+                    </button>
                 </div>
             </div>
 
@@ -248,6 +260,74 @@ export default function BranchGraph({
                         repo={repo}
                     />
                 </div>
+            ) : view === "history" ? (
+                <>
+                    <div className="flex-1 overflow-auto custom-scrollbar">
+                        <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+                            <CommitHistoryRail commits={filteredCommits} defaultBranch={defaultBranch} />
+                        </div>
+                    </div>
+
+                    {(hasMore || rateLimitHit) && (
+                        <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
+                            <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+                                    <GitCommit className="w-3.5 h-3.5" />
+                                    <span>{allCommits.length} loaded</span>
+                                    {hasMore && <span className="text-muted-foreground/50">• more available</span>}
+                                </div>
+
+                                {rateLimitHit && (
+                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                        <span className="text-[11px] text-amber-300">
+                                            Rate limit reached — wait or add a GitHub token for 5,000 req/hr
+                                        </span>
+                                        <button onClick={() => setRateLimitHit(false)} className="text-amber-400/50 hover:text-amber-400 ml-1">
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {isLoadingAll ? (
+                                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                                            <span>Loading... {allCommits.length}</span>
+                                        </div>
+                                    ) : hasMore ? (
+                                        <>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={loadMoreCommits}
+                                                disabled={isLoadingMore}
+                                                className="h-7 text-xs gap-1.5 bg-secondary/30 border-border/30 hover:bg-secondary/50 hover:border-indigo-500/30"
+                                            >
+                                                {isLoadingMore ? (
+                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                ) : (
+                                                    <ChevronDown className="w-3 h-3" />
+                                                )}
+                                                +100
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={loadAllCommits}
+                                                disabled={isLoadingMore}
+                                                className="h-7 text-xs gap-1.5 bg-indigo-500/10 border-indigo-500/20 hover:bg-indigo-500/20 text-indigo-400"
+                                            >
+                                                <GitCommit className="w-3 h-3" />
+                                                Load all
+                                            </Button>
+                                        </>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </>
             ) : (
                 <>
                     {/* Scrollable content */}
