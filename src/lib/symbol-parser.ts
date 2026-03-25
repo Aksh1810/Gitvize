@@ -22,6 +22,17 @@ export interface SymbolGraphData {
     references: SymbolReference[];
 }
 
+export interface SymbolFileSelectionResult<T extends { path: string; type: string; size?: number }> {
+    sourceFiles: T[];
+    candidateCount: number;
+    skippedByLimit: number;
+    skippedBySize: number;
+    skippedNotAnalyzable: number;
+    totalBlobCount: number;
+    largeRepo: boolean;
+    limit: number;
+}
+
 interface ParseContext {
     symbols: ExtractedSymbol[];
     symbolsByName: Map<string, ExtractedSymbol[]>;
@@ -55,6 +66,30 @@ const COMMON_IGNORE_NAMES = new Set([
     "list",
 ]);
 
+const PRIORITY_FILE_NAMES = [
+    "index",
+    "main",
+    "app",
+    "server",
+    "client",
+    "route",
+    "layout",
+    "page",
+    "entry",
+    "config",
+];
+
+const PRIORITY_FOLDER_NAMES = [
+    "src",
+    "app",
+    "lib",
+    "components",
+    "api",
+    "core",
+    "services",
+    "utils",
+];
+
 export function isAnalyzableCodeFile(path: string): boolean {
     const lowered = path.toLowerCase();
     if (lowered.endsWith(".d.ts") || lowered.includes("/dist/") || lowered.includes("/build/") || lowered.includes("/node_modules/")) {
@@ -71,6 +106,67 @@ export function buildSymbolGraph(fileContents: Array<{ path: string; content: st
     return {
         symbols: context.symbols,
         references,
+    };
+}
+
+export function selectSymbolAnalysisFiles<T extends { path: string; type: string; size?: number }>(
+    tree: T[],
+    options?: {
+        maxFileBytes?: number;
+        smallLimit?: number;
+        largeLimit?: number;
+        largeRepoThreshold?: number;
+    }
+): SymbolFileSelectionResult<T> {
+    const maxFileBytes = options?.maxFileBytes ?? 120_000;
+    const smallLimit = options?.smallLimit ?? 50;
+    const largeLimit = options?.largeLimit ?? 100;
+    const largeRepoThreshold = options?.largeRepoThreshold ?? 800;
+
+    const blobs = tree.filter((item) => item.type === "blob");
+    const totalBlobCount = blobs.length;
+    const largeRepo = tree.length > largeRepoThreshold;
+    const limit = largeRepo ? largeLimit : smallLimit;
+
+    let skippedNotAnalyzable = 0;
+    let skippedBySize = 0;
+
+    const candidates = blobs
+        .filter((item) => {
+            if (!isAnalyzableCodeFile(item.path)) {
+                skippedNotAnalyzable += 1;
+                return false;
+            }
+
+            if ((item.size ?? 0) > maxFileBytes) {
+                skippedBySize += 1;
+                return false;
+            }
+
+            return true;
+        })
+        .sort((a, b) => {
+            const scoreDiff = scoreFilePriority(b.path) - scoreFilePriority(a.path);
+            if (scoreDiff !== 0) return scoreDiff;
+
+            const sizeA = a.size ?? Number.MAX_SAFE_INTEGER;
+            const sizeB = b.size ?? Number.MAX_SAFE_INTEGER;
+            if (sizeA !== sizeB) return sizeA - sizeB;
+
+            return a.path.localeCompare(b.path);
+        });
+
+    const sourceFiles = candidates.slice(0, limit);
+
+    return {
+        sourceFiles,
+        candidateCount: candidates.length,
+        skippedByLimit: Math.max(0, candidates.length - sourceFiles.length),
+        skippedBySize,
+        skippedNotAnalyzable,
+        totalBlobCount,
+        largeRepo,
+        limit,
     };
 }
 
@@ -389,4 +485,32 @@ function forEachMatch(regex: RegExp, input: string, onMatch: (name: string) => v
         const name = match[1];
         if (name) onMatch(name);
     }
+}
+
+function scoreFilePriority(path: string): number {
+    const lowered = path.toLowerCase();
+    const parts = lowered.split("/");
+    const file = parts[parts.length - 1] ?? "";
+    const baseName = file.split(".")[0] ?? "";
+
+    let score = 0;
+
+    if (PRIORITY_FILE_NAMES.includes(baseName)) {
+        score += 120;
+    }
+
+    for (const folder of PRIORITY_FOLDER_NAMES) {
+        if (parts.includes(folder)) {
+            score += 25;
+        }
+    }
+
+    // Favor shallower files as likely entry or orchestration points.
+    score += Math.max(0, 12 - parts.length);
+
+    if (lowered.includes("test") || lowered.includes("spec")) {
+        score -= 20;
+    }
+
+    return score;
 }

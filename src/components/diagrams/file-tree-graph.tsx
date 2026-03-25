@@ -7,7 +7,7 @@ import { List, type RowComponentProps } from "react-window";
 // @ts-expect-error fcose is an extension package without bundled TS types.
 import fcose from "cytoscape-fcose";
 import { getFileColor } from "@/lib/file-icons";
-import { buildSymbolGraph, isAnalyzableCodeFile, type SymbolKind } from "@/lib/symbol-parser";
+import { buildSymbolGraph, selectSymbolAnalysisFiles, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -80,6 +80,21 @@ interface CodeLineRow {
     indentLevel: number;
 }
 
+interface SymbolDiagnostics {
+    totalBlobCount: number;
+    candidateCount: number;
+    selectedCount: number;
+    skippedByLimit: number;
+    skippedBySize: number;
+    skippedNotAnalyzable: number;
+    fetchAttempted: number;
+    fetchSucceeded: number;
+    cacheHits: number;
+    fetchFailed: number;
+    largeRepo: boolean;
+    limit: number;
+}
+
 const EXPLORER_ROW_HEIGHT = 30;
 const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
 const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
@@ -148,7 +163,7 @@ const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = 
 
 const MAX_SYMBOL_FILE_BYTES = 120_000;
 const SYMBOL_FILE_LIMIT_SMALL = 50;
-const SYMBOL_FILE_LIMIT_LARGE = 25;
+const SYMBOL_FILE_LIMIT_LARGE = 100;
 const SYMBOL_KIND_ORDER: SymbolKind[] = ["variable", "function", "method", "interface", "type", "class"];
 const BINARY_EXTENSIONS = new Set([
     "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "bmp",
@@ -159,6 +174,21 @@ const BINARY_EXTENSIONS = new Set([
     "exe", "dll", "so", "dylib",
     "lock",
 ]);
+
+const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
+    totalBlobCount: 0,
+    candidateCount: 0,
+    selectedCount: 0,
+    skippedByLimit: 0,
+    skippedBySize: 0,
+    skippedNotAnalyzable: 0,
+    fetchAttempted: 0,
+    fetchSucceeded: 0,
+    cacheHits: 0,
+    fetchFailed: 0,
+    largeRepo: false,
+    limit: 0,
+};
 
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -198,6 +228,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     });
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
+    const [symbolDiagnostics, setSymbolDiagnostics] = useState<SymbolDiagnostics>(EMPTY_SYMBOL_DIAGNOSTICS);
     const [showExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const [explorerWidth, setExplorerWidth] = useState(220);
@@ -548,12 +579,33 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             if (!showSymbols) {
                 setSymbolError(null);
                 setSymbolLoading(false);
+                setSymbolDiagnostics(EMPTY_SYMBOL_DIAGNOSTICS);
                 return;
             }
 
-            const sourceFiles = tree
-                .filter((item) => item.type === "blob" && isAnalyzableCodeFile(item.path) && (item.size ?? 0) <= MAX_SYMBOL_FILE_BYTES)
-                .slice(0, tree.length > 800 ? SYMBOL_FILE_LIMIT_LARGE : SYMBOL_FILE_LIMIT_SMALL);
+            const selection = selectSymbolAnalysisFiles(tree, {
+                maxFileBytes: MAX_SYMBOL_FILE_BYTES,
+                smallLimit: SYMBOL_FILE_LIMIT_SMALL,
+                largeLimit: SYMBOL_FILE_LIMIT_LARGE,
+                largeRepoThreshold: 800,
+            });
+
+            const sourceFiles = selection.sourceFiles;
+            const baseDiagnostics: SymbolDiagnostics = {
+                totalBlobCount: selection.totalBlobCount,
+                candidateCount: selection.candidateCount,
+                selectedCount: selection.sourceFiles.length,
+                skippedByLimit: selection.skippedByLimit,
+                skippedBySize: selection.skippedBySize,
+                skippedNotAnalyzable: selection.skippedNotAnalyzable,
+                fetchAttempted: 0,
+                fetchSucceeded: 0,
+                cacheHits: 0,
+                fetchFailed: 0,
+                largeRepo: selection.largeRepo,
+                limit: selection.limit,
+            };
+            setSymbolDiagnostics(baseDiagnostics);
 
             if (sourceFiles.length === 0) {
                 setSymbolGraph({ symbols: [], references: [] });
@@ -567,32 +619,52 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
             const filePayload: Array<{ path: string; content: string }> = [];
             const queue = [...sourceFiles];
+            let fetchAttempted = 0;
+            let fetchSucceeded = 0;
+            let cacheHits = 0;
+            let fetchFailed = 0;
             const workers = Array.from({ length: 5 }, async () => {
                 while (queue.length > 0) {
                     const item = queue.shift();
                     if (!item || cancelled) return;
 
+                    fetchAttempted += 1;
+
                     const cacheKey = `${owner}/${repo}/${item.path}`;
                     const cached = symbolCacheRef.current.get(cacheKey);
                     if (cached !== undefined) {
+                        cacheHits += 1;
                         filePayload.push({ path: item.path, content: cached });
                         continue;
                     }
 
                     try {
                         const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${item.path}`);
-                        if (!res.ok) continue;
+                        if (!res.ok) {
+                            fetchFailed += 1;
+                            continue;
+                        }
                         const text = await res.text();
+                        fetchSucceeded += 1;
                         symbolCacheRef.current.set(cacheKey, text);
                         filePayload.push({ path: item.path, content: text });
                     } catch {
                         // Ignore per-file fetch failures and continue with available content.
+                        fetchFailed += 1;
                     }
                 }
             });
 
             await Promise.all(workers);
             if (cancelled) return;
+
+            setSymbolDiagnostics({
+                ...baseDiagnostics,
+                fetchAttempted,
+                fetchSucceeded,
+                cacheHits,
+                fetchFailed,
+            });
 
             if (filePayload.length === 0) {
                 setSymbolGraph({ symbols: [], references: [] });
@@ -602,7 +674,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             }
 
             const graph = buildSymbolGraph(filePayload, {
-                maxReferences: tree.length > 800 ? 220 : 420,
+                maxReferences: tree.length > 800 ? 400 : 420,
             });
 
             setSymbolGraph(graph);
@@ -1620,6 +1692,32 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </button>
                         </div>
                         <div className="flex-1 overflow-auto px-2.5 py-2.5 text-[10px] font-mono text-slate-300 space-y-3">
+                            <div className="rounded-md border border-slate-700/70 bg-slate-900/70 px-2 py-2 space-y-1">
+                                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-400">
+                                    <span>Symbol Index</span>
+                                    <span>{symbolLoading ? "Indexing" : "Ready"}</span>
+                                </div>
+                                <p className="text-[10px] text-slate-200">
+                                    Indexed {symbolGraph.symbols.length} symbols from {symbolDiagnostics.fetchSucceeded + symbolDiagnostics.cacheHits}/{symbolDiagnostics.selectedCount} files.
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                    Scope: JS/TS files only. Candidates: {symbolDiagnostics.candidateCount}/{symbolDiagnostics.totalBlobCount} blobs.
+                                </p>
+                                {(symbolDiagnostics.skippedByLimit > 0 || symbolDiagnostics.skippedBySize > 0) && (
+                                    <p className="text-[10px] text-amber-300/90">
+                                        Skipped {symbolDiagnostics.skippedByLimit} by limit and {symbolDiagnostics.skippedBySize} by size cap.
+                                    </p>
+                                )}
+                                {symbolDiagnostics.fetchFailed > 0 && (
+                                    <p className="text-[10px] text-amber-300/90">
+                                        {symbolDiagnostics.fetchFailed} source fetches failed; showing partial symbol graph.
+                                    </p>
+                                )}
+                                {symbolError && (
+                                    <p className="text-[10px] text-rose-300">{symbolError}</p>
+                                )}
+                            </div>
+
                             <div>
                                 <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setNodeFiltersOpen((prev) => !prev)}>
                                     <span>Node Types</span>
