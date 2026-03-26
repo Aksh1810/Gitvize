@@ -191,6 +191,21 @@ export async function fetchBranches(
 
 // --- Commits ---
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapApiCommit(c: any): Commit {
+    return {
+        sha: c.sha,
+        shortSha: c.sha.substring(0, 7),
+        message: c.commit.message.split("\n")[0],
+        authorName: c.commit.author.name,
+        authorLogin: c.author?.login ?? null,
+        authorAvatar: c.author?.avatar_url ?? null,
+        date: c.commit.author.date,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        parents: (c.parents ?? []).map((p: { sha: string }) => p.sha),
+    };
+}
+
 export async function fetchCommits(
     owner: string,
     repo: string,
@@ -219,17 +234,78 @@ export async function fetchCommits(
         for (const c of result.value) {
             if (seen.has(c.sha)) continue;
             seen.add(c.sha);
-            all.push({
-                sha: c.sha,                           // full 40-char SHA for DAG lookup
-                shortSha: c.sha.substring(0, 7),      // display only
-                message: c.commit.message.split("\n")[0],
-                authorName: c.commit.author.name,
-                authorLogin: c.author?.login ?? null,
-                authorAvatar: c.author?.avatar_url ?? null,
-                date: c.commit.author.date,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                parents: (c.parents ?? []).map((p: { sha: string }) => p.sha),
-            });
+            all.push(mapApiCommit(c));
+        }
+    }
+
+    return all.sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+}
+
+/**
+ * Fetches commits from the default branch (up to 500) PLUS one page from each
+ * non-default branch whose HEAD SHA is not already in the default branch history.
+ * This ensures that active unmerged branches appear in the commit graph for
+ * large repos where branches haven't been merged to main yet.
+ */
+async function fetchCommitsForDAG(
+    owner: string,
+    repo: string,
+    defaultBranch: string,
+    branches: Branch[],
+    token?: string | null
+): Promise<Commit[]> {
+    // Phase 1: fetch 5 pages from the default branch in parallel
+    const base = `?sha=${defaultBranch}&per_page=100`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const defaultPages = await Promise.allSettled<any[]>(
+        [1, 2, 3, 4, 5].map((page) =>
+            ghFetch<any[]>(
+                `/repos/${owner}/${repo}/commits${base}&page=${page}`,
+                token,
+                { noStore: true }
+            )
+        )
+    );
+
+    const seen = new Set<string>();
+    const all: Commit[] = [];
+
+    for (const result of defaultPages) {
+        if (result.status !== "fulfilled") continue;
+        for (const c of result.value) {
+            if (seen.has(c.sha)) continue;
+            seen.add(c.sha);
+            all.push(mapApiCommit(c));
+        }
+    }
+
+    // Phase 2: for each non-default branch whose HEAD is NOT yet in our set,
+    // fetch one page of commits so its history appears in the graph
+    const missingBranches = branches
+        .filter((b) => !b.isDefault && !seen.has(b.sha))
+        .slice(0, 20); // cap at 20 extra branches to limit API calls
+
+    if (missingBranches.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const branchPages = await Promise.allSettled<any[]>(
+            missingBranches.map((b) =>
+                ghFetch<any[]>(
+                    `/repos/${owner}/${repo}/commits?sha=${b.sha}&per_page=100&page=1`,
+                    token,
+                    { noStore: true }
+                )
+            )
+        );
+
+        for (const result of branchPages) {
+            if (result.status !== "fulfilled") continue;
+            for (const c of result.value) {
+                if (seen.has(c.sha)) continue;
+                seen.add(c.sha);
+                all.push(mapApiCommit(c));
+            }
         }
     }
 
@@ -384,15 +460,15 @@ export async function fetchAllRepoData(
         fetchLanguages(owner, repo, token).catch(() => ({})),
     ]);
 
-    const [fileTree, branches, commits, readme, dependencyFiles, mergedPRs] =
+    // Fetch branches first so their HEAD SHAs can seed the multi-branch commit fetch
+    const branches = await fetchBranches(owner, repo, metadata.defaultBranch, token).catch(() => []);
+
+    const [fileTree, commits, readme, dependencyFiles, mergedPRs] =
         await Promise.all([
             fetchFileTree(owner, repo, metadata.defaultBranch, token).catch(
                 () => null
             ),
-            fetchBranches(owner, repo, metadata.defaultBranch, token).catch(
-                () => []
-            ),
-            fetchCommits(owner, repo, metadata.defaultBranch, token).catch(
+            fetchCommitsForDAG(owner, repo, metadata.defaultBranch, branches, token).catch(
                 () => []
             ),
             fetchReadme(owner, repo, token).catch(() => ""),

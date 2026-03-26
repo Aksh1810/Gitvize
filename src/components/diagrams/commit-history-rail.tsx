@@ -306,22 +306,30 @@ export default function CommitHistoryRail({
 
                         {/* ── DAG edges ── */}
                         {edges.map((edge, i) => {
-                            const fromX = laneXs[edge.fromLane] ?? laneXs[0];
-                            const toX   = laneXs[edge.toLane]   ?? laneXs[0];
-                            const fromY = edge.fromRow * ROW_HEIGHT + midY;
-                            const toY   = edge.toRow   * ROW_HEIGHT + midY;
+                            // childX/Y = the newer commit (higher on screen, smaller Y)
+                            // parentX/Y = the older commit (lower on screen, larger Y)
+                            const childX  = laneXs[edge.fromLane] ?? laneXs[0];
+                            const parentX = laneXs[edge.toLane]   ?? laneXs[0];
+                            const childY  = edge.fromRow * ROW_HEIGHT + midY;
+                            const parentY = edge.toRow   * ROW_HEIGHT + midY;
 
-                            // Color by the destination lane (parent lane = branch color)
-                            const colorIdx = edge.toLane % LANE_COLORS.length;
+                            // For cross-lane curves, color by the branch lane (non-main lane):
+                            //   merge edge  → fromLane is main (0), toLane is branch → use toLane
+                            //   diverge edge → fromLane is branch, toLane is main (0) → use fromLane
+                            const colorIdx = edge.fromLane === edge.toLane
+                                ? edge.fromLane % LANE_COLORS.length
+                                : edge.isMergeEdge
+                                    ? edge.toLane % LANE_COLORS.length
+                                    : edge.fromLane % LANE_COLORS.length;
                             const color = LANE_COLORS[colorIdx];
 
                             if (edge.fromLane === edge.toLane) {
-                                // ── Same lane: straight vertical line ──
+                                // ── Same lane: straight vertical line (child at top, parent at bottom) ──
                                 return (
                                     <line
                                         key={`e${i}`}
-                                        x1={fromX} y1={fromY}
-                                        x2={toX}   y2={toY}
+                                        x1={childX}  y1={childY}
+                                        x2={parentX} y2={parentY}
                                         stroke={color}
                                         strokeWidth={2.5}
                                         strokeOpacity={0.5}
@@ -330,13 +338,20 @@ export default function CommitHistoryRail({
                                 );
                             }
 
-                            // ── Cross-lane: bezier curve (GitLab-style "hockey stick") ──
-                            // The curve exits vertically from fromX, then sweeps to toX
-                            const cpY = (fromY + toY) / 2;
-                            const d = `M ${fromX} ${fromY} C ${fromX} ${cpY}, ${toX} ${cpY}, ${toX} ${toY}`;
+                            // ── Cross-lane: bezier drawn FROM parent (bottom) TO child (top) ──
+                            //
+                            // Drawing parent→child (upward) makes markerEnd point AT the child,
+                            // which is the correct visual for both cases:
+                            //   - merge edge:   arrow points at the merge commit on main
+                            //   - diverge edge: arrow points at the first commit on the new branch
+                            //
+                            // Curve shape: starts vertical at parentX, sweeps across, ends vertical
+                            // at childX — the classic GitLab "hockey stick" profile.
+                            const cpY = (childY + parentY) / 2;
+                            const d = `M ${parentX} ${parentY} C ${parentX} ${cpY}, ${childX} ${cpY}, ${childX} ${childY}`;
 
                             if (edge.isMergeEdge) {
-                                // Merge edge (branch → main): solid, with arrow at destination
+                                // Solid with arrow pointing at the merge commit
                                 return (
                                     <path
                                         key={`e${i}`}
@@ -351,7 +366,7 @@ export default function CommitHistoryRail({
                                 );
                             }
 
-                            // Diverge edge (main → branch): dashed, no arrow
+                            // Dashed with arrow pointing at the first branch commit
                             return (
                                 <path
                                     key={`e${i}`}
@@ -362,6 +377,7 @@ export default function CommitHistoryRail({
                                     strokeOpacity={0.55}
                                     strokeDasharray="6 4"
                                     strokeLinecap="round"
+                                    markerEnd={`url(#rail-arr-${colorIdx})`}
                                 />
                             );
                         })}
