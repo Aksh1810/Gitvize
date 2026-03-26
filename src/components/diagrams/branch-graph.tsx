@@ -82,9 +82,10 @@ export default function BranchGraph({
 
     // Pagination state
     const [allCommits, setAllCommits] = useState<Commit[]>(initialCommits);
-    const [currentPage, setCurrentPage] = useState(1);
+    // We fetch up to 500 commits (5 pages) server-side; start pagination from page 5
+    const [currentPage, setCurrentPage] = useState(initialCommits.length >= 500 ? 5 : 1);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [hasMore, setHasMore] = useState(initialCommits.length === 100);
+    const [hasMore, setHasMore] = useState(initialCommits.length >= 500);
     const [isLoadingAll, setIsLoadingAll] = useState(false);
     const [rateLimitHit, setRateLimitHit] = useState(false);
 
@@ -106,12 +107,15 @@ export default function BranchGraph({
             const data: any[] = await res.json();
 
             const newCommits: Commit[] = data.map((c) => ({
-                sha: c.sha.substring(0, 7),
+                sha: c.sha,
+                shortSha: c.sha.substring(0, 7),
                 message: c.commit.message.split("\n")[0],
                 authorName: c.commit.author.name,
                 authorLogin: c.author?.login ?? null,
                 authorAvatar: c.author?.avatar_url ?? null,
                 date: c.commit.author.date,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                parents: (c.parents ?? []).map((p: { sha: string }) => p.sha),
             }));
 
             setAllCommits((prev) => [...prev, ...newCommits]);
@@ -154,12 +158,15 @@ export default function BranchGraph({
                 }
 
                 const newCommits: Commit[] = data.map((c) => ({
-                    sha: c.sha.substring(0, 7),
+                    sha: c.sha,
+                    shortSha: c.sha.substring(0, 7),
                     message: c.commit.message.split("\n")[0],
                     authorName: c.commit.author.name,
                     authorLogin: c.author?.login ?? null,
                     authorAvatar: c.author?.avatar_url ?? null,
                     date: c.commit.author.date,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    parents: (c.parents ?? []).map((p: { sha: string }) => p.sha),
                 }));
 
                 setAllCommits((prev) => [...prev, ...newCommits]);
@@ -188,6 +195,7 @@ export default function BranchGraph({
                 (c) =>
                     c.message.toLowerCase().includes(q) ||
                     c.authorName.toLowerCase().includes(q) ||
+                    c.shortSha.toLowerCase().includes(q) ||
                     c.sha.toLowerCase().includes(q)
             );
         }
@@ -263,7 +271,7 @@ export default function BranchGraph({
                 <>
                     <div className="flex-1 overflow-auto custom-scrollbar">
                         <div className="px-6 py-6 space-y-6">
-                            <CommitHistoryRail commits={filteredCommits} defaultBranch={defaultBranch} />
+                            <CommitHistoryRail commits={filteredCommits} defaultBranch={defaultBranch} branches={branches} />
                         </div>
                     </div>
 
@@ -537,7 +545,7 @@ export default function BranchGraph({
                                                         </div>
 
                                                         <code className="text-[10px] text-indigo-400/70 bg-indigo-500/10 px-1.5 py-0.5 rounded font-mono shrink-0 mt-1">
-                                                            {commit.sha}
+                                                            {commit.shortSha}
                                                         </code>
                                                     </motion.div>
                                                 ))}

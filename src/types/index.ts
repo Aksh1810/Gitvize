@@ -51,13 +51,18 @@ export interface Branch {
 }
 
 export interface Commit {
+  /** Full 40-char SHA — used for parent matching in the DAG */
   sha: string;
+  /** 7-char display SHA */
+  shortSha: string;
   message: string;
   authorName: string;
   authorLogin: string | null;
   authorAvatar: string | null;
   date: string;
   branch?: string;
+  /** Full SHAs of parent commits (empty array for root commit) */
+  parents?: string[];
 }
 
 export interface MergedPR {

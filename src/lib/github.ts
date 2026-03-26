@@ -197,22 +197,45 @@ export async function fetchCommits(
     branch?: string,
     token?: string | null
 ): Promise<Commit[]> {
-    const params = branch
-        ? `?sha=${branch}&per_page=100&page=1`
-        : `?per_page=100&page=1`;
+    // Fetch up to 5 pages (500 commits) in parallel for a richer DAG
+    const base = branch ? `?sha=${branch}&per_page=100` : `?per_page=100`;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ghFetch<any[]>(
-        `/repos/${owner}/${repo}/commits${params}`,
-        token
+    const pages = await Promise.allSettled<any[]>(
+        [1, 2, 3, 4, 5].map((page) =>
+            ghFetch<any[]>(
+                `/repos/${owner}/${repo}/commits${base}&page=${page}`,
+                token,
+                { noStore: true }
+            )
+        )
     );
-    return data.map((c) => ({
-        sha: c.sha.substring(0, 7),
-        message: c.commit.message.split("\n")[0],
-        authorName: c.commit.author.name,
-        authorLogin: c.author?.login ?? null,
-        authorAvatar: c.author?.avatar_url ?? null,
-        date: c.commit.author.date,
-    }));
+
+    const seen = new Set<string>();
+    const all: Commit[] = [];
+
+    for (const result of pages) {
+        if (result.status !== "fulfilled") continue;
+        for (const c of result.value) {
+            if (seen.has(c.sha)) continue;
+            seen.add(c.sha);
+            all.push({
+                sha: c.sha,                           // full 40-char SHA for DAG lookup
+                shortSha: c.sha.substring(0, 7),      // display only
+                message: c.commit.message.split("\n")[0],
+                authorName: c.commit.author.name,
+                authorLogin: c.author?.login ?? null,
+                authorAvatar: c.author?.avatar_url ?? null,
+                date: c.commit.author.date,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                parents: (c.parents ?? []).map((p: { sha: string }) => p.sha),
+            });
+        }
+    }
+
+    return all.sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
 }
 
 // --- Merged Pull Requests ---
