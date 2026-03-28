@@ -422,7 +422,7 @@ export default function BranchGraph({
                                         >
                                             <option value="newest">Newest first</option>
                                             <option value="oldest">Oldest first</option>
-                                            <option value="author">Author A–Z</option>
+                                            <option value="author">Author A-Z</option>
                                         </select>
                                     </div>
 
