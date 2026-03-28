@@ -127,12 +127,23 @@ Symbol graph behavior:
 - `focusNodeNeighborhood(cy, node)` — dims non-connected nodes to 0.12/0.06 opacity; `clearNodeFocus(cy)` resets
 - Focused nodes tagged with `keepLabel=1` so labels persist after hover-out until focus is cleared
 
+## Workflow Rule (Non-Negotiable)
+
+**Before every task:** Read this file to check for prior mistakes and established approaches.
+**After every mistake:** Update this file immediately with what went wrong and the correct fix.
+
 ## Common Pitfalls
 
 - **Double layout:** Don't put `layout:` in `cytoscape({})` constructor AND call `.layout().run()` — use explicit run only
 - **`text-max-width` type:** Must be a string `'150px'`, not a number `150`
 - **Flexbox squishing in sidebar:** Apply `shrink-0` to icons/fixed-width elements; `min-w-0 flex-1 truncate` to text elements
 - **Import unused:** Remove unused imports before building — they mask real errors
-- **`text-max-width` type:** Must be a string `'150px'`, not a number `150`
 - **Knowledge graph Canvas:** `knowledge-graph.tsx` renders via `<canvas>` + `requestAnimationFrame` — do not attempt to swap in a graph library without understanding `src/lib/force-layout.ts`
 - **diagram-cache:** Keyed by `${owner}/${repo}` + diagram type — clear on token change to avoid stale data
+
+### SVG Pitfalls (git-rail-graph.tsx / commit-history-rail.tsx)
+
+- **SVG viewport clipping:** SVG clips content at its viewport by default (`overflow: hidden`). In `git-rail-graph.tsx`, the arc path peaks at `x = MAIN_X + ARC_W = 20 + 22 = 42` but the `<svg>` is only `width="38"` — the arc bulge was invisible. Fix: add `overflow="visible"` to the `<svg>` element. Always verify that path coordinates stay within the SVG's declared width/height, or set `overflow="visible"`.
+- **SVG marker `refX` must equal the tip X:** In `<marker>`, `refX` is the coordinate in the marker's own viewBox that gets placed on the path endpoint. For a triangle `M 0 0 L 10 4 L 0 8 Z` with `viewBox="0 0 10 8"`, the tip is at `x=10` — so `refX` must be `"10"`, not `"9"`. Setting it to anything less puts the tip past the endpoint. Also set `markerWidth` to match the viewBox width so the tip is not clipped.
+- **Cross-lane bezier direction:** Cross-lane edges in `commit-history-rail.tsx` are drawn FROM parent (bottom/older) TO child (top/newer) so that `markerEnd` points at the child commit. Do not reverse this or the arrowhead will point the wrong way.
+- **`laneXs` bounds:** Lane X positions array has `laneCount` entries (0 to laneCount−1). Lane indices from the assignment algorithm are capped at `MAX_LANES − 1`. If `laneCount < MAX_LANES`, high lane indices fall back to `laneXs[0]` via `?? laneXs[0]` — all cross-lane paths would collapse onto lane 0 and look like a single straight line. Make sure `laneCount` correctly reflects `activeLanes.length`.

@@ -293,10 +293,10 @@ export default function CommitHistoryRail({
                                     key={i}
                                     id={`rail-arr-${i}`}
                                     viewBox="0 0 10 8"
-                                    refX="9"
+                                    refX="3"
                                     refY="4"
-                                    markerWidth="9"
-                                    markerHeight="8"
+                                    markerWidth="10"
+                                    markerHeight="7"
                                     orient="auto"
                                 >
                                     <path d="M 0 0 L 10 4 L 0 8 Z" fill={color} fillOpacity={0.9} />

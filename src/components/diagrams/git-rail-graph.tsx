@@ -167,7 +167,7 @@ export default function GitRailGraph({
                                 transition={{ duration: 0.25, ease: "easeOut" }}
                                 className="grid grid-cols-[38px_minmax(0,1fr)] gap-2 mb-1"
                             >
-                                <svg width="38" height={railH} className="shrink-0">
+                                <svg width="38" height={railH} className="shrink-0" overflow="visible">
                                     <line
                                         x1={MAIN_X}
                                         y1={0}
