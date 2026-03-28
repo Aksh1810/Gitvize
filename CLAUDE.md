@@ -132,6 +132,10 @@ Symbol graph behavior:
 **Before every task:** Read this file to check for prior mistakes and established approaches.
 **After every mistake:** Update this file immediately with what went wrong and the correct fix.
 
+## Critical Editing Rule (Non-Negotiable)
+
+**Make the smallest possible change to fix one thing.** Never restructure, reformat, reorder, or touch code outside the exact lines being fixed. Even if surrounding code looks improvable, leave it alone. Changing adjacent code risks breaking data flow, prop passing, or rendering logic that was working. One diff hunk = one logical fix. If in doubt, read more before editing.
+
 ## Common Pitfalls
 
 - **Double layout:** Don't put `layout:` in `cytoscape({})` constructor AND call `.layout().run()` — use explicit run only
@@ -146,4 +150,5 @@ Symbol graph behavior:
 - **SVG viewport clipping:** SVG clips content at its viewport by default (`overflow: hidden`). In `git-rail-graph.tsx`, the arc path peaks at `x = MAIN_X + ARC_W = 20 + 22 = 42` but the `<svg>` is only `width="38"` — the arc bulge was invisible. Fix: add `overflow="visible"` to the `<svg>` element. Always verify that path coordinates stay within the SVG's declared width/height, or set `overflow="visible"`.
 - **SVG marker `refX` must equal the tip X:** In `<marker>`, `refX` is the coordinate in the marker's own viewBox that gets placed on the path endpoint. For a triangle `M 0 0 L 10 4 L 0 8 Z` with `viewBox="0 0 10 8"`, the tip is at `x=10` — so `refX` must be `"10"`, not `"9"`. Setting it to anything less puts the tip past the endpoint. Also set `markerWidth` to match the viewBox width so the tip is not clipped.
 - **Cross-lane bezier direction:** Cross-lane edges in `commit-history-rail.tsx` are drawn FROM parent (bottom/older) TO child (top/newer) so that `markerEnd` points at the child commit. Do not reverse this or the arrowhead will point the wrong way.
+- **Arrowhead connection to dot — correct pattern:** Keep the bezier endpoint at the dot's CENTER `(childX, childY)`. With `refX="10"`, the arrowhead tip lands exactly at the center. The dot circle is rendered AFTER the edges (higher in the SVG tree) and naturally caps/covers the arrowhead tip, creating a clean "arrow connects into dot" look. Do NOT offset the endpoint by `DOT_R` — that moves the tip outside the dot and creates a visible gap, making the arrowhead look disconnected. The only fix needed for arrowhead alignment was changing `refX` from `"9"` to `"10"`.
 - **`laneXs` bounds:** Lane X positions array has `laneCount` entries (0 to laneCount−1). Lane indices from the assignment algorithm are capped at `MAX_LANES − 1`. If `laneCount < MAX_LANES`, high lane indices fall back to `laneXs[0]` via `?? laneXs[0]` — all cross-lane paths would collapse onto lane 0 and look like a single straight line. Make sure `laneCount` correctly reflects `activeLanes.length`.

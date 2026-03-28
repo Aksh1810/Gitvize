@@ -292,8 +292,8 @@ export default function CommitHistoryRail({
                                 <marker
                                     key={i}
                                     id={`rail-arr-${i}`}
-                                    viewBox="0 0 10 8"
-                                    refX="3"
+                                    viewBox="0 0 10 9"
+                                    refX="11"
                                     refY="4"
                                     markerWidth="10"
                                     markerHeight="7"
@@ -347,6 +347,9 @@ export default function CommitHistoryRail({
                             //
                             // Curve shape: starts vertical at parentX, sweeps across, ends vertical
                             // at childX — the classic GitLab "hockey stick" profile.
+                            // Endpoint at the dot's CENTER (childY). refX="10" places the arrowhead
+                            // tip exactly there; the dot (rendered above the edges) caps/covers the
+                            // tip so the arrow visually "connects into" the dot.
                             const cpY = (childY + parentY) / 2;
                             const d = `M ${parentX} ${parentY} C ${parentX} ${cpY}, ${childX} ${cpY}, ${childX} ${childY}`;
 
