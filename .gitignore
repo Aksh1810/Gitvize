@@ -54,3 +54,5 @@ next-env.d.ts
 
 CONTEXT_HANDOVER.md
 CLAUDE.md
+.claude/
+.env.example
