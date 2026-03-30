@@ -229,7 +229,7 @@ export default function BranchGraph({
                             }`}
                     >
                         <List className="w-3 h-3" />
-                        Timeline
+                        Commits
                     </button>
                     <button
                         onClick={() => setView("history")}
@@ -239,7 +239,7 @@ export default function BranchGraph({
                             }`}
                     >
                         <History className="w-3 h-3" />
-                        History
+                        Graph
                     </button>
                 </div>
             </div>

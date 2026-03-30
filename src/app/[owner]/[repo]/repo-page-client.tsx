@@ -51,7 +51,6 @@ interface RepoData {
     mergedPRs: MergedPR[];
 }
 
-const REPO_ONBOARDING_KEY = "gitviz_repo_onboarding_seen_v1";
 
 export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const searchParams = useSearchParams();
@@ -78,7 +77,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const [aiSettingsOpen, setAISettingsOpen] = useState(false);
     const [hasUserAIKey, setHasUserAIKey] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
-    const [onboardingStep, setOnboardingStep] = useState(0);
     const [sessionToken] = useState<string | null>(() => {
         const token = consumeOneTimeGitHubToken();
         return token || null;
@@ -468,82 +466,13 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         [dependencies, repo]
     );
 
-    const onboardingSteps = useMemo(
-        () => [
-            {
-                title: "Start With Any GitHub Repo",
-                description: "You can open any repository instantly by replacing 'hub' with 'vize' in the GitHub URL.",
-                tip: "Example: github.com/owner/repo -> gitvize.com/owner/repo",
-                tab: null as DiagramTab | null,
-            },
-            {
-                title: "Files Tab: Code Map",
-                description: "Use Files to understand project structure quickly. Click folders and symbols to inspect code and relationships.",
-                tip: "If the graph feels busy, use the filters panel to simplify what is visible.",
-                tab: "files" as DiagramTab,
-            },
-            {
-                title: "Dependencies Tab: Package Insight",
-                description: "Click any package node to open details, check dependency type, and jump to related nodes.",
-                tip: "Dependency details are shown on the right panel after selecting a package.",
-                tab: "dependencies" as DiagramTab,
-            },
-            {
-                title: "Branches Tab: Activity Over Time",
-                description: "See commit trends over time and active contributors to understand development velocity.",
-                tip: "Switch range between 30, 90, and 365 days in the activity chart.",
-                tab: "branches" as DiagramTab,
-            },
-            {
-                title: "Architecture Tab: AI Summary",
-                description: "Architecture gives a high-level map of modules and relationships. Premium mode can generate deeper AI output.",
-                tip: "Use Generate Premium Diagram when you want richer explanations.",
-                tab: "architecture" as DiagramTab,
-            },
-        ],
-        []
-    );
-
-    const closeOnboarding = useCallback((markSeen = true) => {
-        setShowOnboarding(false);
-        setOnboardingStep(0);
-        if (markSeen && typeof window !== "undefined") {
-            localStorage.setItem(REPO_ONBOARDING_KEY, "1");
-        }
-    }, []);
-
     const openOnboarding = useCallback(() => {
-        setOnboardingStep(0);
         setShowOnboarding(true);
     }, []);
 
-    const nextOnboardingStep = useCallback(() => {
-        const nextIndex = onboardingStep + 1;
-        if (nextIndex >= onboardingSteps.length) {
-            closeOnboarding(true);
-            return;
-        }
-        setOnboardingStep(nextIndex);
-    }, [closeOnboarding, onboardingStep, onboardingSteps.length]);
-
-    const previousOnboardingStep = useCallback(() => {
-        setOnboardingStep((prev) => Math.max(0, prev - 1));
+    const closeOnboarding = useCallback(() => {
+        setShowOnboarding(false);
     }, []);
-
-    useEffect(() => {
-        if (!showOnboarding) return;
-        const targetTab = onboardingSteps[onboardingStep]?.tab;
-        if (!targetTab || targetTab === activeTab) return;
-        handleTabChange(targetTab);
-    }, [showOnboarding, onboardingStep, onboardingSteps, activeTab, handleTabChange]);
-
-    useEffect(() => {
-        if (loading || typeof window === "undefined") return;
-        const seen = localStorage.getItem(REPO_ONBOARDING_KEY) === "1";
-        if (!seen) {
-            setShowOnboarding(true);
-        }
-    }, [loading]);
 
     // Loading state
     if (loading) {
@@ -742,11 +671,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
             <RepoOnboardingGuide
                 open={showOnboarding}
-                stepIndex={onboardingStep}
-                steps={onboardingSteps}
-                onClose={() => closeOnboarding(true)}
-                onBack={previousOnboardingStep}
-                onNext={nextOnboardingStep}
+                activeTab={activeTab}
+                onClose={closeOnboarding}
             />
         </div>
     );
