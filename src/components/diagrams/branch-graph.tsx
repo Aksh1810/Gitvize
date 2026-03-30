@@ -14,15 +14,13 @@ import {
     ArrowUpDown,
     Loader2,
     AlertTriangle,
-    Network,
     List,
     History,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import GitRailGraph from "./git-rail-graph";
 import CommitHistoryRail from "./commit-history-rail";
-import type { Branch, Commit, MergedPR } from "@/types";
+import type { Branch, Commit } from "@/types";
 
 const branchColors = [
     "#6366f1", "#22d3ee", "#a855f7", "#10b981",
@@ -35,7 +33,6 @@ interface BranchGraphProps {
     defaultBranch: string;
     owner: string;
     repo: string;
-    mergedPRs: MergedPR[];
 }
 
 function timeAgo(dateStr: string): string {
@@ -72,9 +69,8 @@ export default function BranchGraph({
     defaultBranch,
     owner,
     repo,
-    mergedPRs,
 }: BranchGraphProps) {
-    const [view, setView] = useState<"graph" | "timeline" | "history">(mergedPRs.length === 0 ? "timeline" : "graph");
+    const [view, setView] = useState<"timeline" | "history">("timeline");
     const [showAllBranches, setShowAllBranches] = useState(false);
     const [selectedCommit, setSelectedCommit] = useState<Commit | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
@@ -226,16 +222,6 @@ export default function BranchGraph({
                 </div>
                 <div className="flex items-center gap-1 bg-secondary/30 rounded-lg p-0.5 border border-border/20">
                     <button
-                        onClick={() => setView("graph")}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "graph"
-                            ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20"
-                            : "text-muted-foreground hover:text-foreground border border-transparent"
-                            }`}
-                    >
-                        <Network className="w-3 h-3" />
-                        Graph
-                    </button>
-                    <button
                         onClick={() => setView("timeline")}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "timeline"
                             ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20"
@@ -258,16 +244,7 @@ export default function BranchGraph({
                 </div>
             </div>
 
-            {view === "graph" ? (
-                <div className="flex-1 overflow-hidden">
-                    <GitRailGraph
-                        mergedPRs={mergedPRs}
-                        defaultBranch={defaultBranch}
-                        owner={owner}
-                        repo={repo}
-                    />
-                </div>
-            ) : view === "history" ? (
+            {view === "history" ? (
                 <>
                     <div className="flex-1 overflow-auto custom-scrollbar">
                         <div className="px-6 py-6 space-y-6">

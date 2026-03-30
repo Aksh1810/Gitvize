@@ -459,7 +459,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 defaultBranch={repoData.metadata.defaultBranch}
                 owner={owner}
                 repo={repo}
-                mergedPRs={repoData.mergedPRs}
             />
         );
     }, [owner, repo, repoData]);
