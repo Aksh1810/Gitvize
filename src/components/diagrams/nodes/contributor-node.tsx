@@ -1,7 +1,8 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { User } from "lucide-react";
 import type { ContributorNodeData } from "@/types";
 
 function ContributorNode({ data }: NodeProps) {
@@ -15,6 +16,8 @@ function ContributorNode({ data }: NodeProps) {
     const avatarSize = Math.max(28, size * 0.55);
     const isTop3 = d.rank <= 3;
     const medals = ["🥇", "🥈", "🥉"];
+    const [imgError, setImgError] = useState(false);
+    const hasAvatar = !!d.avatarUrl && !imgError;
 
     return (
         <>
@@ -44,16 +47,30 @@ function ContributorNode({ data }: NodeProps) {
 
                     {/* Avatar with ring */}
                     <div className="relative" style={{ width: avatarSize, height: avatarSize }}>
-                        <img
-                            src={d.avatarUrl}
-                            alt={d.login}
-                            className="rounded-full object-cover"
-                            style={{
-                                width: avatarSize,
-                                height: avatarSize,
-                                border: `2px solid ${d.color}`,
-                            }}
-                        />
+                        {hasAvatar ? (
+                            <img
+                                src={d.avatarUrl}
+                                alt={d.login}
+                                className="rounded-full object-cover"
+                                style={{
+                                    width: avatarSize,
+                                    height: avatarSize,
+                                    border: `2px solid ${d.color}`,
+                                }}
+                                onError={() => setImgError(true)}
+                            />
+                        ) : (
+                            <div
+                                className="rounded-full flex items-center justify-center bg-white/10"
+                                style={{
+                                    width: avatarSize,
+                                    height: avatarSize,
+                                    border: `2px solid ${d.color}`,
+                                }}
+                            >
+                                <User style={{ width: avatarSize * 0.55, height: avatarSize * 0.55 }} className="text-muted-foreground" />
+                            </div>
+                        )}
 
                         {/* Medal for top 3 */}
                         {isTop3 && (

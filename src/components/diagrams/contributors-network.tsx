@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
+    User,
     Users,
     Search,
     X,
@@ -19,6 +20,18 @@ import ContributorNode from "./nodes/contributor-node";
 import type { Contributor, ContributorNodeData } from "@/types";
 
 const nodeTypes = { contributor: ContributorNode };
+
+function AvatarWithFallback({ src, alt, className }: { src?: string; alt: string; className: string }) {
+    const [error, setError] = useState(false);
+    if (!src || error) {
+        return (
+            <div className={`${className} flex items-center justify-center bg-white/10`}>
+                <User className="w-4 h-4 text-muted-foreground" />
+            </div>
+        );
+    }
+    return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
+}
 
 interface ContributorsNetworkProps {
     contributors: Contributor[];
@@ -328,7 +341,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                                 <span className="text-[11px] text-muted-foreground/50 w-6 text-right shrink-0 font-mono">
                                     #{rank}
                                 </span>
-                                <img
+                                <AvatarWithFallback
                                     src={contributor.avatarUrl}
                                     alt={contributor.login}
                                     className="w-8 h-8 rounded-full shrink-0 ring-1 ring-border/20"
