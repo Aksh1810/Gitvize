@@ -1,9 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchAllRepoData, fetchRepoMetadata, fetchMergedPRs, fetchLanguages } from "@/lib/github";
+import { fetchAllRepoData, fetchRepoMetadata, fetchMergedPRs, fetchLanguages, fetchContributors } from "@/lib/github";
 import { fetchAllRepoDataLocal } from "@/lib/local-git";
+import type { Contributor } from "@/types";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
+
+/** Deduplicate contributors by login (case-insensitive), then email, then name. */
+function deduplicateContributors(contributors: Contributor[]): Contributor[] {
+    const merged = new Map<string, Contributor>();
+
+    for (const c of contributors) {
+        // Build a dedup key: prefer login (GitHub username), fall back to email, then name
+        const key = c.login
+            ? c.login.toLowerCase()
+            : c.email
+                ? c.email.toLowerCase()
+                : c.name?.toLowerCase() ?? `id-${c.id}`;
+
+        const existing = merged.get(key);
+        if (existing) {
+            existing.contributions += c.contributions;
+            // Prefer entry with a GitHub profile (has htmlUrl or avatarUrl)
+            if (!existing.htmlUrl && c.htmlUrl) {
+                existing.htmlUrl = c.htmlUrl;
+                existing.avatarUrl = c.avatarUrl;
+                existing.login = c.login;
+                existing.id = c.id;
+            }
+        } else {
+            merged.set(key, { ...c });
+        }
+    }
+
+    return Array.from(merged.values()).sort(
+        (a, b) => b.contributions - a.contributions
+    );
+}
 
 function extractStatusCode(errorMessage: string): number | null {
     const match = errorMessage.match(/GitHub API error\s+(\d{3})\s+/i);
@@ -58,6 +91,8 @@ export async function GET(request: NextRequest) {
             // Local git failed — fall back to full GitHub API
             data = await fetchAllRepoData(owner, repo, token);
         }
+
+        data.contributors = deduplicateContributors(data.contributors ?? []);
 
         return NextResponse.json(data);
     } catch (error) {

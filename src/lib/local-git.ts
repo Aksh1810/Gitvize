@@ -190,20 +190,41 @@ async function readFileTree(
 
 async function readContributors(git: SimpleGit): Promise<Contributor[]> {
     const raw = await git.raw(["shortlog", "-sne", "--all"]);
-    const contributors: Contributor[] = [];
-    let id = 1;
+
+    // Deduplicate by email: same person may commit with different names
+    const byEmail = new Map<string, { name: string; email: string; contributions: number }>();
 
     for (const line of raw.trim().split("\n")) {
         if (!line.trim()) continue;
         const match = line.trim().match(/^(\d+)\t(.+?)\s+<(.+?)>$/);
         if (!match) continue;
-        const [, countStr, name] = match;
+        const [, countStr, name, email] = match;
+        const emailKey = email.toLowerCase();
+        const count = parseInt(countStr, 10);
+
+        const existing = byEmail.get(emailKey);
+        if (existing) {
+            existing.contributions += count;
+            // Keep the longer name as it's likely the more complete one
+            if (name.length > existing.name.length) {
+                existing.name = name;
+            }
+        } else {
+            byEmail.set(emailKey, { name, email, contributions: count });
+        }
+    }
+
+    let id = 1;
+    const contributors: Contributor[] = [];
+    for (const entry of byEmail.values()) {
         contributors.push({
-            login: name,
+            login: entry.name,
             id: id++,
             avatarUrl: "",
-            contributions: parseInt(countStr, 10),
+            contributions: entry.contributions,
             htmlUrl: "",
+            email: entry.email,
+            name: entry.name,
         });
     }
 

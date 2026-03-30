@@ -42,6 +42,8 @@ export interface Contributor {
   avatarUrl: string;
   contributions: number;
   htmlUrl: string;
+  email?: string;
+  name?: string;
 }
 
 export interface Branch {
