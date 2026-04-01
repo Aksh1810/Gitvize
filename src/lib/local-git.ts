@@ -282,6 +282,71 @@ async function readDependencyFiles(
     return results;
 }
 
+// ── Paginated commits (for client-side "load more") ─────────────────────────
+
+export async function readCommitsPage(
+    owner: string,
+    repo: string,
+    branch: string,
+    page: number,
+    perPage: number,
+): Promise<Commit[]> {
+    const { git } = await getRepo(owner, repo);
+    const skip = (page - 1) * perPage;
+
+    const raw = await git.raw([
+        "log", branch, "--topo-order",
+        "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P",
+        `--skip=${skip}`,
+        `-n`, String(perPage),
+    ]);
+
+    if (!raw.trim()) return [];
+
+    const commits: Commit[] = [];
+    for (const line of raw.trim().split("\n")) {
+        if (!line.trim()) continue;
+        const parts = line.split("\0");
+        if (parts.length < 6) continue;
+
+        commits.push({
+            sha: parts[0].trim(),
+            shortSha: parts[1].trim(),
+            message: parts[2].trim(),
+            authorName: parts[3].trim(),
+            authorLogin: null,
+            authorAvatar: null,
+            date: parts[4].trim(),
+            parents: parts[5].trim() ? parts[5].trim().split(" ") : [],
+        });
+    }
+
+    return commits;
+}
+
+// ── Single file content (for client-side preview) ───────────────────────────
+
+export async function readFileContent(
+    owner: string,
+    repo: string,
+    filePath: string,
+): Promise<string> {
+    const { repoDir } = await getRepo(owner, repo);
+    const fullPath = path.join(repoDir, filePath);
+
+    // Ensure resolved path stays inside the repo directory
+    const resolved = path.resolve(fullPath);
+    if (!resolved.startsWith(path.resolve(repoDir))) {
+        throw new Error("File path not found");
+    }
+
+    try {
+        return await fs.readFile(resolved, "utf-8");
+    } catch {
+        throw new Error("File not found");
+    }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export async function fetchAllRepoDataLocal(

@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { motion, useScroll, useTransform } from "framer-motion";
 import {
-    GitBranch,
     Download,
     Share2,
     Star,
@@ -11,6 +10,7 @@ import {
     MessageCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import BrandLogo from "@/components/ui/brand-logo";
 import { toast } from "sonner";
 import { transitions } from "@/lib/motion";
 
@@ -68,11 +68,7 @@ export default function Navbar({
                     href="/"
                     className="flex items-center gap-3 group"
                 >
-                    <div className="relative">
-                        <div className="relative w-9 h-9 rounded-2xl bg-black/70 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] flex items-center justify-center interactive-lift">
-                            <GitBranch className="w-4 h-4 text-white/85 group-hover:text-white transition-colors" />
-                        </div>
-                    </div>
+                    <BrandLogo size={36} className="interactive-lift" />
                     <div className="hidden sm:flex flex-col">
                         <span className="text-lg font-semibold tracking-tight text-white">Gitvize</span>
                     </div>

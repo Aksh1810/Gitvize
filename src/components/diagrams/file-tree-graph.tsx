@@ -499,9 +499,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         }
 
         try {
-            const res = await fetch(
-                `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${file.path}`
-            );
+            const params = new URLSearchParams({ owner, repo, path: file.path });
+            const res = await fetch(`/api/github/repo/file?${params}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const text = await res.text();
             setFileContent(text);
@@ -651,7 +650,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     }
 
                     try {
-                        const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${item.path}`);
+                        const fileParams = new URLSearchParams({ owner, repo, path: item.path });
+                        const res = await fetch(`/api/github/repo/file?${fileParams}`);
                         if (!res.ok) {
                             fetchFailed += 1;
                             continue;

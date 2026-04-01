@@ -4,7 +4,6 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  GitBranch,
   ArrowRight,
   Link as LinkIcon,
   Brain,
@@ -13,6 +12,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import BrandLogo from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import GitHubTokenModal, { setOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
@@ -96,9 +96,7 @@ export default function LandingPage() {
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-[#090d18]/75 backdrop-blur-2xl px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg border border-white/25 bg-white/5 flex items-center justify-center text-slate-100">
-              <GitBranch className="w-4 h-4 text-white" />
-            </div>
+            <BrandLogo size={32} />
             <span className="text-xl font-bold gradient-text">Gitvize</span>
           </div>
           <a

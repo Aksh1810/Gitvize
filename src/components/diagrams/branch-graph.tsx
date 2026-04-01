@@ -13,7 +13,6 @@ import {
     X,
     ArrowUpDown,
     Loader2,
-    AlertTriangle,
     List,
     History,
 } from "lucide-react";
@@ -83,7 +82,6 @@ export default function BranchGraph({
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(initialCommits.length >= 500);
     const [isLoadingAll, setIsLoadingAll] = useState(false);
-    const [rateLimitHit, setRateLimitHit] = useState(false);
 
     const nonDefaultBranches = branches.filter((b) => !b.isDefault);
     const visibleBranches = showAllBranches
@@ -94,29 +92,14 @@ export default function BranchGraph({
         setIsLoadingMore(true);
         try {
             const nextPage = currentPage + 1;
-            const params = `?sha=${defaultBranch}&per_page=100&page=${nextPage}`;
-            const res = await fetch(
-                `https://api.github.com/repos/${owner}/${repo}/commits${params}`
-            );
+            const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(nextPage) });
+            const res = await fetch(`/api/github/repo/commits?${params}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const data: any[] = await res.json();
-
-            const newCommits: Commit[] = data.map((c) => ({
-                sha: c.sha,
-                shortSha: c.sha.substring(0, 7),
-                message: c.commit.message.split("\n")[0],
-                authorName: c.commit.author.name,
-                authorLogin: c.author?.login ?? null,
-                authorAvatar: c.author?.avatar_url ?? null,
-                date: c.commit.author.date,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                parents: (c.parents ?? []).map((p: { sha: string }) => p.sha),
-            }));
+            const newCommits: Commit[] = await res.json();
 
             setAllCommits((prev) => [...prev, ...newCommits]);
             setCurrentPage(nextPage);
-            if (data.length < 100) setHasMore(false);
+            if (newCommits.length < 100) setHasMore(false);
         } catch (err) {
             console.error("Failed to load more commits:", err);
             setHasMore(false);
@@ -133,42 +116,23 @@ export default function BranchGraph({
 
         try {
             while (keepGoing) {
-                const params = `?sha=${defaultBranch}&per_page=100&page=${page}`;
-                const res = await fetch(
-                    `https://api.github.com/repos/${owner}/${repo}/commits${params}`
-                );
+                const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(page) });
+                const res = await fetch(`/api/github/repo/commits?${params}`);
                 if (!res.ok) {
-                    if (res.status === 403 || res.status === 429) {
-                        console.warn("GitHub rate limit hit, stopping.");
-                        setRateLimitHit(true);
-                    }
                     keepGoing = false;
                     break;
                 }
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const data: any[] = await res.json();
+                const newCommits: Commit[] = await res.json();
 
-                if (data.length === 0) {
+                if (newCommits.length === 0) {
                     keepGoing = false;
                     break;
                 }
-
-                const newCommits: Commit[] = data.map((c) => ({
-                    sha: c.sha,
-                    shortSha: c.sha.substring(0, 7),
-                    message: c.commit.message.split("\n")[0],
-                    authorName: c.commit.author.name,
-                    authorLogin: c.author?.login ?? null,
-                    authorAvatar: c.author?.avatar_url ?? null,
-                    date: c.commit.author.date,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    parents: (c.parents ?? []).map((p: { sha: string }) => p.sha),
-                }));
 
                 setAllCommits((prev) => [...prev, ...newCommits]);
                 setCurrentPage(page);
 
-                if (data.length < 100) {
+                if (newCommits.length < 100) {
                     keepGoing = false;
                 }
                 page++;
@@ -252,26 +216,14 @@ export default function BranchGraph({
                         </div>
                     </div>
 
-                    {(hasMore || rateLimitHit) && (
+                    {hasMore && (
                         <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
                             <div className="flex items-center justify-between gap-4">
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                                     <GitCommit className="w-3.5 h-3.5" />
                                     <span>{allCommits.length} loaded</span>
-                                    {hasMore && <span className="text-muted-foreground/50">• more available</span>}
+                                    <span className="text-muted-foreground/50">• more available</span>
                                 </div>
-
-                                {rateLimitHit && (
-                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                        <span className="text-[11px] text-amber-300">
-                                            Rate limit reached — wait or add a GitHub token for 5,000 req/hr
-                                        </span>
-                                        <button onClick={() => setRateLimitHit(false)} className="text-amber-400/50 hover:text-amber-400 ml-1">
-                                            <X className="w-3 h-3" />
-                                        </button>
-                                    </div>
-                                )}
 
                                 <div className="flex items-center gap-2 shrink-0">
                                     {isLoadingAll ? (
@@ -279,7 +231,7 @@ export default function BranchGraph({
                                             <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
                                             <span>Loading... {allCommits.length}</span>
                                         </div>
-                                    ) : hasMore ? (
+                                    ) : (
                                         <>
                                             <Button
                                                 variant="outline"
@@ -306,7 +258,7 @@ export default function BranchGraph({
                                                 Load all
                                             </Button>
                                         </>
-                                    ) : null}
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -545,37 +497,22 @@ export default function BranchGraph({
                     </div>
 
                     {/* Sticky Bottom Bar — always visible, no scrolling needed */}
-                    {(hasMore || rateLimitHit) && (
+                    {hasMore && (
                         <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
                             <div className="flex items-center justify-between gap-4">
-                                {/* Left: commit count */}
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                                     <GitCommit className="w-3.5 h-3.5" />
                                     <span>{allCommits.length} loaded</span>
-                                    {hasMore && <span className="text-muted-foreground/50">• more available</span>}
+                                    <span className="text-muted-foreground/50">• more available</span>
                                 </div>
 
-                                {/* Center: rate limit warning */}
-                                {rateLimitHit && (
-                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                        <span className="text-[11px] text-amber-300">
-                                            Rate limit reached — wait or add a GitHub token for 5,000 req/hr
-                                        </span>
-                                        <button onClick={() => setRateLimitHit(false)} className="text-amber-400/50 hover:text-amber-400 ml-1">
-                                            <X className="w-3 h-3" />
-                                        </button>
-                                    </div>
-                                )}
-
-                                {/* Right: load buttons */}
                                 <div className="flex items-center gap-2 shrink-0">
                                     {isLoadingAll ? (
                                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                             <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
                                             <span>Loading... {allCommits.length}</span>
                                         </div>
-                                    ) : hasMore ? (
+                                    ) : (
                                         <>
                                             <Button
                                                 variant="outline"
@@ -602,7 +539,7 @@ export default function BranchGraph({
                                                 Load all
                                             </Button>
                                         </>
-                                    ) : null}
+                                    )}
                                 </div>
                             </div>
                         </div>

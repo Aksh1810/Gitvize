@@ -1,0 +1,40 @@
+import { NextRequest, NextResponse } from "next/server";
+import { readFileContent } from "@/lib/local-git";
+
+const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
+const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
+
+/**
+ * GET /api/github/repo/file?owner=X&repo=Y&path=src/index.ts
+ *
+ * Returns file content from the local clone, avoiding raw.githubusercontent.com calls.
+ */
+export async function GET(request: NextRequest) {
+    const { searchParams } = new URL(request.url);
+    const owner = searchParams.get("owner");
+    const repo = searchParams.get("repo");
+    const filePath = searchParams.get("path");
+
+    if (!owner || !repo || !filePath) {
+        return NextResponse.json({ error: "owner, repo, and path are required" }, { status: 400 });
+    }
+    if (!OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
+        return NextResponse.json({ error: "invalid owner or repo format" }, { status: 400 });
+    }
+
+    // Prevent path traversal
+    if (filePath.includes("..") || filePath.startsWith("/")) {
+        return NextResponse.json({ error: "invalid file path" }, { status: 400 });
+    }
+
+    try {
+        const content = await readFileContent(owner, repo, filePath);
+        return new NextResponse(content, {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to read file";
+        const status = message.includes("not found") ? 404 : 500;
+        return NextResponse.json({ error: message }, { status });
+    }
+}
