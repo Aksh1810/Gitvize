@@ -75,13 +75,15 @@ export async function GET(request: NextRequest) {
                 emit({ type: "metadata", message: "Fetching metadata in background..." });
 
                 // Step 1: Clone (or reuse cached clone) — this is the heavy step.
+                let wasCached = false;
                 try {
-                    await cloneRepo(
+                    ({ wasCached } = await cloneRepo(
                         owner,
                         repo,
                         token ?? undefined,
                         (msg) => emit({ type: "cloning", message: msg }),
-                    );
+                    ));
+                    if (wasCached) emit({ type: "cached" });
                 } catch (cloneErr) {
                     const msg = cloneErr instanceof Error ? cloneErr.message : "";
                     const friendly =
@@ -164,12 +166,22 @@ export async function GET(request: NextRequest) {
                     });
                 }
 
+                // Enrich commits with GitHub avatars using the same email-based map.
+                const enrichedCommits = authorMap.size > 0
+                    ? localData.commits.map((c) => {
+                          const gh = c.authorEmail ? authorMap.get(c.authorEmail.toLowerCase()) : undefined;
+                          if (!gh) return c;
+                          return { ...c, authorLogin: gh.login, authorAvatar: gh.avatarUrl };
+                      })
+                    : localData.commits;
+
                 emit({
                     type: "enriched",
                     payload: {
                         metadata: metadata ?? placeholderMetadata,
                         mergedPRs,
                         contributors: enrichedContributors,
+                        commits: enrichedCommits,
                     },
                 });
             } catch (err) {

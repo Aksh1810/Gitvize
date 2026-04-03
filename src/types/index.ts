@@ -59,6 +59,7 @@ export interface Commit {
   shortSha: string;
   message: string;
   authorName: string;
+  authorEmail?: string;
   authorLogin: string | null;
   authorAvatar: string | null;
   date: string;

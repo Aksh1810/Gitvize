@@ -26,7 +26,27 @@ const MAX_COMMITS = 500;
 
 // How long a clone is considered fresh before we re-fetch (5 minutes)
 const FETCH_COOLDOWN_MS = 5 * 60 * 1000;
-const lastFetchedAt = new Map<string, number>();
+
+// Persist the last-fetch timestamp inside the repo's .git dir so it survives
+// server restarts (in-memory Maps reset on every module reload / hot reload).
+const FETCH_TS_FILE = ".gitviz-last-fetched";
+
+async function readFetchTimestamp(repoDir: string): Promise<number> {
+    try {
+        const raw = await fs.readFile(path.join(repoDir, ".git", FETCH_TS_FILE), "utf-8");
+        return parseInt(raw.trim(), 10) || 0;
+    } catch {
+        return 0;
+    }
+}
+
+async function writeFetchTimestamp(repoDir: string): Promise<void> {
+    await fs.writeFile(
+        path.join(repoDir, ".git", FETCH_TS_FILE),
+        String(Date.now()),
+        "utf-8",
+    ).catch(() => {});
+}
 
 // ── Clone lock (prevents concurrent clones of the same repo) ─────────────────
 
@@ -102,7 +122,7 @@ export async function cloneRepo(
     repo: string,
     token?: string | null,
     onProgress?: (msg: string) => void,
-): Promise<{ git: SimpleGit; repoDir: string }> {
+): Promise<{ git: SimpleGit; repoDir: string; wasCached: boolean }> {
     const repoDir = path.join(CLONE_BASE, owner, repo);
     const key = `${owner}/${repo}`;
 
@@ -125,6 +145,8 @@ export async function cloneRepo(
     } catch {
         needsClone = true;
     }
+
+    let wasCached = false;
 
     if (needsClone) {
         onProgress?.("Cloning repository...");
@@ -153,19 +175,21 @@ export async function cloneRepo(
         } finally {
             cloneLocks.delete(key);
         }
-        lastFetchedAt.set(key, Date.now());
+        await writeFetchTimestamp(repoDir);
     } else {
-        const last = lastFetchedAt.get(key) ?? 0;
+        const last = await readFetchTimestamp(repoDir);
         if (Date.now() - last > FETCH_COOLDOWN_MS) {
             onProgress?.("Updating repository...");
             const git = simpleGit(repoDir, { timeout: { block: 30_000 } });
             await git.fetch(["--all", "--prune", "--filter=blob:none", `--depth=${MAX_COMMITS}`]).catch(() => {});
-            lastFetchedAt.set(key, Date.now());
+            await writeFetchTimestamp(repoDir);
+        } else {
+            wasCached = true;
         }
     }
 
     const git = simpleGit(repoDir, { timeout: { block: 30_000 } });
-    return { git, repoDir };
+    return { git, repoDir, wasCached };
 }
 
 // Keep internal alias for backward compat
@@ -241,10 +265,11 @@ function parseCommitLines(raw: string): Commit[] {
             shortSha: parts[1].trim(),
             message: parts[2].trim(),
             authorName: parts[3].trim(),
+            authorEmail: parts[4].trim(),
             authorLogin: null,
             authorAvatar: null,
-            date: parts[4].trim(),
-            parents: parts[5].trim() ? parts[5].trim().split(" ") : [],
+            date: parts[5].trim(),
+            parents: parts[6].trim() ? parts[6].trim().split(" ") : [],
         });
     }
     return commits;
@@ -253,7 +278,7 @@ function parseCommitLines(raw: string): Commit[] {
 async function readCommits(git: SimpleGit): Promise<Commit[]> {
     const raw = await git.raw([
         "log", "--all", "--topo-order",
-        "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P",
+        "--format=%H%x00%h%x00%s%x00%an%x00%ae%x00%aI%x00%P",
         "-n", String(MAX_COMMITS),
     ]);
     return parseCommitLines(raw).sort(
@@ -383,7 +408,7 @@ export async function readCommitsPage(
     const skip = (page - 1) * perPage;
     const raw = await git.raw([
         "log", branch, "--topo-order",
-        "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P",
+        "--format=%H%x00%h%x00%s%x00%an%x00%ae%x00%aI%x00%P",
         `--skip=${skip}`,
         "-n", String(perPage),
     ]);

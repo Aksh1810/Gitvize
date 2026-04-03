@@ -59,6 +59,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const initialTab = (searchParams.get("tab") as DiagramTab) ?? "files";
     const [activeTab, setActiveTab] = useState<DiagramTab>(initialTab);
     const [loading, setLoading] = useState(true);
+    const [cachedLoad, setCachedLoad] = useState(false);
     const [cloneStep, setCloneStep] = useState<CloneStep>("checking");
     const [cloneMessage, setCloneMessage] = useState("");
     const [error, setError] = useState<string | null>(null);
@@ -94,6 +95,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // Fetch all repo data via SSE stream
     const fetchData = useCallback(async () => {
         setLoading(true);
+        setCachedLoad(false);
         setCloneStep("checking");
         setCloneMessage("");
         setError(null);
@@ -137,6 +139,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         return;
                     }
 
+                    if (type === "cached") {
+                        setCachedLoad(true);
+                    }
+
                     if (type === "done") {
                         setRepoData(event.payload as RepoData);
                         setLoading(false);
@@ -147,6 +153,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             metadata: RepoData["metadata"];
                             mergedPRs: RepoData["mergedPRs"];
                             contributors?: RepoData["contributors"];
+                            commits?: RepoData["commits"];
                         };
                         setRepoData((prev) =>
                             prev
@@ -155,6 +162,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                       metadata: enriched.metadata,
                                       mergedPRs: enriched.mergedPRs,
                                       ...(enriched.contributors ? { contributors: enriched.contributors } : {}),
+                                      ...(enriched.commits ? { commits: enriched.commits } : {}),
                                   }
                                 : prev
                         );
@@ -523,6 +531,17 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
     // Loading state
     if (loading) {
+        // Cached repos already have data locally — show a thin progress bar instead
+        // of the full clone screen so the user isn't shown clone messaging on refresh.
+        if (cachedLoad) {
+            return (
+                <div className="h-screen w-full bg-[#0a0e1a] flex flex-col">
+                    <div className="h-0.5 w-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-indigo-500/70 animate-[loading-bar_1.4s_ease-in-out_infinite]" style={{ width: "100%" }} />
+                    </div>
+                </div>
+            );
+        }
         return (
             <CloneProgressScreen
                 owner={owner}
