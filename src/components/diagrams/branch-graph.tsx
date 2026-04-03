@@ -22,8 +22,8 @@ import CommitHistoryRail from "./commit-history-rail";
 import type { Branch, Commit } from "@/types";
 
 const branchColors = [
-    "#6366f1", "#22d3ee", "#a855f7", "#10b981",
-    "#f59e0b", "#ef4444", "#ec4899", "#3b82f6",
+    "#22d3ee", "#10b981", "#14b8a6", "#f59e0b",
+    "#ef4444", "#ec4899", "#f97316", "#84cc16",
 ];
 
 interface BranchGraphProps {
@@ -181,14 +181,14 @@ export default function BranchGraph({
             {/* View toggle */}
             <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-border/20">
                 <div className="flex items-center gap-2">
-                    <GitBranch className="w-4 h-4 text-indigo-400" />
+                    <GitBranch className="w-4 h-4 text-slate-300" />
                     <span className="text-sm font-semibold">Branches</span>
                 </div>
                 <div className="flex items-center gap-1 bg-secondary/30 rounded-lg p-0.5 border border-border/20">
                     <button
                         onClick={() => setView("timeline")}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "timeline"
-                            ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20"
+                            ? "bg-white/8 text-slate-200 border border-white/15"
                             : "text-muted-foreground hover:text-foreground border border-transparent"
                             }`}
                     >
@@ -198,7 +198,7 @@ export default function BranchGraph({
                     <button
                         onClick={() => setView("history")}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "history"
-                            ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20"
+                            ? "bg-white/8 text-slate-200 border border-white/15"
                             : "text-muted-foreground hover:text-foreground border border-transparent"
                             }`}
                     >
@@ -228,7 +228,7 @@ export default function BranchGraph({
                                 <div className="flex items-center gap-2 shrink-0">
                                     {isLoadingAll ? (
                                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
                                             <span>Loading... {allCommits.length}</span>
                                         </div>
                                     ) : (
@@ -238,7 +238,7 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadMoreCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-secondary/30 border-border/30 hover:bg-secondary/50 hover:border-indigo-500/30"
+                                                className="h-7 text-xs gap-1.5 bg-secondary/30 border-border/30 hover:bg-secondary/50 hover:border-white/20"
                                             >
                                                 {isLoadingMore ? (
                                                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -252,7 +252,7 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadAllCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-indigo-500/10 border-indigo-500/20 hover:bg-indigo-500/20 text-indigo-400"
+                                                className="h-7 text-xs gap-1.5 bg-white/5 border-white/15 hover:bg-white/10 text-slate-300"
                                             >
                                                 <GitCommit className="w-3 h-3" />
                                                 Load all
@@ -274,7 +274,7 @@ export default function BranchGraph({
                             <div className="glass-card p-5">
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-2">
-                                        <GitBranch className="w-4 h-4 text-indigo-400" />
+                                        <GitBranch className="w-4 h-4 text-slate-300" />
                                         <h3 className="text-sm font-semibold">Branches</h3>
                                         <Badge variant="secondary" className="text-[10px]">
                                             {branches.length}
@@ -347,7 +347,7 @@ export default function BranchGraph({
                                         <select
                                             value={sortBy}
                                             onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "author")}
-                                            className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors appearance-none cursor-pointer text-foreground"
+                                            className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-slate-400/40 focus:outline-none focus:ring-1 focus:ring-slate-400/15 transition-colors appearance-none cursor-pointer text-foreground"
                                         >
                                             <option value="newest">Newest first</option>
                                             <option value="oldest">Oldest first</option>
@@ -362,7 +362,7 @@ export default function BranchGraph({
                                             placeholder="Search commits..."
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
-                                            className="h-8 w-[200px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors"
+                                            className="h-8 w-[200px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-slate-400/40 focus:outline-none focus:ring-1 focus:ring-slate-400/15 transition-colors"
                                         />
                                         {searchQuery && (
                                             <button
@@ -401,7 +401,7 @@ export default function BranchGraph({
                                                         initial={{ opacity: 0, x: -8 }}
                                                         animate={{ opacity: 1, x: 0 }}
                                                         className={`group relative flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${selectedCommit?.sha === commit.sha
-                                                            ? "bg-indigo-500/10 border border-indigo-500/20"
+                                                            ? "bg-white/6 border border-white/15"
                                                             : "hover:bg-secondary/30 border border-transparent"
                                                             }`}
                                                         onClick={() =>
@@ -473,7 +473,7 @@ export default function BranchGraph({
                                                             </AnimatePresence>
                                                         </div>
 
-                                                        <code className="text-[10px] text-indigo-400/70 bg-indigo-500/10 px-1.5 py-0.5 rounded font-mono shrink-0 mt-1">
+                                                        <code className="text-[10px] text-slate-400/70 bg-white/5 px-1.5 py-0.5 rounded font-mono shrink-0 mt-1">
                                                             {commit.shortSha}
                                                         </code>
                                                     </motion.div>
@@ -509,7 +509,7 @@ export default function BranchGraph({
                                 <div className="flex items-center gap-2 shrink-0">
                                     {isLoadingAll ? (
                                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
                                             <span>Loading... {allCommits.length}</span>
                                         </div>
                                     ) : (
@@ -519,7 +519,7 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadMoreCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-secondary/30 border-border/30 hover:bg-secondary/50 hover:border-indigo-500/30"
+                                                className="h-7 text-xs gap-1.5 bg-secondary/30 border-border/30 hover:bg-secondary/50 hover:border-white/20"
                                             >
                                                 {isLoadingMore ? (
                                                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -533,7 +533,7 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadAllCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-indigo-500/10 border-indigo-500/20 hover:bg-indigo-500/20 text-indigo-400"
+                                                className="h-7 text-xs gap-1.5 bg-white/5 border-white/15 hover:bg-white/10 text-slate-300"
                                             >
                                                 <GitCommit className="w-3 h-3" />
                                                 Load all

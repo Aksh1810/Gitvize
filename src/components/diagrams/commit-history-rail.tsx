@@ -41,14 +41,14 @@ interface LaneState {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const LANE_COLORS = [
-    "#6366f1", // indigo  – main/default branch
-    "#22d3ee", // cyan
-    "#a855f7", // violet
+    "#ff0000", // cyan   – main/default branch
     "#10b981", // emerald
     "#f59e0b", // amber
     "#ec4899", // pink
-    "#3b82f6", // blue
+    "#14b8a6", // teal
+    "#f97316", // orange
     "#84cc16", // lime
+    "#e879f9", // fuchsia
 ];
 
 const MAX_LANES = 8;
@@ -241,7 +241,7 @@ export default function CommitHistoryRail({
             {/* Header */}
             <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
-                    <GitMerge className="w-4 h-4 text-indigo-400" />
+                    <GitMerge className="w-4 h-4 text-slate-400" />
                     <h3 className="text-sm font-semibold text-foreground">
                         Commit History
                     </h3>
@@ -406,7 +406,7 @@ export default function CommitHistoryRail({
                                     {formatDateLabel(item.commit.date)}
                                 </span>
                                 {item.isMerge ? (
-                                    <GitMerge className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+                                    <GitMerge className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                                 ) : (
                                     <GitCommit className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
                                 )}
@@ -419,7 +419,7 @@ export default function CommitHistoryRail({
                                 <span className="text-[10px] text-muted-foreground/70 max-w-[120px] truncate hidden sm:inline">
                                     {item.commit.authorName}
                                 </span>
-                                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 shrink-0 font-mono">
+                                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-white/15 bg-white/5 text-slate-300 shrink-0 font-mono">
                                     <GitBranch className="w-2.5 h-2.5" />
                                     {item.commit.shortSha}
                                 </span>
