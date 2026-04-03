@@ -16,7 +16,7 @@ import DependencyGraph from "@/components/diagrams/dependency-graph";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
 import { getFileColor } from "@/lib/file-icons";
 import { consumeOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
-import { Skeleton } from "@/components/ui/skeleton";
+import CloneProgressScreen, { type CloneStep } from "@/components/dashboard/clone-progress-screen";
 import { toast } from "sonner";
 import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
 import type {
@@ -59,6 +59,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const initialTab = (searchParams.get("tab") as DiagramTab) ?? "files";
     const [activeTab, setActiveTab] = useState<DiagramTab>(initialTab);
     const [loading, setLoading] = useState(true);
+    const [cloneStep, setCloneStep] = useState<CloneStep>("checking");
+    const [cloneMessage, setCloneMessage] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [repoData, setRepoData] = useState<RepoData | null>(null);
     const [analysis, setAnalysis] = useState<{
@@ -89,38 +91,77 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         return sessionToken;
     }, [sessionToken]);
 
-    // Fetch all repo data
+    // Fetch all repo data via SSE stream
     const fetchData = useCallback(async () => {
         setLoading(true);
+        setCloneStep("checking");
+        setCloneMessage("");
         setError(null);
 
         try {
             const token = getToken();
             const params = new URLSearchParams({ owner, repo });
 
-            const res = await fetch(`/api/github/repo?${params}`, {
+            const res = await fetch(`/api/github/repo/stream?${params}`, {
                 headers: token ? { "x-github-token": token } : undefined,
             });
-            if (!res.ok) {
-                const data = await res.json();
-                throw new Error(data.error ?? "Failed to fetch repository data");
-            }
 
-            const data: RepoData = await res.json();
-            setRepoData(data);
+            const reader = res.body?.getReader();
+            if (!reader) throw new Error("No response stream");
+
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split("\n\n");
+                buffer = parts.pop() ?? "";
+
+                for (const part of parts) {
+                    if (!part.startsWith("data: ")) continue;
+                    let event: Record<string, unknown>;
+                    try {
+                        event = JSON.parse(part.slice(6));
+                    } catch {
+                        continue;
+                    }
+
+                    const type = event.type as string;
+
+                    if (type === "error") {
+                        setError(event.message as string);
+                        setLoading(false);
+                        return;
+                    }
+
+                    if (type === "done") {
+                        setRepoData(event.payload as RepoData);
+                        setLoading(false);
+                        // Don't return — keep reading for the enriched event.
+                    } else if (type === "enriched") {
+                        // GitHub API data is ready — update metadata and mergedPRs in place.
+                        const enriched = event.payload as {
+                            metadata: RepoData["metadata"];
+                            mergedPRs: RepoData["mergedPRs"];
+                        };
+                        setRepoData((prev) =>
+                            prev
+                                ? { ...prev, metadata: enriched.metadata, mergedPRs: enriched.mergedPRs }
+                                : prev
+                        );
+                    } else {
+                        // Progress events: checking | metadata | cloning | reading
+                        setCloneStep(type as CloneStep);
+                        setCloneMessage((event.message as string) ?? "");
+                    }
+                }
+            }
         } catch (err) {
-            const token = getToken();
             const baseMessage = err instanceof Error ? err.message : "Failed to fetch repository data";
-            const isPrivateLikeError = /(404|403|not found|forbidden|private)/i.test(baseMessage);
-            const withHint = !token && isPrivateLikeError
-                ? `${baseMessage}. This repo may be private. Add a GitHub token from the home page prompt.`
-                : token && isPrivateLikeError
-                    ? `${baseMessage}. Token detected, but it may be expired or missing scopes (repo/read:org) for this repository.`
-                    : baseMessage;
-            setError(
-                withHint
-            );
-        } finally {
+            setError(baseMessage);
             setLoading(false);
         }
     }, [owner, repo, getToken]);
@@ -477,67 +518,26 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // Loading state
     if (loading) {
         return (
-            <div className="h-screen overflow-y-auto overflow-x-hidden pt-14">
-                <Navbar
-                    owner={owner}
-                    repo={repo}
-                    onAISettings={() => setAISettingsOpen(true)}
-                />
-                <div className="p-6 space-y-6 max-w-7xl mx-auto">
-                    <div className="pro-surface loading-shimmer-soft p-6 flex items-center justify-between">
-                        <div>
-                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Initializing</p>
-                            <h2 className="text-lg font-semibold">Mapping repository signals</h2>
-                        </div>
-                        <div className="loading-orbit" />
-                    </div>
-                    <Skeleton className="h-8 w-64" />
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {[1, 2, 3, 4].map((i) => (
-                            <Skeleton key={i} className="h-20" />
-                        ))}
-                    </div>
-                    <Skeleton className="h-[500px]" />
-                </div>
-            </div>
+            <CloneProgressScreen
+                owner={owner}
+                repo={repo}
+                currentStep={cloneStep}
+                message={cloneMessage}
+            />
         );
     }
 
     // Error state
     if (error) {
         return (
-            <div className="h-screen overflow-y-auto overflow-x-hidden pt-14">
-                <Navbar
-                    owner={owner}
-                    repo={repo}
-                    onAISettings={() => setAISettingsOpen(true)}
-                />
-                <div className="flex items-center justify-center h-[70vh]">
-                    <div className="glass-card p-8 text-center max-w-md">
-                        <div className="text-4xl mb-4">⚠️</div>
-                        <h2 className="text-xl font-bold mb-2">Oops!</h2>
-                        <p className="text-sm text-muted-foreground mb-4">{error}</p>
-                        <button
-                            onClick={fetchData}
-                            className="text-sm text-indigo hover:underline"
-                        >
-                            Try again
-                        </button>
-                    </div>
-                </div>
-
-                <AISettingsModal
-                    open={aiSettingsOpen}
-                    onOpenChange={setAISettingsOpen}
-                    onSave={() => {
-                        setHasUserAIKey(true);
-                        toast.success("AI key saved", {
-                            description: "You can now generate premium architecture diagrams",
-                        });
-                    }}
-                />
-
-            </div>
+            <CloneProgressScreen
+                owner={owner}
+                repo={repo}
+                currentStep="error"
+                message=""
+                error={error}
+                onRetry={fetchData}
+            />
         );
     }
 

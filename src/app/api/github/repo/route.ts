@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchAllRepoData, fetchRepoMetadata, fetchMergedPRs, fetchLanguages, fetchContributors } from "@/lib/github";
+import { fetchRepoMetadata, fetchMergedPRs } from "@/lib/github";
 import { fetchAllRepoDataLocal } from "@/lib/local-git";
 import type { Contributor } from "@/types";
 
@@ -67,31 +67,11 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        let data;
+        const metadata = await fetchRepoMetadata(owner, repo, token);
+        const localData = await fetchAllRepoDataLocal(owner, repo, metadata.defaultBranch, token);
+        const mergedPRs = await fetchMergedPRs(owner, repo, 1, token).catch(() => []);
 
-        try {
-            // Metadata always from GitHub API (stars, forks, etc. aren't in git)
-            const metadata = await fetchRepoMetadata(owner, repo, token);
-
-            // Git-derivable data from local clone
-            const localData = await fetchAllRepoDataLocal(
-                owner,
-                repo,
-                metadata.defaultBranch
-            );
-
-            // API-only data (not in git) in parallel
-            const [languages, mergedPRs] = await Promise.all([
-                fetchLanguages(owner, repo, token).catch(() => ({})),
-                fetchMergedPRs(owner, repo, 1, token).catch(() => []),
-            ]);
-
-            data = { metadata, ...localData, languages, mergedPRs };
-        } catch {
-            // Local git failed — fall back to full GitHub API
-            data = await fetchAllRepoData(owner, repo, token);
-        }
-
+        const data = { metadata, ...localData, mergedPRs };
         data.contributors = deduplicateContributors(data.contributors ?? []);
 
         return NextResponse.json(data);

@@ -13,13 +13,18 @@ import type {
     Contributor,
     Branch,
     Commit,
+    LanguageStats,
 } from "@/types";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const CLONE_BASE = "/tmp/gitviz-repos";
-const CLONE_TIMEOUT_MS = 120_000; // 2 min max for clone
+const CLONE_TIMEOUT_MS = 120_000;
 const MAX_COMMITS = 500;
+
+// How long a clone is considered fresh before we re-fetch (5 minutes)
+const FETCH_COOLDOWN_MS = 5 * 60 * 1000;
+const lastFetchedAt = new Map<string, number>();
 
 // ── Clone lock (prevents concurrent clones of the same repo) ─────────────────
 
@@ -34,21 +39,80 @@ export interface LocalGitResult {
     commits: Commit[];
     readme: string;
     dependencyFiles: { filename: string; content: string }[];
+    languages: LanguageStats;
+}
+
+// ── Language inference from file extensions ───────────────────────────────────
+// Maps extension → language name (matches GitHub's language names)
+
+const EXT_LANGUAGE: Record<string, string> = {
+    ts: "TypeScript", tsx: "TypeScript",
+    js: "JavaScript", jsx: "JavaScript", mjs: "JavaScript", cjs: "JavaScript",
+    py: "Python",
+    rb: "Ruby",
+    go: "Go",
+    rs: "Rust",
+    java: "Java",
+    kt: "Kotlin", kts: "Kotlin",
+    swift: "Swift",
+    cs: "C#",
+    cpp: "C++", cc: "C++", cxx: "C++", hxx: "C++",
+    c: "C", h: "C",
+    php: "PHP",
+    html: "HTML", htm: "HTML",
+    css: "CSS",
+    scss: "SCSS", sass: "SCSS",
+    vue: "Vue",
+    svelte: "Svelte",
+    dart: "Dart",
+    ex: "Elixir", exs: "Elixir",
+    hs: "Haskell",
+    lua: "Lua",
+    r: "R",
+    scala: "Scala",
+    clj: "Clojure", cljs: "Clojure",
+    sh: "Shell", bash: "Shell", zsh: "Shell",
+    ps1: "PowerShell",
+    md: "Markdown", mdx: "Markdown",
+    json: "JSON",
+    yaml: "YAML", yml: "YAML",
+    toml: "TOML",
+    xml: "XML",
+    sql: "SQL",
+};
+
+export function inferLanguages(tree: TreeItem[]): LanguageStats {
+    const counts: Record<string, number> = {};
+    for (const item of tree) {
+        if (item.type !== "blob") continue;
+        const ext = item.path.split(".").pop()?.toLowerCase() ?? "";
+        const lang = EXT_LANGUAGE[ext];
+        if (!lang) continue;
+        counts[lang] = (counts[lang] ?? 0) + (item.size ?? 1);
+    }
+    return counts;
 }
 
 // ── Core: clone or fetch ─────────────────────────────────────────────────────
 
-async function getRepo(owner: string, repo: string): Promise<{ git: SimpleGit; repoDir: string }> {
+export async function cloneRepo(
+    owner: string,
+    repo: string,
+    token?: string | null,
+    onProgress?: (msg: string) => void,
+): Promise<{ git: SimpleGit; repoDir: string }> {
     const repoDir = path.join(CLONE_BASE, owner, repo);
     const key = `${owner}/${repo}`;
 
     // Wait for any in-flight clone of the same repo
     const pending = cloneLocks.get(key);
-    if (pending) await pending;
+    if (pending) {
+        onProgress?.("Waiting for in-progress clone...");
+        await pending;
+    }
 
     const gitDir = path.join(repoDir, ".git");
     let needsClone = false;
-
     try {
         await fs.access(gitDir);
     } catch {
@@ -56,11 +120,14 @@ async function getRepo(owner: string, repo: string): Promise<{ git: SimpleGit; r
     }
 
     if (needsClone) {
+        onProgress?.("Cloning repository...");
         const clonePromise = (async () => {
             await fs.mkdir(path.join(CLONE_BASE, owner), { recursive: true });
-            const url = `https://github.com/${owner}/${repo}.git`;
-            await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } })
-                .clone(url, repoDir);
+            // Include token in URL for private repo access
+            const url = token
+                ? `https://${encodeURIComponent(token)}@github.com/${owner}/${repo}.git`
+                : `https://github.com/${owner}/${repo}.git`;
+            await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } }).clone(url, repoDir);
         })();
         cloneLocks.set(key, clonePromise);
         try {
@@ -68,16 +135,49 @@ async function getRepo(owner: string, repo: string): Promise<{ git: SimpleGit; r
         } finally {
             cloneLocks.delete(key);
         }
+        lastFetchedAt.set(key, Date.now());
+    } else {
+        const last = lastFetchedAt.get(key) ?? 0;
+        if (Date.now() - last > FETCH_COOLDOWN_MS) {
+            onProgress?.("Updating repository...");
+            const git = simpleGit(repoDir, { timeout: { block: 30_000 } });
+            await git.fetch(["--all", "--prune"]).catch(() => {});
+            lastFetchedAt.set(key, Date.now());
+        }
     }
 
     const git = simpleGit(repoDir, { timeout: { block: 30_000 } });
-
-    if (!needsClone) {
-        // Already cloned — fetch latest
-        await git.fetch(["--all", "--prune"]).catch(() => { /* ignore fetch errors */ });
-    }
-
     return { git, repoDir };
+}
+
+// Keep internal alias for backward compat
+async function getRepo(owner: string, repo: string, token?: string | null) {
+    return cloneRepo(owner, repo, token);
+}
+
+// ── Detect default branch from remote ────────────────────────────────────────
+
+export async function detectDefaultBranch(
+    owner: string,
+    repo: string,
+    token?: string | null,
+): Promise<string> {
+    const { git } = await getRepo(owner, repo, token);
+    try {
+        const raw = await git.raw(["symbolic-ref", "refs/remotes/origin/HEAD"]);
+        // refs/remotes/origin/HEAD → refs/remotes/origin/main → main
+        const match = raw.trim().match(/refs\/remotes\/origin\/(.+)$/);
+        if (match) return match[1];
+    } catch { /* fall through */ }
+
+    // Fallback: try common names
+    for (const candidate of ["main", "master", "develop", "trunk"]) {
+        try {
+            await git.raw(["rev-parse", "--verify", `origin/${candidate}`]);
+            return candidate;
+        } catch { /* try next */ }
+    }
+    return "main";
 }
 
 // ── Branches ─────────────────────────────────────────────────────────────────
@@ -95,7 +195,6 @@ async function readBranches(git: SimpleGit, defaultBranch: string): Promise<Bran
         let name = line.slice(0, spaceIdx).trim();
         const sha = line.slice(spaceIdx + 1).trim();
 
-        // Normalise remote branches: "origin/main" → "main"
         if (name.startsWith("origin/")) name = name.slice(7);
         if (name === "HEAD") continue;
         if (seen.has(name)) continue;
@@ -109,45 +208,37 @@ async function readBranches(git: SimpleGit, defaultBranch: string): Promise<Bran
 
 // ── Commits (with parents for DAG) ───────────────────────────────────────────
 
-async function readCommits(git: SimpleGit): Promise<Commit[]> {
-    // One record per line, fields separated by null bytes within each line.
-    const raw = await git.raw([
-        "log", "--all", "--topo-order",
-        "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P",
-        `-n`, String(MAX_COMMITS),
-    ]);
-
+function parseCommitLines(raw: string): Commit[] {
     const commits: Commit[] = [];
     const seen = new Set<string>();
-
     for (const line of raw.trim().split("\n")) {
         if (!line.trim()) continue;
         const parts = line.split("\0");
         if (parts.length < 6) continue;
-
         const sha = parts[0].trim();
-        const shortSha = parts[1].trim();
-        const message = parts[2].trim();
-        const authorName = parts[3].trim();
-        const date = parts[4].trim();
-        const parentsStr = parts[5].trim();
-
         if (!sha || seen.has(sha)) continue;
         seen.add(sha);
-
         commits.push({
             sha,
-            shortSha,
-            message,
-            authorName,
+            shortSha: parts[1].trim(),
+            message: parts[2].trim(),
+            authorName: parts[3].trim(),
             authorLogin: null,
             authorAvatar: null,
-            date,
-            parents: parentsStr ? parentsStr.split(" ") : [],
+            date: parts[4].trim(),
+            parents: parts[5].trim() ? parts[5].trim().split(" ") : [],
         });
     }
+    return commits;
+}
 
-    return commits.sort(
+async function readCommits(git: SimpleGit): Promise<Commit[]> {
+    const raw = await git.raw([
+        "log", "--all", "--topo-order",
+        "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P",
+        "-n", String(MAX_COMMITS),
+    ]);
+    return parseCommitLines(raw).sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 }
@@ -163,10 +254,7 @@ async function readFileTree(
 
     for (const line of raw.trim().split("\n")) {
         if (!line) continue;
-        // Format: <mode> <type> <sha>       <size>\t<path>
-        const match = line.match(
-            /^(\d+)\s+(blob|tree)\s+([a-f0-9]+)\s+(\d+|-)\t(.+)$/
-        );
+        const match = line.match(/^(\d+)\s+(blob|tree)\s+([a-f0-9]+)\s+(\d+|-)\t(.+)$/);
         if (!match) continue;
         const [, mode, type, sha, sizeStr, filePath] = match;
         tree.push({
@@ -179,10 +267,7 @@ async function readFileTree(
         });
     }
 
-    const rootSha = (
-        await git.raw(["rev-parse", `${defaultBranch}^{tree}`])
-    ).trim();
-
+    const rootSha = (await git.raw(["rev-parse", `${defaultBranch}^{tree}`])).trim();
     return { sha: rootSha, tree, truncated: false };
 }
 
@@ -190,8 +275,6 @@ async function readFileTree(
 
 async function readContributors(git: SimpleGit): Promise<Contributor[]> {
     const raw = await git.raw(["shortlog", "-sne", "--all"]);
-
-    // Deduplicate by email: same person may commit with different names
     const byEmail = new Map<string, { name: string; email: string; contributions: number }>();
 
     for (const line of raw.trim().split("\n")) {
@@ -201,14 +284,10 @@ async function readContributors(git: SimpleGit): Promise<Contributor[]> {
         const [, countStr, name, email] = match;
         const emailKey = email.toLowerCase();
         const count = parseInt(countStr, 10);
-
         const existing = byEmail.get(emailKey);
         if (existing) {
             existing.contributions += count;
-            // Keep the longer name as it's likely the more complete one
-            if (name.length > existing.name.length) {
-                existing.name = name;
-            }
+            if (name.length > existing.name.length) existing.name = name;
         } else {
             byEmail.set(emailKey, { name, email, contributions: count });
         }
@@ -227,25 +306,16 @@ async function readContributors(git: SimpleGit): Promise<Contributor[]> {
             name: entry.name,
         });
     }
-
-    return contributors
-        .sort((a, b) => b.contributions - a.contributions)
-        .slice(0, 30);
+    return contributors.sort((a, b) => b.contributions - a.contributions).slice(0, 30);
 }
 
 // ── README ───────────────────────────────────────────────────────────────────
 
 async function readReadme(repoDir: string): Promise<string> {
-    const candidates = [
-        "README.md", "readme.md", "Readme.md",
-        "README", "README.txt", "README.rst",
-    ];
-    for (const name of candidates) {
+    for (const name of ["README.md", "readme.md", "Readme.md", "README", "README.txt", "README.rst"]) {
         try {
             return await fs.readFile(path.join(repoDir, name), "utf-8");
-        } catch {
-            // try next
-        }
+        } catch { /* try next */ }
     }
     return "";
 }
@@ -253,36 +323,24 @@ async function readReadme(repoDir: string): Promise<string> {
 // ── Dependency / manifest files ──────────────────────────────────────────────
 
 const MANIFEST_FILES = [
-    "package.json",
-    "requirements.txt",
-    "go.mod",
-    "Cargo.toml",
-    "Gemfile",
-    "pom.xml",
-    "build.gradle",
-    "pyproject.toml",
-    "composer.json",
+    "package.json", "requirements.txt", "go.mod", "Cargo.toml",
+    "Gemfile", "pom.xml", "build.gradle", "pyproject.toml", "composer.json",
 ];
 
-async function readDependencyFiles(
-    repoDir: string
-): Promise<{ filename: string; content: string }[]> {
+async function readDependencyFiles(repoDir: string): Promise<{ filename: string; content: string }[]> {
     const results: { filename: string; content: string }[] = [];
-    for (const filename of MANIFEST_FILES) {
-        try {
-            const content = await fs.readFile(
-                path.join(repoDir, filename),
-                "utf-8"
-            );
-            results.push({ filename, content });
-        } catch {
-            // file doesn't exist, skip
-        }
-    }
+    await Promise.all(
+        MANIFEST_FILES.map(async (filename) => {
+            try {
+                const content = await fs.readFile(path.join(repoDir, filename), "utf-8");
+                results.push({ filename, content });
+            } catch { /* not present */ }
+        })
+    );
     return results;
 }
 
-// ── Paginated commits (for client-side "load more") ─────────────────────────
+// ── Paginated commits ────────────────────────────────────────────────────────
 
 export async function readCommitsPage(
     owner: string,
@@ -293,38 +351,18 @@ export async function readCommitsPage(
 ): Promise<Commit[]> {
     const { git } = await getRepo(owner, repo);
     const skip = (page - 1) * perPage;
-
     const raw = await git.raw([
         "log", branch, "--topo-order",
         "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P",
         `--skip=${skip}`,
-        `-n`, String(perPage),
+        "-n", String(perPage),
     ]);
-
-    if (!raw.trim()) return [];
-
-    const commits: Commit[] = [];
-    for (const line of raw.trim().split("\n")) {
-        if (!line.trim()) continue;
-        const parts = line.split("\0");
-        if (parts.length < 6) continue;
-
-        commits.push({
-            sha: parts[0].trim(),
-            shortSha: parts[1].trim(),
-            message: parts[2].trim(),
-            authorName: parts[3].trim(),
-            authorLogin: null,
-            authorAvatar: null,
-            date: parts[4].trim(),
-            parents: parts[5].trim() ? parts[5].trim().split(" ") : [],
-        });
-    }
-
-    return commits;
+    return raw.trim() ? parseCommitLines(raw) : [];
 }
 
-// ── Single file content (for client-side preview) ───────────────────────────
+// ── Single file content ───────────────────────────────────────────────────────
+
+const MAX_FILE_BYTES = 500 * 1024; // 500 KB
 
 export async function readFileContent(
     owner: string,
@@ -332,18 +370,14 @@ export async function readFileContent(
     filePath: string,
 ): Promise<string> {
     const { repoDir } = await getRepo(owner, repo);
-    const fullPath = path.join(repoDir, filePath);
-
-    // Ensure resolved path stays inside the repo directory
-    const resolved = path.resolve(fullPath);
-    if (!resolved.startsWith(path.resolve(repoDir))) {
-        throw new Error("File path not found");
-    }
-
+    const resolved = path.resolve(repoDir, filePath);
+    if (!resolved.startsWith(path.resolve(repoDir))) throw new Error("File path not found");
     try {
+        const stat = await fs.stat(resolved);
+        if (stat.size > MAX_FILE_BYTES) throw new Error("File too large");
         return await fs.readFile(resolved, "utf-8");
-    } catch {
-        throw new Error("File not found");
+    } catch (e) {
+        throw e instanceof Error ? e : new Error("File not found");
     }
 }
 
@@ -352,23 +386,40 @@ export async function readFileContent(
 export async function fetchAllRepoDataLocal(
     owner: string,
     repo: string,
-    defaultBranch: string
+    defaultBranch: string,
+    token?: string | null,
+    onProgress?: (msg: string) => void,
 ): Promise<LocalGitResult> {
-    const { git, repoDir } = await getRepo(owner, repo);
+    const { git, repoDir } = await cloneRepo(owner, repo, token, onProgress);
 
-    // Ensure working tree is on the default branch for file reads
-    await git.checkout(defaultBranch).catch(() => { /* may already be on it */ });
+    await git.checkout(defaultBranch).catch(() => {});
 
+    // Resolve the ref that actually has commits. Local branches can be in an
+    // orphan/corrupt state after a partial clone or fetch; remote tracking refs
+    // are always reliable after a successful clone.
+    const localRefValid = await git.raw(["rev-parse", "--verify", defaultBranch])
+        .then(() => true).catch(() => false);
+    const treeRef = localRefValid ? defaultBranch : `origin/${defaultBranch}`;
+
+    onProgress?.("Reading branches...");
     const branches = await readBranches(git, defaultBranch);
 
-    const [fileTree, commits, contributors, readme, dependencyFiles] =
-        await Promise.all([
-            readFileTree(git, defaultBranch).catch(() => null),
-            readCommits(git).catch(() => []),
-            readContributors(git).catch(() => []),
-            readReadme(repoDir).catch(() => ""),
-            readDependencyFiles(repoDir).catch(() => []),
-        ]);
+    onProgress?.("Reading file tree...");
+    const fileTree = await readFileTree(git, treeRef).catch(() => null);
 
-    return { fileTree, contributors, branches, commits, readme, dependencyFiles };
+    onProgress?.("Reading commits...");
+    const commits = await readCommits(git).catch(() => [] as Commit[]);
+
+    onProgress?.("Reading contributors...");
+    const contributors = await readContributors(git).catch(() => [] as Contributor[]);
+
+    onProgress?.("Reading files...");
+    const [readme, dependencyFiles] = await Promise.all([
+        readReadme(repoDir).catch(() => ""),
+        readDependencyFiles(repoDir).catch(() => []),
+    ]);
+
+    const languages = fileTree ? inferLanguages(fileTree.tree) : {};
+
+    return { fileTree, contributors, branches, commits, readme, dependencyFiles, languages };
 }
