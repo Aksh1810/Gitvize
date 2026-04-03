@@ -41,9 +41,9 @@ interface LaneState {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const LANE_COLORS = [
-    "#ef4444", // red    – main/default branch
+    "#6366f1", // indigo  – main/default branch
     "#22d3ee", // cyan
-    "#a855f7", // purple
+    "#a855f7", // violet
     "#10b981", // emerald
     "#f59e0b", // amber
     "#ec4899", // pink
@@ -287,100 +287,71 @@ export default function CommitHistoryRail({
                         height={totalHeight}
                     >
                         <defs>
-                            {/* Arrow markers, one per lane color */}
+                            {/* Small GitLab-style arrowheads — one per lane color */}
                             {LANE_COLORS.map((color, i) => (
                                 <marker
                                     key={i}
-                                    id={`rail-arr-${i}`}
-                                    viewBox="0 0 10 9"
-                                    refX="11"
-                                    refY="4"
-                                    markerWidth="10"
-                                    markerHeight="7"
+                                    id={`arr-${i}`}
+                                    viewBox="0 0 6 6"
+                                    refX="6"
+                                    refY="3"
+                                    markerWidth="5"
+                                    markerHeight="4"
                                     orient="auto"
                                 >
-                                    <path d="M 0 0 L 10 4 L 0 8 Z" fill={color} fillOpacity={0.9} />
+                                    <path d="M 0 0 L 6 3 L 0 6 Z" fill={color} fillOpacity={0.7} />
                                 </marker>
                             ))}
                         </defs>
 
                         {/* ── DAG edges ── */}
                         {edges.map((edge, i) => {
-                            // childX/Y = the newer commit (higher on screen, smaller Y)
-                            // parentX/Y = the older commit (lower on screen, larger Y)
                             const childX  = laneXs[edge.fromLane] ?? laneXs[0];
                             const parentX = laneXs[edge.toLane]   ?? laneXs[0];
                             const childY  = edge.fromRow * ROW_HEIGHT + midY;
                             const parentY = edge.toRow   * ROW_HEIGHT + midY;
 
-                            // For cross-lane curves, color by the branch lane (non-main lane):
-                            //   merge edge  → fromLane is main (0), toLane is branch → use toLane
-                            //   diverge edge → fromLane is branch, toLane is main (0) → use fromLane
+                            // Color by the branch lane (non-zero lane gets priority)
                             const colorIdx = edge.fromLane === edge.toLane
                                 ? edge.fromLane % LANE_COLORS.length
                                 : edge.isMergeEdge
                                     ? edge.toLane % LANE_COLORS.length
                                     : edge.fromLane % LANE_COLORS.length;
                             const color = LANE_COLORS[colorIdx];
+                            const isMain = edge.fromLane === 0 && edge.toLane === 0;
 
                             if (edge.fromLane === edge.toLane) {
-                                // ── Same lane: straight vertical line (child at top, parent at bottom) ──
+                                // Same lane: clean vertical spine
                                 return (
                                     <line
                                         key={`e${i}`}
                                         x1={childX}  y1={childY}
                                         x2={parentX} y2={parentY}
                                         stroke={color}
-                                        strokeWidth={2.5}
-                                        strokeOpacity={0.5}
+                                        strokeWidth={isMain ? 2 : 1.5}
+                                        strokeOpacity={isMain ? 0.55 : 0.4}
                                         strokeLinecap="round"
                                     />
                                 );
                             }
 
-                            // ── Cross-lane: bezier drawn FROM parent (bottom) TO child (top) ──
-                            //
-                            // Drawing parent→child (upward) makes markerEnd point AT the child,
-                            // which is the correct visual for both cases:
-                            //   - merge edge:   arrow points at the merge commit on main
-                            //   - diverge edge: arrow points at the first commit on the new branch
-                            //
-                            // Curve shape: starts vertical at parentX, sweeps across, ends vertical
-                            // at childX — the classic GitLab "hockey stick" profile.
-                            // Endpoint at the dot's CENTER (childY). refX="10" places the arrowhead
-                            // tip exactly there; the dot (rendered above the edges) caps/covers the
-                            // tip so the arrow visually "connects into" the dot.
-                            const cpY = (childY + parentY) / 2;
-                            const d = `M ${parentX} ${parentY} C ${parentX} ${cpY}, ${childX} ${cpY}, ${childX} ${childY}`;
+                            // Cross-lane: gentle S-curve with a small arrowhead at the child
+                            // end (pointing into the merge commit or the first branch commit).
+                            // Control points pulled toward their own endpoints so the curve
+                            // eases naturally in/out of each dot instead of kinking at midpoint.
+                            const gap = parentY - childY;
+                            const d = `M ${parentX} ${parentY} C ${parentX} ${parentY - gap * 0.45}, ${childX} ${childY + gap * 0.45}, ${childX} ${childY}`;
 
-                            if (edge.isMergeEdge) {
-                                // Solid with arrow pointing at the merge commit
-                                return (
-                                    <path
-                                        key={`e${i}`}
-                                        d={d}
-                                        fill="none"
-                                        stroke={color}
-                                        strokeWidth={2.5}
-                                        strokeOpacity={0.85}
-                                        strokeLinecap="round"
-                                        markerEnd={`url(#rail-arr-${colorIdx})`}
-                                    />
-                                );
-                            }
-
-                            // Dashed with arrow pointing at the first branch commit
                             return (
                                 <path
                                     key={`e${i}`}
                                     d={d}
                                     fill="none"
                                     stroke={color}
-                                    strokeWidth={2}
-                                    strokeOpacity={0.55}
-                                    strokeDasharray="6 4"
+                                    strokeWidth={edge.isMergeEdge ? 1.5 : 1}
+                                    strokeOpacity={edge.isMergeEdge ? 0.6 : 0.3}
                                     strokeLinecap="round"
-                                    markerEnd={`url(#rail-arr-${colorIdx})`}
+                                    markerEnd={`url(#arr-${colorIdx})`}
                                 />
                             );
                         })}
