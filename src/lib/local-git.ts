@@ -19,7 +19,8 @@ import type {
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const CLONE_BASE = "/tmp/gitviz-repos";
-const CLONE_TIMEOUT_MS = 120_000;
+// No hard timeout on clone — large repos can take many minutes.
+// Individual read operations use a 30-second block timeout via simpleGit(repoDir, { timeout }).
 const MAX_COMMITS = 500;
 
 // How long a clone is considered fresh before we re-fetch (5 minutes)
@@ -115,6 +116,11 @@ export async function cloneRepo(
     let needsClone = false;
     try {
         await fs.access(gitDir);
+        // A real clone has a config file with [remote "origin"].
+        // If the config is missing or has no remote, treat as corrupt and re-clone.
+        const configPath = path.join(gitDir, "config");
+        const config = await fs.readFile(configPath, "utf-8").catch(() => "");
+        if (!config.includes('[remote "origin"]')) needsClone = true;
     } catch {
         needsClone = true;
     }
@@ -122,12 +128,21 @@ export async function cloneRepo(
     if (needsClone) {
         onProgress?.("Cloning repository...");
         const clonePromise = (async () => {
+            // Wipe any corrupt/partial directory before re-cloning.
+            await fs.rm(repoDir, { recursive: true, force: true });
             await fs.mkdir(path.join(CLONE_BASE, owner), { recursive: true });
             // Include token in URL for private repo access
             const url = token
                 ? `https://${encodeURIComponent(token)}@github.com/${owner}/${repo}.git`
                 : `https://github.com/${owner}/${repo}.git`;
-            await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } }).clone(url, repoDir);
+            // No timeout on the clone instance — large repos can take many minutes.
+            // --filter=blob:none: skip downloading blobs during clone (fetched lazily
+            //   on checkout), dramatically reducing clone size and time for large repos.
+            // --no-single-branch: fetch all branch refs (needed for branch graph).
+            await simpleGit().clone(url, repoDir, [
+                "--filter=blob:none",
+                "--no-single-branch",
+            ]);
         })();
         cloneLocks.set(key, clonePromise);
         try {
@@ -141,7 +156,7 @@ export async function cloneRepo(
         if (Date.now() - last > FETCH_COOLDOWN_MS) {
             onProgress?.("Updating repository...");
             const git = simpleGit(repoDir, { timeout: { block: 30_000 } });
-            await git.fetch(["--all", "--prune"]).catch(() => {});
+            await git.fetch(["--all", "--prune", "--filter=blob:none"]).catch(() => {});
             lastFetchedAt.set(key, Date.now());
         }
     }
