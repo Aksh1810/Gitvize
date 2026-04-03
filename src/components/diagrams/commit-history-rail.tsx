@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import { GitCommit, GitMerge, GitBranch } from "lucide-react";
+import { useMemo, useState } from "react";
+import { GitCommit, GitMerge, GitBranch, ChevronDown } from "lucide-react";
 import type { Branch, Commit } from "@/types";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -10,6 +10,8 @@ interface CommitHistoryRailProps {
     commits: Commit[];
     defaultBranch: string;
     branches?: Branch[]; // optional: used to label lanes from branch HEAD SHAs
+    /** When provided, overrides the internal branch selector and hides the dropdown */
+    selectedBranchOverride?: string | null;
 }
 
 // ── Internal types ─────────────────────────────────────────────────────────────
@@ -17,6 +19,7 @@ interface CommitHistoryRailProps {
 interface RailItem {
     commit: Commit;
     laneIndex: number;
+    colorIndex: number;
     isMerge: boolean;
 }
 
@@ -24,9 +27,9 @@ interface RailItem {
 interface DagEdge {
     fromRow: number;
     fromLane: number;
+    colorIndex: number;
     toRow: number;
     toLane: number;
-    /** true when this edge leads to the 2nd+ parent of a merge commit */
     isMergeEdge: boolean;
 }
 
@@ -36,12 +39,17 @@ interface LaneState {
     waitingFor: string | null;
     /** Branch name label, if known */
     label?: string;
+    /** Stable color index — assigned once when the lane opens, never changes on reuse */
+    colorIndex: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const LANE_COLORS = [
-    "#ff0000", // cyan   – main/default branch
+const MAIN_COLOR = "#ef4444"; // red — reserved exclusively for main/default branch
+
+// Colors for all non-main branches (colorIndex 1, 2, 3, …)
+const BRANCH_COLORS = [
+    "#22d3ee", // cyan
     "#10b981", // emerald
     "#f59e0b", // amber
     "#ec4899", // pink
@@ -50,6 +58,11 @@ const LANE_COLORS = [
     "#84cc16", // lime
     "#e879f9", // fuchsia
 ];
+
+function laneColor(colorIndex: number): string {
+    if (colorIndex === 0) return MAIN_COLOR;
+    return BRANCH_COLORS[(colorIndex - 1) % BRANCH_COLORS.length];
+}
 
 const MAX_LANES = 8;
 const ROW_HEIGHT = 44;
@@ -73,10 +86,42 @@ export default function CommitHistoryRail({
     commits,
     defaultBranch,
     branches,
+    selectedBranchOverride,
 }: CommitHistoryRailProps) {
+    const [internalBranch, setInternalBranch] = useState<string | null>(null);
+    const [showAllLegend, setShowAllLegend] = useState(false);
+    const selectedBranch = selectedBranchOverride !== undefined ? selectedBranchOverride : internalBranch;
+
+    // Build a SHA→commit map for fast parent traversal
+    const commitMap = useMemo(() => {
+        const m = new Map<string, Commit>();
+        commits.forEach((c) => m.set(c.sha, c));
+        return m;
+    }, [commits]);
+
+    // When a branch is selected, compute the set of SHAs reachable from its HEAD
+    const reachableShas = useMemo(() => {
+        if (!selectedBranch) return null;
+        const branch = branches?.find((b) => b.name === selectedBranch);
+        if (!branch) return null;
+        const visited = new Set<string>();
+        const queue = [branch.sha];
+        while (queue.length > 0) {
+            const sha = queue.shift()!;
+            if (visited.has(sha)) continue;
+            visited.add(sha);
+            const commit = commitMap.get(sha);
+            commit?.parents?.forEach((p) => { if (!visited.has(p)) queue.push(p); });
+        }
+        return visited;
+    }, [selectedBranch, branches, commitMap]);
+
     // ── Step 1: Sort and limit commits ────────────────────────────────────────
     const { sortedCommits, clipped } = useMemo(() => {
-        const sorted = [...commits].sort(
+        const filtered = reachableShas
+            ? commits.filter((c) => reachableShas.has(c.sha))
+            : commits;
+        const sorted = [...filtered].sort(
             (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
         );
         return {
@@ -85,13 +130,25 @@ export default function CommitHistoryRail({
         };
     }, [commits]);
 
-    // ── Step 2: Build branch HEAD lookup (full SHA → branch name) ─────────────
-    // This lets us label lanes when a branch tip appears in the commit list.
+    // ── Step 2: Build branch HEAD lookups ────────────────────────────────────
+    // branchHeadToName: sha → first branch name (used during lane label assignment)
+    // branchHeadToNames: sha → all branch names (used for per-commit annotations)
     const branchHeadToName = useMemo(() => {
         const map = new Map<string, string>();
-        (branches ?? []).forEach((b) => map.set(b.sha, b.name));
+        (branches ?? []).forEach((b) => { if (!map.has(b.sha)) map.set(b.sha, b.name); });
         return map;
     }, [branches]);
+
+    const branchHeadToNames = useMemo(() => {
+        const map = new Map<string, string[]>();
+        (branches ?? []).forEach((b) => {
+            const existing = map.get(b.sha);
+            if (existing) existing.push(b.name);
+            else map.set(b.sha, [b.name]);
+        });
+        return map;
+    }, [branches]);
+
 
     // ── Step 3: DAG lane assignment ───────────────────────────────────────────
     //
@@ -109,14 +166,25 @@ export default function CommitHistoryRail({
     //      by some lane (open or reuse)
     //
     // This is the same algorithm used by `git log --graph`.
-    const { railItems, activeLanes } = useMemo(() => {
+    const { railItems, activeLanes, branchNameToColorIndex } = useMemo(() => {
         const lanes: LaneState[] = [];
+        let nextColor = 0;
+        // Record branch name → colorIndex at the exact moment each branch tip is seen.
+        // This is the only reliable source — activeLanes reflect final state which may
+        // differ due to slot reuse.
+        const nameToCI = new Map<string, number>();
+
+        const defaultBranchHead = branches?.find((b) => b.isDefault)?.sha;
+        if (defaultBranchHead && sortedCommits.some((c) => c.sha === defaultBranchHead)) {
+            const ci = nextColor++;
+            lanes.push({ waitingFor: defaultBranchHead, label: defaultBranch, colorIndex: ci });
+            nameToCI.set(defaultBranch, ci);
+        }
 
         const items: RailItem[] = sortedCommits.map((commit) => {
             const parents = commit.parents ?? [];
             const isMerge = parents.length >= 2;
 
-            // Find all lanes currently expecting this commit
             const matchingIdxs: number[] = [];
             lanes.forEach((lane, i) => {
                 if (lane.waitingFor === commit.sha) matchingIdxs.push(i);
@@ -125,69 +193,76 @@ export default function CommitHistoryRail({
             let myLane: number;
 
             if (matchingIdxs.length === 0) {
-                // No lane expected this commit → it's a new branch tip
-                // Try to reuse an empty (closed) lane slot first to keep layout compact
                 const emptySlot = lanes.findIndex((l) => l.waitingFor === null);
                 if (emptySlot !== -1 && lanes.length >= MAX_LANES) {
                     myLane = emptySlot;
+                    const ci = nextColor++;
                     lanes[emptySlot].waitingFor = parents[0] ?? null;
-                    if (!lanes[emptySlot].label && branchHeadToName.has(commit.sha)) {
-                        lanes[emptySlot].label = branchHeadToName.get(commit.sha);
-                    }
+                    lanes[emptySlot].colorIndex = ci;
+                    const label = branchHeadToName.get(commit.sha);
+                    if (label) { lanes[emptySlot].label = label; nameToCI.set(label, ci); }
                 } else if (lanes.length < MAX_LANES) {
                     myLane = lanes.length;
-                    lanes.push({
-                        waitingFor: parents[0] ?? null,
-                        label: branchHeadToName.get(commit.sha) ??
-                            (myLane === 0 ? defaultBranch : undefined),
-                    });
+                    const ci = nextColor++;
+                    const label = branchHeadToName.get(commit.sha) ??
+                        (myLane === 0 ? defaultBranch : undefined);
+                    lanes.push({ waitingFor: parents[0] ?? null, label, colorIndex: ci });
+                    if (label) nameToCI.set(label, ci);
                 } else {
-                    // At max lanes and no empty slot — collapse to an existing lane
                     const fallback = lanes.findIndex((l) => l.waitingFor === null);
                     myLane = fallback !== -1 ? fallback : 0;
                     if (fallback !== -1) lanes[fallback].waitingFor = parents[0] ?? null;
                 }
             } else {
-                // Assign to the first matching lane
                 myLane = matchingIdxs[0];
                 lanes[myLane].waitingFor = parents[0] ?? null;
-
-                // Apply branch label if we now know it
                 if (!lanes[myLane].label && branchHeadToName.has(commit.sha)) {
-                    lanes[myLane].label = branchHeadToName.get(commit.sha);
+                    const label = branchHeadToName.get(commit.sha)!;
+                    lanes[myLane].label = label;
+                    nameToCI.set(label, lanes[myLane].colorIndex);
                 }
-
-                // Close extra matching lanes (multiple branches converged here)
                 for (let k = 1; k < matchingIdxs.length; k++) {
                     lanes[matchingIdxs[k]].waitingFor = null;
                 }
             }
 
-            // Merge commit: ensure the second parent is tracked by a lane
             if (isMerge && parents[1]) {
                 const secondParent = parents[1];
-                const alreadyTracked = lanes.some(
-                    (l) => l.waitingFor === secondParent
-                );
+                const alreadyTracked = lanes.some((l) => l.waitingFor === secondParent);
                 if (!alreadyTracked) {
                     const emptySlot = lanes.findIndex((l) => l.waitingFor === null);
                     if (emptySlot !== -1) {
+                        const ci = nextColor++;
                         lanes[emptySlot].waitingFor = secondParent;
+                        lanes[emptySlot].colorIndex = ci;
+                        lanes[emptySlot].label = undefined;
                     } else if (lanes.length < MAX_LANES) {
-                        lanes.push({ waitingFor: secondParent });
+                        lanes.push({ waitingFor: secondParent, colorIndex: nextColor++ });
                     }
                 }
             }
 
-            return {
-                commit,
-                laneIndex: Math.min(myLane, MAX_LANES - 1),
-                isMerge,
-            };
+            const clampedLane = Math.min(myLane, MAX_LANES - 1);
+            return { commit, laneIndex: clampedLane, colorIndex: lanes[clampedLane].colorIndex, isMerge };
         });
 
-        return { railItems: items, activeLanes: [...lanes] };
-    }, [sortedCommits, branchHeadToName, defaultBranch]);
+        return { railItems: items, activeLanes: [...lanes], branchNameToColorIndex: nameToCI };
+    }, [sortedCommits, branchHeadToName, defaultBranch, branches]);
+
+    // branchNameToColor — uses colorIndices recorded during lane assignment, so
+    // chips and legend always match lane line colors exactly.
+    const branchNameToColor = useMemo(() => {
+        const map = new Map<string, string>();
+        const maxUsed = branchNameToColorIndex.size > 0
+            ? Math.max(...branchNameToColorIndex.values())
+            : -1;
+        let nextIdx = maxUsed + 1;
+        (branches ?? []).forEach((b) => {
+            const ci = branchNameToColorIndex.get(b.name);
+            map.set(b.name, laneColor(ci !== undefined ? ci : nextIdx++));
+        });
+        return map;
+    }, [branchNameToColorIndex, branches]);
 
     // ── Step 4: Compute DAG edges from parent relationships ────────────────────
     //
@@ -197,9 +272,11 @@ export default function CommitHistoryRail({
     const edges = useMemo(() => {
         const shaToRow = new Map<string, number>();
         const shaToLane = new Map<string, number>();
+        const shaToColor = new Map<string, number>();
         railItems.forEach((item, i) => {
             shaToRow.set(item.commit.sha, i);
             shaToLane.set(item.commit.sha, item.laneIndex);
+            shaToColor.set(item.commit.sha, item.colorIndex);
         });
 
         const result: DagEdge[] = [];
@@ -209,9 +286,14 @@ export default function CommitHistoryRail({
                 const parentRow = shaToRow.get(parentSha);
                 if (parentRow === undefined) return; // parent outside our window
                 const parentLane = shaToLane.get(parentSha) ?? item.laneIndex;
+                const parentColor = shaToColor.get(parentSha) ?? item.colorIndex;
+                // Color by the branch lane: merge edges use the branch (child) color;
+                // straight same-lane edges use the lane's own color.
+                const colorIndex = pIdx > 0 ? item.colorIndex : parentColor;
                 result.push({
                     fromRow: rowIdx,
                     fromLane: item.laneIndex,
+                    colorIndex,
                     toRow: parentRow,
                     toLane: parentLane,
                     isMergeEdge: pIdx > 0,
@@ -246,35 +328,74 @@ export default function CommitHistoryRail({
                         Commit History
                     </h3>
                 </div>
-                <div className="text-[11px] text-muted-foreground">
-                    {railItems.length} commits · {laneCount}{laneCount < activeLanes.length ? "+" : ""} lanes
+                <div className="flex items-center gap-3">
+                    {/* Internal dropdown — hidden when parent controls selection via override */}
+                    {selectedBranchOverride === undefined && (
+                        <div className="relative">
+                            <select
+                                value={internalBranch ?? ""}
+                                onChange={(e) => setInternalBranch(e.target.value || null)}
+                                className="appearance-none pl-3 pr-7 py-1 text-[11px] font-medium rounded-full border border-white/15 bg-white/5 text-slate-300 cursor-pointer focus:outline-none hover:bg-white/10 transition-colors"
+                            >
+                                <option value="">All branches</option>
+                                {(branches ?? []).map((b) => (
+                                    <option key={b.name} value={b.name}>{b.name}</option>
+                                ))}
+                            </select>
+                            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                        </div>
+                    )}
+                    <div className="text-[11px] text-muted-foreground">
+                        {railItems.length} commits · {laneCount}{laneCount < activeLanes.length ? "+" : ""} lanes
+                    </div>
                 </div>
             </div>
 
-            {/* Lane legend */}
-            <div className="flex flex-wrap gap-2 mb-3">
-                {activeLanes.slice(0, MAX_LANES).map((lane, laneIndex) => {
-                    const color = LANE_COLORS[laneIndex % LANE_COLORS.length];
-                    const label = lane.label ?? (laneIndex === 0 ? defaultBranch : `branch-${laneIndex + 1}`);
-                    return (
-                        <div
-                            key={laneIndex}
-                            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px]"
-                            style={{
-                                borderColor: `${color}55`,
-                                color,
-                                background: `${color}12`,
-                            }}
-                        >
-                            <span
-                                className="inline-block w-2 h-2 rounded-full"
-                                style={{ background: color }}
-                            />
-                            <span className="max-w-[120px] truncate">{label}</span>
+            {/* Branch legend — hidden when parent (BranchGraph) owns the chip strip */}
+            {selectedBranchOverride === undefined && (branches ?? []).length > 0 && (
+                <div className="mb-3">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-1.5">
+                            <GitBranch className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="text-xs font-semibold text-slate-300">Branches</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 text-slate-400">{(branches ?? []).length}</span>
                         </div>
-                    );
-                })}
-            </div>
+                        {(branches ?? []).length > 7 && (
+                            <button
+                                onClick={() => setShowAllLegend(!showAllLegend)}
+                                className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+                            >
+                                {showAllLegend ? "Show less" : `+${(branches ?? []).length - 7} more`}
+                                <ChevronDown className={`w-3 h-3 transition-transform ${showAllLegend ? "rotate-180" : ""}`} />
+                            </button>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {(showAllLegend ? (branches ?? []) : (branches ?? []).slice(0, 7)).map((b) => {
+                            const color = branchNameToColor.get(b.name) ?? "#64748b";
+                            const isSelected = internalBranch === b.name;
+                            return (
+                                <button
+                                    key={b.name}
+                                    onClick={() => setInternalBranch(isSelected ? null : b.name)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors"
+                                    style={{
+                                        border: b.isDefault ? `2px solid ${color}` : `1px solid ${color}40`,
+                                        background: isSelected ? `${color}20` : `${color}10`,
+                                        color,
+                                    }}
+                                >
+                                    <GitBranch className="w-3 h-3" />
+                                    <span className="max-w-[120px] truncate">{b.name}</span>
+                                    {b.isDefault && (
+                                        <span className="text-[9px] border border-current rounded px-1 opacity-70">default</span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
 
             {/* Scrollable graph + commit list */}
             <div className="max-h-[560px] overflow-auto custom-scrollbar rounded-xl border border-border/20 bg-[#070b15]/70">
@@ -287,8 +408,8 @@ export default function CommitHistoryRail({
                         height={totalHeight}
                     >
                         <defs>
-                            {/* Small GitLab-style arrowheads — one per lane color */}
-                            {LANE_COLORS.map((color, i) => (
+                            {/* Small GitLab-style arrowheads — one per colorIndex (0 = main, 1…MAX_LANES = branches) */}
+                            {Array.from({ length: MAX_LANES + 1 }, (_, i) => laneColor(i)).map((color, i) => (
                                 <marker
                                     key={i}
                                     id={`arr-${i}`}
@@ -311,13 +432,8 @@ export default function CommitHistoryRail({
                             const childY  = edge.fromRow * ROW_HEIGHT + midY;
                             const parentY = edge.toRow   * ROW_HEIGHT + midY;
 
-                            // Color by the branch lane (non-zero lane gets priority)
-                            const colorIdx = edge.fromLane === edge.toLane
-                                ? edge.fromLane % LANE_COLORS.length
-                                : edge.isMergeEdge
-                                    ? edge.toLane % LANE_COLORS.length
-                                    : edge.fromLane % LANE_COLORS.length;
-                            const color = LANE_COLORS[colorIdx];
+                            const colorIdx = edge.colorIndex;
+                            const color = laneColor(colorIdx);
                             const isMain = edge.fromLane === 0 && edge.toLane === 0;
 
                             if (edge.fromLane === edge.toLane) {
@@ -360,7 +476,7 @@ export default function CommitHistoryRail({
                         {railItems.map((item, i) => {
                             const cx = laneXs[item.laneIndex] ?? laneXs[0];
                             const cy = i * ROW_HEIGHT + midY;
-                            const color = LANE_COLORS[item.laneIndex % LANE_COLORS.length];
+                            const color = laneColor(item.colorIndex);
 
                             return item.isMerge ? (
                                 // Merge commit: bullseye ring
@@ -419,6 +535,23 @@ export default function CommitHistoryRail({
                                 <span className="text-[10px] text-muted-foreground/70 max-w-[120px] truncate hidden sm:inline">
                                     {item.commit.authorName}
                                 </span>
+                                {branchHeadToNames.get(item.commit.sha)?.map((bName) => {
+                                    const color = branchNameToColor.get(bName) ?? "#64748b";
+                                    return (
+                                        <span
+                                            key={bName}
+                                            className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-medium"
+                                            style={{
+                                                border: `1px solid ${color}55`,
+                                                color,
+                                                background: `${color}18`,
+                                            }}
+                                        >
+                                            <GitBranch className="w-2.5 h-2.5" />
+                                            <span className="max-w-[100px] truncate">{bName}</span>
+                                        </span>
+                                    );
+                                })}
                                 <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-white/15 bg-white/5 text-slate-300 shrink-0 font-mono">
                                     <GitBranch className="w-2.5 h-2.5" />
                                     {item.commit.shortSha}
