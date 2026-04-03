@@ -5,6 +5,7 @@
 // calling the GitHub API. Returns the exact same shapes the frontend expects.
 
 import simpleGit, { type SimpleGit } from "simple-git";
+import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import type {
@@ -135,11 +136,13 @@ export async function cloneRepo(
             const url = token
                 ? `https://${encodeURIComponent(token)}@github.com/${owner}/${repo}.git`
                 : `https://github.com/${owner}/${repo}.git`;
-            // No timeout on the clone instance — large repos can take many minutes.
-            // --filter=blob:none: skip downloading blobs during clone (fetched lazily
-            //   on checkout), dramatically reducing clone size and time for large repos.
+            // No timeout on clone — use a dedicated no-timeout instance.
+            // --depth MAX_COMMITS: shallow clone, only the last N commits per branch.
+            //   Turns a multi-minute full clone into seconds for large repos.
+            // --filter=blob:none: skip blob objects; blobs are fetched lazily on checkout.
             // --no-single-branch: fetch all branch refs (needed for branch graph).
             await simpleGit().clone(url, repoDir, [
+                `--depth=${MAX_COMMITS}`,
                 "--filter=blob:none",
                 "--no-single-branch",
             ]);
@@ -156,7 +159,7 @@ export async function cloneRepo(
         if (Date.now() - last > FETCH_COOLDOWN_MS) {
             onProgress?.("Updating repository...");
             const git = simpleGit(repoDir, { timeout: { block: 30_000 } });
-            await git.fetch(["--all", "--prune", "--filter=blob:none"]).catch(() => {});
+            await git.fetch(["--all", "--prune", "--filter=blob:none", `--depth=${MAX_COMMITS}`]).catch(() => {});
             lastFetchedAt.set(key, Date.now());
         }
     }
@@ -311,12 +314,24 @@ async function readContributors(git: SimpleGit): Promise<Contributor[]> {
     let id = 1;
     const contributors: Contributor[] = [];
     for (const entry of byEmail.values()) {
+        const emailHash = crypto
+            .createHash("md5")
+            .update(entry.email.toLowerCase().trim())
+            .digest("hex");
+        // Extract GitHub username from noreply emails:
+        //   {id}+{username}@users.noreply.github.com  (modern)
+        //   {username}@users.noreply.github.com        (legacy)
+        const noreply = entry.email.match(/^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i);
+        const githubLogin = noreply ? noreply[1] : null;
+
         contributors.push({
-            login: entry.name,
+            login: githubLogin ?? entry.name,
             id: id++,
-            avatarUrl: "",
+            avatarUrl: githubLogin
+                ? `https://github.com/${githubLogin}.png?size=64`
+                : `https://www.gravatar.com/avatar/${emailHash}?s=64&d=identicon`,
             contributions: entry.contributions,
-            htmlUrl: "",
+            htmlUrl: githubLogin ? `https://github.com/${githubLogin}` : "",
             email: entry.email,
             name: entry.name,
         });

@@ -447,6 +447,40 @@ export async function fetchDependencyFiles(
         .map((r) => r.value);
 }
 
+// --- Commit author map (email → GitHub login/avatar) ---
+// Fetches recent commits from the GitHub API. Each commit carries both the
+// git author email and the linked GitHub account, giving us a reliable
+// email-to-profile mapping to enrich local git contributor data.
+
+export async function fetchCommitAuthorMap(
+    owner: string,
+    repo: string,
+    token?: string | null,
+): Promise<Map<string, { login: string; avatarUrl: string; htmlUrl: string }>> {
+    type GHCommit = {
+        commit: { author: { email: string } };
+        author: { login: string; avatar_url: string; html_url: string } | null;
+    };
+    const commits = await ghFetch<GHCommit[]>(
+        `/repos/${owner}/${repo}/commits?per_page=100`,
+        token,
+    ).catch(() => [] as GHCommit[]);
+
+    const map = new Map<string, { login: string; avatarUrl: string; htmlUrl: string }>();
+    for (const c of commits) {
+        if (!c.author) continue;
+        const email = c.commit.author.email?.toLowerCase();
+        if (email && !map.has(email)) {
+            map.set(email, {
+                login: c.author.login,
+                avatarUrl: c.author.avatar_url,
+                htmlUrl: c.author.html_url,
+            });
+        }
+    }
+    return map;
+}
+
 // --- Fetch all repo data in parallel ---
 
 export async function fetchAllRepoData(

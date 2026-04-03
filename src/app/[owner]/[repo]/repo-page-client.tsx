@@ -142,14 +142,20 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         setLoading(false);
                         // Don't return — keep reading for the enriched event.
                     } else if (type === "enriched") {
-                        // GitHub API data is ready — update metadata and mergedPRs in place.
+                        // GitHub API data is ready — update metadata, mergedPRs, and contributors.
                         const enriched = event.payload as {
                             metadata: RepoData["metadata"];
                             mergedPRs: RepoData["mergedPRs"];
+                            contributors?: RepoData["contributors"];
                         };
                         setRepoData((prev) =>
                             prev
-                                ? { ...prev, metadata: enriched.metadata, mergedPRs: enriched.mergedPRs }
+                                ? {
+                                      ...prev,
+                                      metadata: enriched.metadata,
+                                      mergedPRs: enriched.mergedPRs,
+                                      ...(enriched.contributors ? { contributors: enriched.contributors } : {}),
+                                  }
                                 : prev
                         );
                     } else {

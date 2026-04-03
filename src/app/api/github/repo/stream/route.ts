@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { fetchRepoMetadata, fetchMergedPRs } from "@/lib/github";
+import { fetchRepoMetadata, fetchMergedPRs, fetchCommitAuthorMap } from "@/lib/github";
 import { cloneRepo, fetchAllRepoDataLocal, detectDefaultBranch } from "@/lib/local-git";
 import type { Contributor } from "@/types";
 
@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
                 emit({ type: "checking", message: "Preparing..." });
                 const metadataPromise = fetchRepoMetadata(owner, repo, token).catch(() => null);
                 const mergedPRsPromise = fetchMergedPRs(owner, repo, 1, token).catch(() => []);
+                const authorMapPromise = fetchCommitAuthorMap(owner, repo, token).catch(() => new Map());
                 emit({ type: "metadata", message: "Fetching metadata in background..." });
 
                 // Step 1: Clone (or reuse cached clone) — this is the heavy step.
@@ -139,12 +140,36 @@ export async function GET(request: NextRequest) {
                 });
 
                 // Step 3: Resolve GitHub API data (already in-flight) and enrich the dashboard.
-                const [metadata, mergedPRs] = await Promise.all([metadataPromise, mergedPRsPromise]);
+                const [metadata, mergedPRs, authorMap] = await Promise.all([
+                    metadataPromise,
+                    mergedPRsPromise,
+                    authorMapPromise,
+                ]);
+
+                // Merge GitHub profile data into local contributors using email as the key.
+                // Email is reliable; name matching fails because git names ≠ GitHub handles.
+                // Contributors resolved from noreply emails already have a valid htmlUrl.
+                let enrichedContributors = contributors;
+                if (authorMap.size > 0) {
+                    enrichedContributors = contributors.map((c) => {
+                        if (c.htmlUrl && !c.htmlUrl.includes("github.com/search")) return c;
+                        const gh = c.email ? authorMap.get(c.email.toLowerCase()) : undefined;
+                        if (!gh) return c;
+                        return {
+                            ...c,
+                            login: gh.login,
+                            avatarUrl: gh.avatarUrl,
+                            htmlUrl: gh.htmlUrl,
+                        };
+                    });
+                }
+
                 emit({
                     type: "enriched",
                     payload: {
                         metadata: metadata ?? placeholderMetadata,
                         mergedPRs,
+                        contributors: enrichedContributors,
                     },
                 });
             } catch (err) {
