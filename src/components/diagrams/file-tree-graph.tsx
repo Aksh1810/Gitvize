@@ -2,10 +2,23 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import cytoscape from "cytoscape";
 import { List, type RowComponentProps } from "react-window";
-// @ts-expect-error fcose is an extension package without bundled TS types.
-import fcose from "cytoscape-fcose";
+import {
+    ReactFlow,
+    ReactFlowProvider,
+    useNodesState,
+    useEdgesState,
+    useReactFlow,
+    MiniMap,
+    type Node,
+    type NodeTypes,
+    type NodeChange,
+    applyNodeChanges,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import ObsidianFileNode from "./nodes/obsidian-file-node";
+import type { ObsidianNodeData } from "./nodes/obsidian-file-node";
+import { useForceSimulation } from "@/hooks/use-force-simulation";
 import { getFileColor } from "@/lib/file-icons";
 import { buildSymbolGraph, selectSymbolAnalysisFiles, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
@@ -41,10 +54,21 @@ const extToPrismLang: Record<string, string> = {
     xml: "markup", svg: "markup",
 };
 
-// Register the fcose layout extension
-if (typeof window !== "undefined") {
-    cytoscape.use(fcose);
-}
+const nodeTypes: NodeTypes = { obsidianFile: ObsidianFileNode };
+
+const OBSIDIAN_COLORS: Record<string, string> = {
+    ts: "#8b5cf6", tsx: "#8b5cf6", md: "#22d3ee", json: "#f59e0b",
+    css: "#ec4899", scss: "#ec4899", py: "#22c55e", go: "#14b8a6",
+};
+
+const EDGE_TYPE_COLORS: Record<string, string> = {
+    contains: "rgba(52,211,153,0.6)",
+    defines: "rgba(34,211,238,0.6)",
+    imports: "rgba(59,130,246,0.6)",
+    calls: "rgba(139,92,246,0.6)",
+    extends: "rgba(249,115,22,0.6)",
+    implements: "rgba(236,72,153,0.6)",
+};
 
 interface FileTreeGraphProps {
     tree: TreeItem[];
@@ -190,9 +214,8 @@ const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
     limit: 0,
 };
 
-export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
+function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
-    const cyRef = useRef<cytoscape.Core | null>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
     const codePanelRef = useRef<HTMLDivElement>(null);
     const codeListRef = useRef<{
@@ -255,6 +278,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         references: [],
     });
     const inspectorWidth = 440;
+    const [depthLimit, setDepthLimit] = useState<number>(Infinity);
+    const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
+    const positionSeedRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+    const [rfNodes, setNodes] = useNodesState<Node<ObsidianNodeData>>([]);
+    const [rfEdges, setEdges] = useEdgesState<{ id: string; source: string; target: string; type?: string; style?: React.CSSProperties; data?: Record<string, unknown> }>([]);
+    const { zoomIn, zoomOut, fitView } = useReactFlow();
     const visibilityRef = useRef({
         showRoot: true,
         showFolders: true,
@@ -921,6 +950,166 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { nodes, edges };
     }, [tree, repo, symbolGraph]);
 
+    // Convert elements to React Flow nodes/edges with Obsidian styling
+    const { rfInitialNodes, rfInitialEdges, maxDepth } = useMemo(() => {
+        // Compute max depth
+        let computedMaxDepth = 0;
+        elements.nodes.forEach((n) => {
+            const data = (n.data ?? {}) as Record<string, unknown>;
+            const path = String(data.path ?? "");
+            if (path) {
+                const depth = path.split("/").length;
+                if (depth > computedMaxDepth) computedMaxDepth = depth;
+            }
+        });
+
+        // Cluster logic: group file nodes by parent folder when > 500 nodes
+        const shouldCluster = elements.nodes.length > 500;
+        const clusterMap = new Map<string, number>(); // folderPath → file count
+        if (shouldCluster) {
+            elements.nodes.forEach((n) => {
+                const data = (n.data ?? {}) as Record<string, unknown>;
+                if (data.type !== "file") return;
+                const path = String(data.path ?? "");
+                const parts = path.split("/");
+                if (parts.length < 2) return;
+                const parent = parts.slice(0, -1).join("/");
+                clusterMap.set(parent, (clusterMap.get(parent) ?? 0) + 1);
+            });
+        }
+
+        const clusteredFolders = new Set<string>();
+        const clusterNodes: Node<ObsidianNodeData>[] = [];
+        const clusterEdgeSet = new Set<string>();
+        const clusterEdges: { id: string; source: string; target: string; type: string; style: React.CSSProperties }[] = [];
+
+        if (shouldCluster) {
+            clusterMap.forEach((count, folderPath) => {
+                if (count >= 3 && !expandedClusters.has(folderPath)) {
+                    clusteredFolders.add(folderPath);
+                    const clusterId = `cluster:${folderPath}`;
+                    const clusterRadius = Math.min(32, 14 + Math.sqrt(count) * 2);
+                    clusterNodes.push({
+                        id: clusterId,
+                        type: "obsidianFile",
+                        position: positionSeedRef.current.get(clusterId) ?? { x: 0, y: 0 },
+                        data: {
+                            label: folderPath.split("/").pop() ?? folderPath,
+                            displayLabel: folderPath.split("/").pop() ?? folderPath,
+                            compactLabel: folderPath.split("/").pop() ?? folderPath,
+                            path: folderPath,
+                            type: "cluster",
+                            radius: clusterRadius,
+                            color: "#6366f1",
+                            clusterFileCount: count,
+                            clusterFolderPath: folderPath,
+                        },
+                    });
+                    // Edge from parent folder to cluster
+                    const parentFolder = folderPath.includes("/")
+                        ? folderPath.split("/").slice(0, -1).join("/")
+                        : "";
+                    const clusterEdgeId = `edge:folder:${parentFolder}-${clusterId}`;
+                    if (!clusterEdgeSet.has(clusterEdgeId)) {
+                        clusterEdgeSet.add(clusterEdgeId);
+                        clusterEdges.push({
+                            id: clusterEdgeId,
+                            source: `folder:${parentFolder}`,
+                            target: clusterId,
+                            type: "straight",
+                            style: { stroke: EDGE_TYPE_COLORS.contains, strokeWidth: 1 },
+                        });
+                    }
+                }
+            });
+        }
+
+        // Convert nodes
+        const rfNodes: Node<ObsidianNodeData>[] = [];
+        elements.nodes.forEach((n) => {
+            const data = (n.data ?? {}) as Record<string, unknown>;
+            const path = String(data.path ?? "");
+            const nodeType = String(data.type ?? "file") as ObsidianNodeData["type"];
+            const depth = path ? path.split("/").length : 0;
+
+            // Apply depth limit
+            if (depthLimit !== Infinity && depth > depthLimit) return;
+
+            // Skip files that are in a clustered folder
+            if (nodeType === "file" && shouldCluster) {
+                const parts = path.split("/");
+                if (parts.length >= 2) {
+                    const parent = parts.slice(0, -1).join("/");
+                    if (clusteredFolders.has(parent)) return;
+                }
+            }
+
+            const id = String(data.id ?? path);
+
+            let radius: number;
+            let color: string;
+            if (nodeType === "folder") {
+                const childCount = typeof data.childCount === "number" ? data.childCount : 0;
+                radius = Math.max(24, Math.min(40, 20 + Math.sqrt(childCount) * 2.5));
+                color = "#6366f1";
+            } else if (nodeType === "symbol") {
+                const kind = data.symbolKind as string | undefined;
+                radius = kind === "method" || kind === "variable" ? 9 : 11;
+                const kindStyle = kind ? SYMBOL_KIND_STYLE[kind as keyof typeof SYMBOL_KIND_STYLE] : null;
+                color = kindStyle?.color ?? "#64748b";
+            } else {
+                // file
+                const rawSize = typeof data.rawSize === "number" ? data.rawSize : 0;
+                radius = Math.max(8, Math.min(14, Math.log10((rawSize || 1) + 1) * 3));
+                const ext = String(data.extension ?? "");
+                color = OBSIDIAN_COLORS[ext] ?? (getFileColor(path) || "#64748b");
+            }
+
+            rfNodes.push({
+                id,
+                type: "obsidianFile",
+                position: positionSeedRef.current.get(id) ?? { x: 0, y: 0 },
+                data: {
+                    label: String(data.label ?? ""),
+                    displayLabel: String(data.displayLabel ?? data.label ?? ""),
+                    compactLabel: String(data.compactLabel ?? data.label ?? ""),
+                    path,
+                    type: nodeType,
+                    radius,
+                    color,
+                    extension: data.extension as string | undefined,
+                    rawSize: data.rawSize as number | undefined,
+                    childCount: data.childCount as number | undefined,
+                    symbolKind: data.symbolKind as ObsidianNodeData["symbolKind"],
+                    parentPath: data.parentPath as string | undefined,
+                },
+            });
+        });
+
+        // Add cluster nodes
+        rfNodes.push(...clusterNodes);
+
+        // Convert edges
+        const rfEdges: { id: string; source: string; target: string; type: string; style: React.CSSProperties; data?: Record<string, unknown> }[] = [];
+        elements.edges.forEach((e) => {
+            const data = (e.data ?? {}) as Record<string, unknown>;
+            const edgeType = String(data.type ?? "contains");
+            const edgeColor = EDGE_TYPE_COLORS[edgeType] ?? "rgba(100,116,139,0.4)";
+            rfEdges.push({
+                id: String(data.id ?? `edge:${data.source}-${data.target}`),
+                source: String(data.source ?? ""),
+                target: String(data.target ?? ""),
+                type: "straight",
+                style: { stroke: edgeColor, strokeWidth: 1 },
+                data: { edgeType },
+            });
+        });
+
+        rfEdges.push(...clusterEdges);
+
+        return { rfInitialNodes: rfNodes, rfInitialEdges: rfEdges, maxDepth: computedMaxDepth };
+    }, [elements, depthLimit, expandedClusters]);
+
     // Is this a large repo?
     const isLargeRepo = elements.nodes.length > 80;
 
@@ -964,111 +1153,105 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
-    const applyVisibility = useCallback((targetCy?: cytoscape.Core | null) => {
-        const cy = targetCy ?? cyRef.current;
-        if (!cy) return;
+    // Sync RF nodes/edges when rfInitialNodes/Edges change (from elements or filter changes)
+    useEffect(() => {
+        setNodes(rfInitialNodes);
+        setEdges(rfInitialEdges);
+    }, [rfInitialNodes, rfInitialEdges, setNodes, setEdges]);
 
-        const state = visibilityRef.current;
-        cy.batch(() => {
-            cy.getElementById("root").style("display", state.showRoot ? "element" : "none");
-            cy.nodes('node[type="folder"]').not('#root').style("display", state.showFolders ? "element" : "none");
-            cy.nodes('node[type="file"]').style("display", state.showFiles ? "element" : "none");
+    // Visibility filter effect
+    useEffect(() => {
+        setNodes((prev) =>
+            prev.map((n) => {
+                const data = n.data as ObsidianNodeData;
+                const symbolsVisible = showSymbols && showFiles;
+                let hidden = false;
+                if (data.type === "folder" && data.path === "" && !showRoot) hidden = true;
+                else if (data.type === "folder" && data.path !== "" && !showFolders) hidden = true;
+                else if (data.type === "file" && !showFiles) hidden = true;
+                else if (data.type === "symbol") {
+                    const kindVisible = data.symbolKind ? symbolKindVisibility[data.symbolKind] : true;
+                    hidden = !symbolsVisible || !kindVisible;
+                }
+                if (data.hidden === hidden) return n;
+                return { ...n, data: { ...data, hidden } };
+            })
+        );
+        setEdges((prev) =>
+            prev.map((e) => {
+                const edgeType = String((e.data as Record<string, unknown>)?.edgeType ?? "contains");
+                const symbolsVisible = showSymbols && showFiles;
+                let hidden = false;
+                if (edgeType === "contains" && !showContainsEdges) hidden = true;
+                else if (edgeType === "defines" && (!showDefinesEdges || !symbolsVisible)) hidden = true;
+                else if (edgeType === "imports" && (!showImportsEdges || !symbolsVisible)) hidden = true;
+                else if (edgeType === "calls" && (!showCallsEdges || !symbolsVisible)) hidden = true;
+                else if (edgeType === "extends" && (!showExtendsEdges || !symbolsVisible)) hidden = true;
+                else if (edgeType === "implements" && (!showImplementsEdges || !symbolsVisible)) hidden = true;
+                const currentHidden = e.style ? (e.style as React.CSSProperties).display === "none" : false;
+                if (currentHidden === hidden) return e;
+                return { ...e, style: { ...(e.style as React.CSSProperties), display: hidden ? "none" : undefined } };
+            })
+        );
+    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges,
+        showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges,
+        symbolKindVisibility, setNodes, setEdges]);
 
-            const symbolsVisible = state.showSymbols && state.showFiles;
-            cy.nodes('node[type="symbol"]').forEach((node) => {
-                const kind = node.data("symbolKind") as SymbolKind | undefined;
-                const kindVisible = kind ? state.symbolKindVisibility[kind] : true;
-                node.style("display", symbolsVisible && kindVisible ? "element" : "none");
-            });
+    const clearNodeFocus = useCallback(() => {
+        setNodes((prev) =>
+            prev.map((n) => {
+                const data = n.data as ObsidianNodeData;
+                if (!data.dimmed && !data.highlighted && !data.searchMatch) return n;
+                return { ...n, data: { ...data, dimmed: false, highlighted: false, searchMatch: false } };
+            })
+        );
+        setEdges((prev) =>
+            prev.map((e) => {
+                const style = e.style as React.CSSProperties | undefined;
+                const edgeType = String((e.data as Record<string, unknown>)?.edgeType ?? "contains");
+                const baseColor = EDGE_TYPE_COLORS[edgeType] ?? "rgba(100,116,139,0.4)";
+                if (style?.stroke === baseColor && style?.strokeWidth === 1) return e;
+                return { ...e, style: { ...style, stroke: baseColor, strokeWidth: 1 } };
+            })
+        );
+    }, [setNodes, setEdges]);
 
-            cy.edges('edge[type="contains"]').style(
-                "display",
-                state.showContainsEdges ? "element" : "none"
-            );
-
-            cy.edges('edge[type="defines"]').style(
-                "display",
-                state.showDefinesEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="imports"]').style(
-                "display",
-                state.showImportsEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="calls"]').style(
-                "display",
-                state.showCallsEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="extends"]').style(
-                "display",
-                state.showExtendsEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="implements"]').style(
-                "display",
-                state.showImplementsEdges && symbolsVisible ? "element" : "none"
-            );
-        });
-    }, []);
-
-    const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
-        cy.nodes().forEach(node => {
-            node.style('opacity', 1);
-            node.removeData('keepLabel');
-            if (node.data('type') === 'folder') {
-                node.style('border-width', 2);
-                node.style('border-color', 'rgba(255,255,255,0.4)');
-            } else if (node.data('type') === 'symbol') {
-                node.style('border-width', 1);
-                node.style('border-color', 'rgba(255,255,255,0.35)');
-            } else {
-                node.style('border-width', 0);
-                node.style('border-color', 'transparent');
+    const focusNodeNeighborhood = useCallback((nodeId: string) => {
+        // Build 1-hop neighbor set
+        const neighborIds = new Set<string>([nodeId]);
+        const highlightedEdgeIds = new Set<string>();
+        rfEdges.forEach((e) => {
+            if (e.source === nodeId || e.target === nodeId) {
+                neighborIds.add(e.source);
+                neighborIds.add(e.target);
+                highlightedEdgeIds.add(e.id);
             }
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('label', '');
-            }
         });
 
-        cy.edges().forEach(edge => {
-            edge.style('opacity', 0.6);
-            edge.style('width', 1);
-            edge.style('shadow-blur', 0);
-            edge.style('shadow-opacity', 0);
-        });
-    }, [isLargeRepo]);
-
-    const focusNodeNeighborhood = useCallback((cy: cytoscape.Core, node: cytoscape.NodeSingular) => {
-        // Dim everything first, then re-highlight connected context.
-        cy.nodes().style('opacity', 0.12);
-        cy.edges().style('opacity', 0.06);
-        cy.nodes().removeData('keepLabel');
-
-        const neighborhood = node.closedNeighborhood();
-        neighborhood.nodes().style('opacity', 1);
-        neighborhood.edges().style('opacity', 0.92);
-        neighborhood.edges().style('width', 2);
-        neighborhood.edges().style('shadow-blur', 8);
-        neighborhood.edges().style('shadow-opacity', 0.6);
-        neighborhood.edges().style('shadow-color', '#93c5fd');
-
-        neighborhood.nodes().forEach(n => {
-            n.data('keepLabel', 1);
-        });
-
-        // Primary focus node gets strongest emphasis.
-        node.style('border-width', 3);
-        node.style('border-color', '#facc15');
-
-        // Improve readability in large repos by revealing labels for focused neighborhood.
-        if (isLargeRepo) {
-            neighborhood.nodes().forEach(n => {
-                n.style('label', n.data('compactLabel') || n.data('displayLabel') || n.data('label'));
-            });
-        }
-    }, [isLargeRepo]);
+        setNodes((prev) =>
+            prev.map((n) => {
+                const data = n.data as ObsidianNodeData;
+                const isNeighbor = neighborIds.has(n.id);
+                const isPrimary = n.id === nodeId;
+                const dimmed = !isNeighbor;
+                const highlighted = isPrimary;
+                if (data.dimmed === dimmed && data.highlighted === highlighted) return n;
+                return { ...n, data: { ...data, dimmed, highlighted, searchMatch: false } };
+            })
+        );
+        setEdges((prev) =>
+            prev.map((e) => {
+                const style = e.style as React.CSSProperties | undefined;
+                const edgeType = String((e.data as Record<string, unknown>)?.edgeType ?? "contains");
+                const baseColor = EDGE_TYPE_COLORS[edgeType] ?? "rgba(100,116,139,0.4)";
+                const isHighlighted = highlightedEdgeIds.has(e.id);
+                const newStroke = isHighlighted ? baseColor.replace(/[\d.]+\)$/, "0.9)") : "rgba(100,116,139,0.06)";
+                const newWidth = isHighlighted ? 2 : 0.5;
+                if (style?.stroke === newStroke) return e;
+                return { ...e, style: { ...style, stroke: newStroke, strokeWidth: newWidth } };
+            })
+        );
+    }, [rfEdges, setNodes, setEdges]);
 
     const expandParentFolders = useCallback((path: string) => {
         const parts = path.split("/");
@@ -1102,18 +1285,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             size: node.size,
         });
 
-        const cy = cyRef.current;
-        if (!cy) return;
-        const cyNode = cy.getElementById(`file:${node.path}`);
-        if (cyNode && cyNode.nonempty()) {
-            focusNodeNeighborhood(cy, cyNode);
-            cy.animate({
-                center: { eles: cyNode },
-                duration: 300,
-                easing: "ease-out-quad",
-            });
+        const rfNode = rfNodes.find((n) => n.id === `file:${node.path}`);
+        if (rfNode) {
+            focusNodeNeighborhood(`file:${node.path}`);
+            fitView({ nodes: [rfNode], duration: 300, padding: 0.8 });
         }
-    }, [expandParentFolders, focusNodeNeighborhood]);
+    }, [expandParentFolders, focusNodeNeighborhood, rfNodes, fitView]);
 
     const handleExplorerKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
         if (!showExplorer || explorerRows.length === 0) return;
@@ -1190,317 +1367,72 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     // Search handler
     const handleSearch = useCallback((query: string) => {
         setSearchQuery(query);
-        const cy = cyRef.current;
-        if (!cy) return;
 
-        // Reset any prior focus state before applying search highlight.
-        clearNodeFocus(cy);
-
-        if (!query.trim()) return;
+        if (!query.trim()) {
+            clearNodeFocus();
+            return;
+        }
 
         const q = query.toLowerCase();
-        const matched = cy.nodes().filter(node => {
-            const label = (node.data('label') || '').toLowerCase();
-            const path = (node.data('path') || '').toLowerCase();
-            return label.includes(q) || path.includes(q);
-        });
-
-        if (matched.length > 0) {
-            // Dim non-matching
-            cy.nodes().style('opacity', 0.15);
-            cy.edges().style('opacity', 0.08);
-            // Highlight matched
-            matched.style('opacity', 1);
-            matched.style('border-width', 3);
-            matched.style('border-color', '#facc15');
-            // Show labels on matched nodes
-            matched.forEach(node => {
-                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
-            });
-            // Also highlight their edges
-            matched.connectedEdges().style('opacity', 0.8);
-        }
-    }, [clearNodeFocus]);
-
-    useEffect(() => {
-        if (!containerRef.current) return;
-
-        // Scale layout params based on graph size
-        const nodeCount = elements.nodes.length;
-        const repulsion = nodeCount > 200 ? 45000 : nodeCount > 100 ? 30000 : 12000;
-        const edgeLen = nodeCount > 200 ? 200 : nodeCount > 100 ? 150 : 100;
-        const gravityVal = nodeCount > 200 ? 0.1 : 0.25;
-
-        // Initialize cytoscape
-        const cy = cytoscape({
-            container: containerRef.current,
-            elements: elements,
-            style: [
-                {
-                    selector: 'node',
-                    style: {
-                        'background-color': 'data(color)',
-                        'width': 'data(size)',
-                        'height': 'data(size)',
-                        'label': isLargeRepo ? '' : 'data(displayLabel)',
-                        'color': '#ffffff',
-                        'text-valign': 'center',
-                        'text-halign': 'right',
-                        'text-margin-x': 8,
-                        'font-size': '11px',
-                        'font-family': 'monospace',
-                        'text-wrap': 'ellipsis',
-                        'text-max-width': '150px',
-                        'text-outline-width': 1.5,
-                        'text-outline-color': '#0f172a',
-                        'text-outline-opacity': 0.8,
-                    }
-                },
-                {
-                    selector: 'node[type="folder"]',
-                    style: {
-                        'border-width': 2,
-                        'border-color': 'rgba(255, 255, 255, 0.4)',
-                        'font-weight': 'bold',
-                        'font-size': '12px',
-                        'label': isLargeRepo ? '' : 'data(displayLabel)',
-                    }
-                },
-                {
-                    selector: 'node[type="folder"][showLabel = 1]',
-                    style: {
-                        'label': isLargeRepo ? 'data(compactLabel)' : 'data(displayLabel)',
-                    }
-                },
-                {
-                    selector: 'node[type="symbol"]',
-                    style: {
-                        'background-color': 'data(color)',
-                        'shape': 'ellipse',
-                        'width': 'data(size)',
-                        'height': 'data(size)',
-                        'label': isLargeRepo ? '' : 'data(compactLabel)',
-                        'font-size': '9px',
-                        'font-family': 'monospace',
-                        'text-halign': 'center',
-                        'text-valign': 'bottom',
-                        'text-margin-y': 8,
-                        'border-width': 1,
-                        'border-color': 'rgba(255,255,255,0.35)',
-                    }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="class"]',
-                    style: { 'shape': 'hexagon' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="interface"]',
-                    style: { 'shape': 'round-rectangle' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="type"]',
-                    style: { 'shape': 'diamond' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="method"]',
-                    style: { 'shape': 'triangle' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="variable"]',
-                    style: { 'shape': 'pentagon' }
-                },
-                {
-                    selector: 'edge',
-                    style: {
-                        'width': 1,
-                        'line-color': '#334155',
-                        'opacity': 0.4,
-                        'curve-style': 'bezier',
-                        'control-point-step-size': 40,
-                        'target-arrow-shape': 'none'
-                    }
-                },
-                {
-                    selector: 'edge[type="contains"]',
-                    style: {
-                        'width': 1,
-                        'line-color': '#34d399',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier'
-                    }
-                },
-                {
-                    selector: 'edge[type="defines"]',
-                    style: {
-                        'width': 0.9,
-                        'line-color': '#22d3ee',
-                        'opacity': 0.7,
-                        'curve-style': 'unbundled-bezier',
-                        'control-point-distances': [25],
-                        'control-point-weights': [0.5],
-                    }
-                },
-                {
-                    selector: 'edge[type="imports"]',
-                    style: {
-                        'width': 1.1,
-                        'line-color': '#3b82f6',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="calls"]',
-                    style: {
-                        'width': 1.1,
-                        'line-color': '#8b5cf6',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="extends"]',
-                    style: {
-                        'width': 1.2,
-                        'line-color': '#f97316',
-                        'opacity': 0.75,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="implements"]',
-                    style: {
-                        'width': 1.2,
-                        'line-color': '#ec4899',
-                        'opacity': 0.75,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'node:selected',
-                    style: {
-                        'border-width': 3,
-                        'border-color': '#ffffff'
-                    }
-                }
-            ],
-            layout: {
-                name: 'fcose',
-                quality: "default",
-                randomize: true,
-                animate: true,
-                animationDuration: 500,
-                fit: true,
-                nodeRepulsion: repulsion,
-                idealEdgeLength: edgeLen,
-                edgeElasticity: 0.45,
-                nestingFactor: 0.1,
-                gravity: gravityVal,
-                numIter: 2500,
-                tilingPaddingVertical: 20,
-                tilingPaddingHorizontal: 20,
-                gravityRangeCompound: 1.5,
-                gravityCompound: 1.0,
-                gravityRange: 3.8,
-                initialTemp: 271,
-                coolingFactor: 0.3
-            } as unknown as cytoscape.LayoutOptions,
-            wheelSensitivity: 0.2,
-        });
-
-        // Add event listeners
-        cy.on('tap', 'node', (evt) => {
-            const node = evt.target;
-            const data = node.data();
-
-            focusNodeNeighborhood(cy, node);
-
-            if (data.type === "file") {
-                setSymbolFocus(null);
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: data.label,
-                    path: data.path,
-                    type: "file",
-                    extension: data.extension,
-                    size: data.rawSize
-                });
-            } else if (data.type === "symbol" && data.parentPath) {
-                const parentPath = String(data.parentPath);
-                const fileLabel = parentPath.split("/").pop() || parentPath;
-                const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
-                setSymbolFocus(String(data.label));
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: fileLabel,
-                    path: parentPath,
-                    type: "file",
-                    extension: ext,
-                });
+        const matchedIds = new Set<string>();
+        rfNodes.forEach((n) => {
+            const data = n.data as ObsidianNodeData;
+            if (
+                data.label?.toLowerCase().includes(q) ||
+                data.path?.toLowerCase().includes(q)
+            ) {
+                matchedIds.add(n.id);
             }
         });
 
-        // Tap on empty canvas resets node-focus context.
-        cy.on('tap', (evt) => {
-            if (evt.target === cy) {
-                clearNodeFocus(cy);
-            }
-        });
+        setNodes((prev) =>
+            prev.map((n) => {
+                const data = n.data as ObsidianNodeData;
+                const isMatch = matchedIds.has(n.id);
+                const dimmed = matchedIds.size > 0 && !isMatch;
+                if (data.dimmed === dimmed && data.searchMatch === isMatch) return n;
+                return { ...n, data: { ...data, dimmed, searchMatch: isMatch, highlighted: false } };
+            })
+        );
+        setEdges((prev) =>
+            prev.map((e) => {
+                const style = e.style as React.CSSProperties | undefined;
+                const bothMatch = matchedIds.has(e.source) && matchedIds.has(e.target);
+                const newOpacity = bothMatch ? 0.8 : 0.06;
+                if (style?.opacity === newOpacity) return e;
+                return { ...e, style: { ...style, opacity: newOpacity } };
+            })
+        );
+    }, [clearNodeFocus, rfNodes, setNodes, setEdges]);
 
-        // Cursor styles + hover labels
-        cy.on('mouseover', 'node', (evt) => {
-            if (containerRef.current) containerRef.current.style.cursor = 'pointer';
-            const node = evt.target;
-            // Show label on hover for file nodes in large repos
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
-                node.style('font-size', '11px');
-                node.style('z-index', 999);
-            }
-        });
+    // Tick handler: batch RAF updates
+    const handleSimTick = useCallback((positions: Map<string, { x: number; y: number }>) => {
+        positions.forEach((pos, id) => positionSeedRef.current.set(id, pos));
+        setNodes((prev) =>
+            prev.map((n) => {
+                const pos = positions.get(n.id);
+                if (!pos || (n.position.x === pos.x && n.position.y === pos.y)) return n;
+                return { ...n, position: pos };
+            })
+        );
+    }, [setNodes]);
 
-        cy.on('mouseout', 'node', (evt) => {
-            if (containerRef.current) containerRef.current.style.cursor = 'default';
-            const node = evt.target;
-            // Hide label on mouseout for file nodes in large repos
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                if (!node.data('keepLabel')) {
-                    node.style('label', '');
-                }
-                node.style('z-index', 0);
-            }
-        });
+    const { pinNode, unpinNode, reheat } = useForceSimulation({
+        nodes: rfInitialNodes,
+        edges: rfInitialEdges,
+        onTick: handleSimTick,
+        onSettle: () => fitView({ padding: 0.1, duration: 400 }),
+        positionSeed: positionSeedRef.current,
+    });
 
-        cyRef.current = cy;
-        applyVisibility(cy);
+    const onNodesChange = useCallback((changes: NodeChange[]) => {
+        const nonPos = changes.filter((c) => c.type !== "position");
+        if (nonPos.length) setNodes((prev) => applyNodeChanges(nonPos, prev) as Node<ObsidianNodeData>[]);
+    }, [setNodes]);
 
-        return () => {
-            cy.destroy();
-        };
-    }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
-
-    useEffect(() => {
-        visibilityRef.current = {
-            showRoot,
-            showFolders,
-            showFiles,
-            showSymbols,
-            showContainsEdges,
-            showDefinesEdges,
-            showImportsEdges,
-            showCallsEdges,
-            showExtendsEdges,
-            showImplementsEdges,
-            symbolKindVisibility,
-        };
-        applyVisibility();
-    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, symbolKindVisibility, applyVisibility]);
-
-    const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
-    const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);
-    const handleFit = () => cyRef.current?.fit(undefined, 50);
+    const handleZoomIn = () => zoomIn({ duration: 200 });
+    const handleZoomOut = () => zoomOut({ duration: 200 });
+    const handleFit = () => fitView({ padding: 0.1, duration: 400 });
 
     return (
         <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
@@ -1844,7 +1776,92 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 )}
 
-                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl" />
+                <ReactFlow
+                    nodes={rfNodes}
+                    edges={rfEdges}
+                    onNodesChange={onNodesChange}
+                    nodeTypes={nodeTypes}
+                    onNodeClick={(_, node) => {
+                        const data = node.data as ObsidianNodeData;
+                        focusNodeNeighborhood(node.id);
+                        if (data.type === "file") {
+                            setSymbolFocus(null);
+                            setFocusLine(null);
+                            setShowExplorerInspector(true);
+                            setSelectedFile({
+                                label: data.label,
+                                path: data.path,
+                                type: "file",
+                                extension: data.extension,
+                                size: data.rawSize,
+                            });
+                        } else if (data.type === "symbol" && data.parentPath) {
+                            const parentPath = data.parentPath;
+                            const fileLabel = parentPath.split("/").pop() || parentPath;
+                            const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                            setSymbolFocus(data.label);
+                            setFocusLine(null);
+                            setShowExplorerInspector(true);
+                            setSelectedFile({ label: fileLabel, path: parentPath, type: "file", extension: ext });
+                        } else if (data.type === "cluster" && data.clusterFolderPath) {
+                            setExpandedClusters((prev) => {
+                                const next = new Set(prev);
+                                next.add(data.clusterFolderPath!);
+                                return next;
+                            });
+                            reheat();
+                        }
+                    }}
+                    onPaneClick={() => clearNodeFocus()}
+                    onNodeDragStart={(_, node) => pinNode(node.id, node.position.x, node.position.y)}
+                    onNodeDrag={(_, node) => pinNode(node.id, node.position.x, node.position.y)}
+                    onNodeDragStop={(_, node) => unpinNode(node.id)}
+                    onNodeDoubleClick={(_, node) => {
+                        focusNodeNeighborhood(node.id);
+                        fitView({ nodes: [node], duration: 400, padding: 1.5 });
+                    }}
+                    minZoom={0.05}
+                    maxZoom={4}
+                    style={{ background: "#07050f" }}
+                    proOptions={{ hideAttribution: true }}
+                    className="w-full h-full"
+                >
+                    <MiniMap
+                        style={{
+                            position: "absolute",
+                            bottom: 12,
+                            right: showRightFilters ? 236 : 8,
+                            width: 160,
+                            height: 120,
+                            background: "rgba(7,5,15,0.9)",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: 6,
+                        }}
+                        nodeColor={(n) => (n.data?.color as string) ?? "#64748b"}
+                        maskColor="rgba(7,5,15,0.7)"
+                        zoomable
+                        pannable
+                    />
+                </ReactFlow>
+
+                {/* Depth slider */}
+                <div className="absolute bottom-10 left-2 z-20 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur px-3 py-2 w-44">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">
+                        Depth: {depthLimit === Infinity ? "Full" : depthLimit}
+                    </div>
+                    <input
+                        type="range"
+                        min={0}
+                        max={maxDepth}
+                        value={depthLimit === Infinity ? maxDepth : depthLimit}
+                        onChange={(e) => {
+                            const v = Number(e.target.value);
+                            setDepthLimit(v === maxDepth ? Infinity : v);
+                            reheat();
+                        }}
+                        className="w-full h-1 accent-indigo-500"
+                    />
+                </div>
 
                 <div className="absolute bottom-2 right-2 z-10 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
                     <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
@@ -1853,6 +1870,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </div>
             </div>
         </div>
+    );
+}
+
+export default function FileTreeGraph(props: FileTreeGraphProps) {
+    return (
+        <ReactFlowProvider>
+            <FileTreeGraphInner {...props} />
+        </ReactFlowProvider>
     );
 }
 

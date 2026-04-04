@@ -212,77 +212,61 @@ export default function BranchGraph({
 
             {view === "history" ? (
                 <>
-                    {/* Branch chip selector */}
-                    <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-b border-border/20">
-                        <div className="flex items-center gap-2 min-w-0">
-                            <GitBranch className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span className="text-xs font-semibold text-slate-300 shrink-0">Branches</span>
-                            <Badge variant="secondary" className="text-[10px] shrink-0">{branches.length}</Badge>
-                            <div className="flex flex-wrap gap-1.5 min-w-0">
-                                {/* Default branch chip */}
-                                {(() => {
-                                    const color = branchColors[0];
-                                    const isSelected = graphBranch === defaultBranch;
-                                    return (
-                                        <button
-                                            key={defaultBranch}
-                                            onClick={() => setGraphBranch(isSelected ? null : defaultBranch)}
-                                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-colors"
-                                            style={isSelected ? {
-                                                borderColor: color,
-                                                background: `${color}20`,
-                                                color,
-                                            } : {
-                                                borderColor: `${color}40`,
-                                                background: `${color}0d`,
-                                                color,
-                                            }}
-                                        >
-                                            <GitBranch className="w-2.5 h-2.5" />
-                                            {defaultBranch}
-                                            <span className="opacity-60 text-[9px]">default</span>
-                                        </button>
-                                    );
-                                })()}
-                                {/* Other branch chips */}
-                                {(showAllGraphBranches ? nonDefaultBranches : nonDefaultBranches.slice(0, 6)).map((b, i) => {
-                                    const color = branchColors[(i + 1) % branchColors.length];
-                                    const isSelected = graphBranch === b.name;
-                                    return (
-                                        <button
-                                            key={b.name}
-                                            onClick={() => setGraphBranch(isSelected ? null : b.name)}
-                                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-colors"
-                                            style={isSelected ? {
-                                                borderColor: color,
-                                                background: `${color}20`,
-                                                color,
-                                            } : {
-                                                borderColor: `${color}40`,
-                                                background: `${color}0d`,
-                                                color,
-                                            }}
-                                        >
-                                            <GitBranch className="w-2.5 h-2.5" />
-                                            {b.name}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                        {nonDefaultBranches.length > 6 && (
-                            <button
-                                onClick={() => setShowAllGraphBranches(!showAllGraphBranches)}
-                                className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/12 bg-white/5 text-slate-400 hover:bg-white/10 transition-colors"
-                            >
-                                {showAllGraphBranches ? "Show less" : `+${nonDefaultBranches.length - 6} more`}
-                                <ChevronDown className={`w-3 h-3 transition-transform ${showAllGraphBranches ? "rotate-180" : ""}`} />
-                            </button>
-                        )}
-                    </div>
-
                     <div className="flex-1 overflow-auto custom-scrollbar">
                         <div className="px-6 py-6 space-y-6">
+
+                            {/* Branches Section */}
+                            <div className="glass-card p-5">
+                                <div className="flex items-center justify-between mb-4">
+                                    <div className="flex items-center gap-2">
+                                        <GitBranch className="w-4 h-4 text-slate-300" />
+                                        <h3 className="text-sm font-semibold">Branches</h3>
+                                        <Badge variant="secondary" className="text-[10px]">{branches.length}</Badge>
+                                    </div>
+                                    {nonDefaultBranches.length > 6 && (
+                                        <Button variant="ghost" size="sm" className="text-xs h-7"
+                                            onClick={() => setShowAllGraphBranches(!showAllGraphBranches)}>
+                                            {showAllGraphBranches
+                                                ? <>Show less <ChevronUp className="w-3 h-3 ml-1" /></>
+                                                : <>+{nonDefaultBranches.length - 6} more <ChevronDown className="w-3 h-3 ml-1" /></>}
+                                        </Button>
+                                    )}
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        onClick={() => setGraphBranch(graphBranch === defaultBranch ? null : defaultBranch)}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
+                                        style={{
+                                            borderColor: branchColors[0],
+                                            background: graphBranch === defaultBranch ? `${branchColors[0]}25` : `${branchColors[0]}15`,
+                                            color: branchColors[0],
+                                        }}
+                                    >
+                                        <GitBranch className="w-3 h-3" />
+                                        {defaultBranch}
+                                        <Badge variant="outline" className="text-[9px] ml-1 border-current px-1 py-0">default</Badge>
+                                    </button>
+                                    {(showAllGraphBranches ? nonDefaultBranches : nonDefaultBranches.slice(0, 6)).map((b, i) => {
+                                        const color = branchColors[(i + 1) % branchColors.length];
+                                        const isSelected = graphBranch === b.name;
+                                        return (
+                                            <button key={b.name}
+                                                onClick={() => setGraphBranch(isSelected ? null : b.name)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
+                                                style={{
+                                                    borderColor: isSelected ? color : `${color}40`,
+                                                    background: isSelected ? `${color}20` : `${color}10`,
+                                                    color,
+                                                }}
+                                            >
+                                                <GitBranch className="w-3 h-3" />
+                                                {b.name}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
                             <CommitHistoryRail commits={filteredCommits} defaultBranch={defaultBranch} branches={branches} selectedBranchOverride={graphBranch} />
                         </div>
                     </div>
