@@ -80,6 +80,7 @@ export function useForceSimulation({
             ) as SimLink[];
 
         settledRef.current = false;
+        const skipCountRef = { current: 0 };
 
         const sim = forceSimulation<SimNode>(simNodes)
             .force("charge", forceManyBody<SimNode>().strength(-120))
@@ -102,6 +103,9 @@ export function useForceSimulation({
             if (rafRef.current !== null) return; // already scheduled
             rafRef.current = requestAnimationFrame(() => {
                 rafRef.current = null;
+                skipCountRef.current += 1;
+                if (skipCountRef.current % 2 !== 0) return; // 30 fps cap
+                if (sim.alpha() < 0.005) return;             // bail when settled
                 const positions = new Map<string, { x: number; y: number }>();
                 sim.nodes().forEach((n) => {
                     if (n.x != null && n.y != null) {
