@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import cytoscape from "cytoscape";
 import { List, type RowComponentProps } from "react-window";
+// @ts-expect-error fcose is an extension package without bundled TS types.
+import fcose from "cytoscape-fcose";
 import { getFileColor } from "@/lib/file-icons";
 import { buildSymbolGraph, selectSymbolAnalysisFiles, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
@@ -38,62 +41,9 @@ const extToPrismLang: Record<string, string> = {
     xml: "markup", svg: "markup",
 };
 
-// Pixi node/edge runtime types (no top-level pixi import — loaded dynamically)
-interface PixiGfx {
-    alpha: number;
-    scale: { set(v: number): void };
-    visible: boolean;
-    destroy(): void;
-}
-interface PixiLbl {
-    alpha: number;
-    visible: boolean;
-    destroy(): void;
-}
-interface PixiNode {
-    id: string; x: number; y: number; radius: number; color: number;
-    label: string; path: string;
-    type: "folder" | "file" | "symbol" | "cluster";
-    extension?: string; rawSize?: number; symbolKind?: string; parentPath?: string;
-    clusterFolderPath?: string;
-    gfx: PixiGfx; labelText: PixiLbl;
-    visible: boolean;
-}
-interface PixiEdge {
-    id: string; source: string; target: string; edgeType: string;
-    colorHex: number; visible: boolean;
-}
-
-const OBSIDIAN_COLORS: Record<string, string> = {
-    ts: "#8b5cf6", tsx: "#8b5cf6", md: "#22d3ee", json: "#f59e0b",
-    css: "#ec4899", scss: "#ec4899", py: "#22c55e", go: "#14b8a6",
-};
-
-const EDGE_TYPE_COLORS: Record<string, string> = {
-    contains: "rgba(52,211,153,0.6)",
-    defines: "rgba(34,211,238,0.6)",
-    imports: "rgba(59,130,246,0.6)",
-    calls: "rgba(139,92,246,0.6)",
-    extends: "rgba(249,115,22,0.6)",
-    implements: "rgba(236,72,153,0.6)",
-};
-
-// Minimal node/edge shape used internally (replaces @xyflow/react Node type)
-interface GraphNode {
-    id: string;
-    position: { x: number; y: number };
-    data: {
-        label: string; displayLabel: string; compactLabel: string;
-        path: string; type: "folder" | "file" | "symbol" | "cluster";
-        radius: number; color: string;
-        extension?: string; rawSize?: number; childCount?: number;
-        symbolKind?: string; parentPath?: string;
-        clusterFileCount?: number; clusterFolderPath?: string;
-    };
-}
-interface GraphEdge {
-    id: string; source: string; target: string;
-    data?: Record<string, unknown>;
+// Register the fcose layout extension
+if (typeof window !== "undefined") {
+    cytoscape.use(fcose);
 }
 
 interface FileTreeGraphProps {
@@ -240,8 +190,9 @@ const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
     limit: 0,
 };
 
-function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
+export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const cyRef = useRef<cytoscape.Core | null>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
     const codePanelRef = useRef<HTMLDivElement>(null);
     const codeListRef = useRef<{
@@ -304,16 +255,6 @@ function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTree
         references: [],
     });
     const inspectorWidth = 440;
-    const [depthLimit, setDepthLimit] = useState<number>(Infinity);
-    const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
-    const positionSeedRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-    // Pixi canvas + worker refs
-    const canvasContainerRef = useRef<HTMLDivElement>(null);
-    const pixiAppRef = useRef<unknown>(null);
-    const workerRef = useRef<Worker | null>(null);
-    const pixiNodesRef = useRef<Map<string, PixiNode>>(new Map());
-    const pixiEdgesRef = useRef<PixiEdge[]>([]);
-    const edgeGfxRef = useRef<unknown>(null);
     const visibilityRef = useRef({
         showRoot: true,
         showFolders: true,
@@ -980,164 +921,6 @@ function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTree
         return { nodes, edges };
     }, [tree, repo, symbolGraph]);
 
-    // Convert elements to React Flow nodes/edges with Obsidian styling
-    const { rfInitialNodes, rfInitialEdges, maxDepth } = useMemo(() => {
-        // Compute max depth
-        let computedMaxDepth = 0;
-        elements.nodes.forEach((n) => {
-            const data = (n.data ?? {}) as Record<string, unknown>;
-            const path = String(data.path ?? "");
-            if (path) {
-                const depth = path.split("/").length;
-                if (depth > computedMaxDepth) computedMaxDepth = depth;
-            }
-        });
-
-        // Cluster logic: group file nodes by parent folder when > 500 nodes
-        const shouldCluster = elements.nodes.length > 100;
-        const clusterMap = new Map<string, number>(); // folderPath → file count
-        if (shouldCluster) {
-            elements.nodes.forEach((n) => {
-                const data = (n.data ?? {}) as Record<string, unknown>;
-                if (data.type !== "file") return;
-                const path = String(data.path ?? "");
-                const parts = path.split("/");
-                if (parts.length < 2) return;
-                const parent = parts.slice(0, -1).join("/");
-                clusterMap.set(parent, (clusterMap.get(parent) ?? 0) + 1);
-            });
-        }
-
-        const clusteredFolders = new Set<string>();
-        const clusterNodes: GraphNode[] = [];
-        const clusterEdgeSet = new Set<string>();
-        const clusterEdges: { id: string; source: string; target: string; type: string; style: React.CSSProperties }[] = [];
-
-        if (shouldCluster) {
-            clusterMap.forEach((count, folderPath) => {
-                if (count >= 3 && !expandedClusters.has(folderPath)) {
-                    clusteredFolders.add(folderPath);
-                    const clusterId = `cluster:${folderPath}`;
-                    const clusterRadius = Math.min(32, 14 + Math.sqrt(count) * 2);
-                    clusterNodes.push({
-                        id: clusterId,
-                        position: positionSeedRef.current.get(clusterId) ?? { x: 0, y: 0 },
-                        data: {
-                            label: folderPath.split("/").pop() ?? folderPath,
-                            displayLabel: folderPath.split("/").pop() ?? folderPath,
-                            compactLabel: folderPath.split("/").pop() ?? folderPath,
-                            path: folderPath,
-                            type: "cluster",
-                            radius: clusterRadius,
-                            color: "#6366f1",
-                            clusterFileCount: count,
-                            clusterFolderPath: folderPath,
-                        },
-                    });
-                    // Edge from parent folder to cluster
-                    const parentFolder = folderPath.includes("/")
-                        ? folderPath.split("/").slice(0, -1).join("/")
-                        : "";
-                    const clusterEdgeId = `edge:folder:${parentFolder}-${clusterId}`;
-                    if (!clusterEdgeSet.has(clusterEdgeId)) {
-                        clusterEdgeSet.add(clusterEdgeId);
-                        clusterEdges.push({
-                            id: clusterEdgeId,
-                            source: `folder:${parentFolder}`,
-                            target: clusterId,
-                            type: "straight",
-                            style: { stroke: EDGE_TYPE_COLORS.contains, strokeWidth: 1 },
-                        });
-                    }
-                }
-            });
-        }
-
-        // Convert nodes
-        const rfNodes: GraphNode[] = [];
-        elements.nodes.forEach((n) => {
-            const data = (n.data ?? {}) as Record<string, unknown>;
-            const path = String(data.path ?? "");
-            const nodeType = String(data.type ?? "file") as GraphNode["data"]["type"];
-            const depth = path ? path.split("/").length : 0;
-
-            // Apply depth limit
-            if (depthLimit !== Infinity && depth > depthLimit) return;
-
-            // Skip files that are in a clustered folder
-            if (nodeType === "file" && shouldCluster) {
-                const parts = path.split("/");
-                if (parts.length >= 2) {
-                    const parent = parts.slice(0, -1).join("/");
-                    if (clusteredFolders.has(parent)) return;
-                }
-            }
-
-            const id = String(data.id ?? path);
-
-            let radius: number;
-            let color: string;
-            if (nodeType === "folder") {
-                const childCount = typeof data.childCount === "number" ? data.childCount : 0;
-                radius = Math.max(24, Math.min(40, 20 + Math.sqrt(childCount) * 2.5));
-                color = "#6366f1";
-            } else if (nodeType === "symbol") {
-                const kind = data.symbolKind as string | undefined;
-                radius = kind === "method" || kind === "variable" ? 9 : 11;
-                const kindStyle = kind ? SYMBOL_KIND_STYLE[kind as keyof typeof SYMBOL_KIND_STYLE] : null;
-                color = kindStyle?.color ?? "#64748b";
-            } else {
-                // file
-                const rawSize = typeof data.rawSize === "number" ? data.rawSize : 0;
-                radius = Math.max(8, Math.min(14, Math.log10((rawSize || 1) + 1) * 3));
-                const ext = String(data.extension ?? "");
-                color = OBSIDIAN_COLORS[ext] ?? (getFileColor(path) || "#64748b");
-            }
-
-            rfNodes.push({
-                id,
-                position: positionSeedRef.current.get(id) ?? { x: 0, y: 0 },
-                data: {
-                    label: String(data.label ?? ""),
-                    displayLabel: String(data.displayLabel ?? data.label ?? ""),
-                    compactLabel: String(data.compactLabel ?? data.label ?? ""),
-                    path,
-                    type: nodeType,
-                    radius,
-                    color,
-                    extension: data.extension as string | undefined,
-                    rawSize: data.rawSize as number | undefined,
-                    childCount: data.childCount as number | undefined,
-                    symbolKind: data.symbolKind as string | undefined,
-                    parentPath: data.parentPath as string | undefined,
-                },
-            });
-        });
-
-        // Add cluster nodes
-        rfNodes.push(...clusterNodes);
-
-        // Convert edges
-        const rfEdges: { id: string; source: string; target: string; type: string; style: React.CSSProperties; data?: Record<string, unknown> }[] = [];
-        elements.edges.forEach((e) => {
-            const data = (e.data ?? {}) as Record<string, unknown>;
-            const edgeType = String(data.type ?? "contains");
-            const edgeColor = EDGE_TYPE_COLORS[edgeType] ?? "rgba(100,116,139,0.4)";
-            rfEdges.push({
-                id: String(data.id ?? `edge:${data.source}-${data.target}`),
-                source: String(data.source ?? ""),
-                target: String(data.target ?? ""),
-                type: "straight",
-                style: { stroke: edgeColor, strokeWidth: 1 },
-                data: { edgeType },
-            });
-        });
-
-        rfEdges.push(...clusterEdges);
-
-        return { rfInitialNodes: rfNodes, rfInitialEdges: rfEdges, maxDepth: computedMaxDepth };
-    }, [elements, depthLimit, expandedClusters]);
-
     // Is this a large repo?
     const isLargeRepo = elements.nodes.length > 80;
 
@@ -1181,342 +964,111 @@ function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTree
         return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
-    // ── Pixi imperative helpers ───────────────────────────────────────────────
+    const applyVisibility = useCallback((targetCy?: cytoscape.Core | null) => {
+        const cy = targetCy ?? cyRef.current;
+        if (!cy) return;
 
-    const drawEdgesDefault = useCallback(() => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const gfx = edgeGfxRef.current as any;
-        if (!gfx) return;
-        gfx.clear();
-        pixiEdgesRef.current.forEach((e) => {
-            if (!e.visible) return;
-            const src = pixiNodesRef.current.get(e.source);
-            const tgt = pixiNodesRef.current.get(e.target);
-            if (!src?.visible || !tgt?.visible) return;
-            gfx.moveTo(src.x, src.y).lineTo(tgt.x, tgt.y).stroke({ width: 1, color: e.colorHex, alpha: 0.4 });
+        const state = visibilityRef.current;
+        cy.batch(() => {
+            cy.getElementById("root").style("display", state.showRoot ? "element" : "none");
+            cy.nodes('node[type="folder"]').not('#root').style("display", state.showFolders ? "element" : "none");
+            cy.nodes('node[type="file"]').style("display", state.showFiles ? "element" : "none");
+
+            const symbolsVisible = state.showSymbols && state.showFiles;
+            cy.nodes('node[type="symbol"]').forEach((node) => {
+                const kind = node.data("symbolKind") as SymbolKind | undefined;
+                const kindVisible = kind ? state.symbolKindVisibility[kind] : true;
+                node.style("display", symbolsVisible && kindVisible ? "element" : "none");
+            });
+
+            cy.edges('edge[type="contains"]').style(
+                "display",
+                state.showContainsEdges ? "element" : "none"
+            );
+
+            cy.edges('edge[type="defines"]').style(
+                "display",
+                state.showDefinesEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="imports"]').style(
+                "display",
+                state.showImportsEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="calls"]').style(
+                "display",
+                state.showCallsEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="extends"]').style(
+                "display",
+                state.showExtendsEdges && symbolsVisible ? "element" : "none"
+            );
+
+            cy.edges('edge[type="implements"]').style(
+                "display",
+                state.showImplementsEdges && symbolsVisible ? "element" : "none"
+            );
         });
     }, []);
 
-    const clearNodeFocus = useCallback(() => {
-        pixiNodesRef.current.forEach((n) => {
-            n.gfx.alpha = 1;
-            n.gfx.scale.set(1);
-            n.labelText.alpha = 0;
-        });
-        drawEdgesDefault();
-    }, [drawEdgesDefault]);
-
-    const clearNodeFocusRef = useRef(clearNodeFocus);
-    useEffect(() => { clearNodeFocusRef.current = clearNodeFocus; }, [clearNodeFocus]);
-
-    const focusNodeNeighborhood = useCallback((nodeId: string) => {
-        const neighborIds = new Set<string>([nodeId]);
-        const highlightedEdgeIds = new Set<string>();
-        pixiEdgesRef.current.forEach((e) => {
-            if (e.source === nodeId || e.target === nodeId) {
-                neighborIds.add(e.source);
-                neighborIds.add(e.target);
-                highlightedEdgeIds.add(e.id);
+    const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
+        cy.nodes().forEach(node => {
+            node.style('opacity', 1);
+            node.removeData('keepLabel');
+            if (node.data('type') === 'folder') {
+                node.style('border-width', 2);
+                node.style('border-color', 'rgba(255,255,255,0.4)');
+            } else if (node.data('type') === 'symbol') {
+                node.style('border-width', 1);
+                node.style('border-color', 'rgba(255,255,255,0.35)');
+            } else {
+                node.style('border-width', 0);
+                node.style('border-color', 'transparent');
+            }
+            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
+                node.style('label', '');
             }
         });
-        pixiNodesRef.current.forEach((n, id) => {
-            n.gfx.alpha = neighborIds.has(id) ? 1 : 0.08;
-            n.gfx.scale.set(id === nodeId ? 1.3 : 1);
-            n.labelText.alpha = id === nodeId ? 1 : 0;
+
+        cy.edges().forEach(edge => {
+            edge.style('opacity', 0.6);
+            edge.style('width', 1);
+            edge.style('shadow-blur', 0);
+            edge.style('shadow-opacity', 0);
         });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const gfx = edgeGfxRef.current as any;
-        if (gfx) {
-            gfx.clear();
-            pixiEdgesRef.current.forEach((e) => {
-                if (!e.visible) return;
-                const src = pixiNodesRef.current.get(e.source);
-                const tgt = pixiNodesRef.current.get(e.target);
-                if (!src?.visible || !tgt?.visible) return;
-                const hi = highlightedEdgeIds.has(e.id);
-                gfx.moveTo(src.x, src.y).lineTo(tgt.x, tgt.y)
-                   .stroke({ width: hi ? 1.5 : 0.5, color: e.colorHex, alpha: hi ? 0.5 : 0.02 });
+    }, [isLargeRepo]);
+
+    const focusNodeNeighborhood = useCallback((cy: cytoscape.Core, node: cytoscape.NodeSingular) => {
+        // Dim everything first, then re-highlight connected context.
+        cy.nodes().style('opacity', 0.12);
+        cy.edges().style('opacity', 0.06);
+        cy.nodes().removeData('keepLabel');
+
+        const neighborhood = node.closedNeighborhood();
+        neighborhood.nodes().style('opacity', 1);
+        neighborhood.edges().style('opacity', 0.92);
+        neighborhood.edges().style('width', 2);
+        neighborhood.edges().style('shadow-blur', 8);
+        neighborhood.edges().style('shadow-opacity', 0.6);
+        neighborhood.edges().style('shadow-color', '#93c5fd');
+
+        neighborhood.nodes().forEach(n => {
+            n.data('keepLabel', 1);
+        });
+
+        // Primary focus node gets strongest emphasis.
+        node.style('border-width', 3);
+        node.style('border-color', '#facc15');
+
+        // Improve readability in large repos by revealing labels for focused neighborhood.
+        if (isLargeRepo) {
+            neighborhood.nodes().forEach(n => {
+                n.style('label', n.data('compactLabel') || n.data('displayLabel') || n.data('label'));
             });
         }
-    }, []);
-
-    const handleNodeHoverRef = useRef(focusNodeNeighborhood);
-    useEffect(() => { handleNodeHoverRef.current = focusNodeNeighborhood; }, [focusNodeNeighborhood]);
-
-    const handleNodeClick = useCallback((nodeId: string) => {
-        const n = pixiNodesRef.current.get(nodeId);
-        if (!n) return;
-        focusNodeNeighborhood(nodeId);
-        if (n.type === "file") {
-            setSymbolFocus(null); setFocusLine(null); setShowExplorerInspector(true);
-            setSelectedFile({ label: n.label, path: n.path, type: "file", extension: n.extension, size: n.rawSize });
-        } else if (n.type === "symbol" && n.parentPath) {
-            const fileLabel = n.parentPath.split("/").pop() || n.parentPath;
-            const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
-            setSymbolFocus(n.label); setFocusLine(null); setShowExplorerInspector(true);
-            setSelectedFile({ label: fileLabel, path: n.parentPath, type: "file", extension: ext });
-        } else if (n.type === "cluster" && n.clusterFolderPath) {
-            setExpandedClusters((prev) => { const next = new Set(prev); next.add(n.clusterFolderPath!); return next; });
-        }
-    }, [focusNodeNeighborhood]);
-
-    const handleNodeClickRef = useRef(handleNodeClick);
-    useEffect(() => { handleNodeClickRef.current = handleNodeClick; }, [handleNodeClick]);
-
-    const fitPixiView = useCallback(() => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const app = pixiAppRef.current as any;
-        if (!app) return;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        pixiNodesRef.current.forEach((n) => {
-            if (!n.visible) return;
-            minX = Math.min(minX, n.x - n.radius); maxX = Math.max(maxX, n.x + n.radius);
-            minY = Math.min(minY, n.y - n.radius); maxY = Math.max(maxY, n.y + n.radius);
-        });
-        if (minX === Infinity) return;
-        const w = maxX - minX; const h = maxY - minY;
-        const scale = Math.min(app.screen.width / (w + 80), app.screen.height / (h + 80), 4);
-        app.stage.scale.set(scale);
-        app.stage.x = (app.screen.width - w * scale) / 2 - minX * scale;
-        app.stage.y = (app.screen.height - h * scale) / 2 - minY * scale;
-    }, []);
-
-    const fitPixiViewRef = useRef(fitPixiView);
-    useEffect(() => { fitPixiViewRef.current = fitPixiView; }, [fitPixiView]);
-
-    const applyVisibilityToPixi = useCallback(() => {
-        const symbolsVisible = showSymbols && showFiles;
-        pixiNodesRef.current.forEach((n) => {
-            let vis = true;
-            if (n.type === "folder" && n.path === "" && !showRoot) vis = false;
-            else if (n.type === "folder" && n.path !== "" && !showFolders) vis = false;
-            else if (n.type === "file" && !showFiles) vis = false;
-            else if (n.type === "symbol") {
-                const kindVisible = n.symbolKind ? symbolKindVisibility[n.symbolKind as SymbolKind] : true;
-                vis = symbolsVisible && kindVisible;
-            }
-            n.visible = vis;
-            n.gfx.visible = vis;
-            n.labelText.visible = vis;
-        });
-        pixiEdgesRef.current.forEach((e) => {
-            const sv = showSymbols && showFiles;
-            let vis = true;
-            if (e.edgeType === "contains" && !showContainsEdges) vis = false;
-            else if (e.edgeType === "defines" && (!showDefinesEdges || !sv)) vis = false;
-            else if (e.edgeType === "imports" && (!showImportsEdges || !sv)) vis = false;
-            else if (e.edgeType === "calls" && (!showCallsEdges || !sv)) vis = false;
-            else if (e.edgeType === "extends" && (!showExtendsEdges || !sv)) vis = false;
-            else if (e.edgeType === "implements" && (!showImplementsEdges || !sv)) vis = false;
-            e.visible = vis;
-        });
-        drawEdgesDefault();
-    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges,
-        showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges,
-        symbolKindVisibility, drawEdgesDefault]);
-
-    const applyVisibilityToPixiRef = useRef(applyVisibilityToPixi);
-    useEffect(() => { applyVisibilityToPixiRef.current = applyVisibilityToPixi; }, [applyVisibilityToPixi]);
-
-    useEffect(() => {
-        applyVisibilityToPixiRef.current();
-    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges,
-        showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, symbolKindVisibility]);
-
-    // ── Main Pixi + Worker setup ──────────────────────────────────────────────
-    useEffect(() => {
-        if (!canvasContainerRef.current || rfInitialNodes.length === 0) return;
-
-        workerRef.current?.terminate();
-        workerRef.current = null;
-
-        let destroyed = false;
-
-        import("pixi.js").then((PIXI) => {
-            if (destroyed || !canvasContainerRef.current) return;
-
-            // Destroy previous app
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            if (pixiAppRef.current) { (pixiAppRef.current as any).destroy(true, { children: true }); pixiAppRef.current = null; }
-            pixiNodesRef.current.clear();
-            pixiEdgesRef.current = [];
-
-            const container = canvasContainerRef.current!;
-            const app = new PIXI.Application();
-            // pixi v8 uses async init
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (app as any).init ? (app as any).init({
-                resizeTo: container,
-                background: 0x07050f,
-                antialias: true,
-                resolution: window.devicePixelRatio ?? 1,
-                autoDensity: true,
-            }).then(() => {
-                if (destroyed) { app.destroy(true, { children: true }); return; }
-                container.appendChild(app.canvas as HTMLCanvasElement);
-                setupPixiScene(app, PIXI, container);
-            }) : (() => {
-                // pixi v7 sync init
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const appV7 = new (PIXI as any).Application({
-                    resizeTo: container,
-                    background: 0x07050f,
-                    antialias: true,
-                    resolution: window.devicePixelRatio ?? 1,
-                    autoDensity: true,
-                });
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                container.appendChild((appV7 as any).view as HTMLCanvasElement);
-                setupPixiScene(appV7, PIXI, container);
-            })();
-
-            function setupPixiScene(
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                pixiApp: any,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                PIXILib: any,
-                cont: HTMLDivElement
-            ) {
-                if (destroyed) return;
-                pixiAppRef.current = pixiApp;
-
-                const edgeGfx = new PIXILib.Graphics();
-                const nodeLayer = new PIXILib.Container();
-                const labelLayer = new PIXILib.Container();
-                pixiApp.stage.addChild(edgeGfx, nodeLayer, labelLayer);
-                edgeGfxRef.current = edgeGfx;
-
-                pixiApp.stage.x = (pixiApp.screen?.width ?? cont.clientWidth) / 2;
-                pixiApp.stage.y = (pixiApp.screen?.height ?? cont.clientHeight) / 2;
-                pixiApp.stage.eventMode = "static";
-                // v8 requires an explicit hitArea for the stage to receive events on empty space
-                pixiApp.stage.hitArea = pixiApp.screen;
-
-                // Pan/zoom
-                let dragging = false;
-                let dragStart = { x: 0, y: 0 };
-                let stageStart = { x: 0, y: 0 };
-                pixiApp.stage.on("pointerdown", (ev: PointerEvent) => {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    if ((ev as any).target !== pixiApp.stage) return;
-                    dragging = true;
-                    dragStart = { x: ev.clientX, y: ev.clientY };
-                    stageStart = { x: pixiApp.stage.x, y: pixiApp.stage.y };
-                });
-                pixiApp.stage.on("pointermove", (ev: PointerEvent) => {
-                    if (!dragging) return;
-                    pixiApp.stage.x = stageStart.x + (ev.clientX - dragStart.x);
-                    pixiApp.stage.y = stageStart.y + (ev.clientY - dragStart.y);
-                });
-                pixiApp.stage.on("pointerup", () => { dragging = false; });
-                pixiApp.stage.on("pointerupoutside", () => { dragging = false; });
-
-                cont.addEventListener("wheel", (ev) => {
-                    ev.preventDefault();
-                    const factor = ev.deltaY < 0 ? 1.1 : 0.9;
-                    const cur = pixiApp.stage.scale.x;
-                    const newScale = Math.max(0.05, Math.min(4, cur * factor));
-                    const rect = cont.getBoundingClientRect();
-                    const mx = ev.clientX - rect.left;
-                    const my = ev.clientY - rect.top;
-                    const wx = (mx - pixiApp.stage.x) / cur;
-                    const wy = (my - pixiApp.stage.y) / cur;
-                    pixiApp.stage.scale.set(newScale);
-                    pixiApp.stage.x = mx - wx * newScale;
-                    pixiApp.stage.y = my - wy * newScale;
-                }, { passive: false });
-
-                // ── Worker ──────────────────────────────────────────────────
-                const worker = new Worker(
-                    new URL("../../workers/graph-simulation.worker.ts", import.meta.url),
-                    { type: "module" }
-                );
-                workerRef.current = worker;
-
-                worker.postMessage({
-                    nodes: rfInitialNodes.map((n) => ({ id: n.id, radius: n.data.radius })),
-                    edges: rfInitialEdges.map((e) => ({ source: e.source, target: e.target })),
-                });
-
-                worker.onmessage = (ev: MessageEvent<{ nodes: { id: string; x: number; y: number }[] }>) => {
-                    if (destroyed) return;
-                    const positions = new Map(ev.data.nodes.map((n) => [n.id, n]));
-
-                    // Render nodes
-                    rfInitialNodes.forEach((rfNode) => {
-                        const d = rfNode.data;
-                        const pos = positions.get(rfNode.id) ?? { x: 0, y: 0 };
-                        const colorNum = parseInt(d.color.replace("#", ""), 16);
-
-                        const gfx = new PIXILib.Graphics();
-                        gfx.circle(0, 0, d.radius * 1.5).fill({ color: colorNum, alpha: 0.2 });
-                        gfx.circle(0, 0, d.radius).fill({ color: colorNum, alpha: 1 });
-                        gfx.position.set(pos.x, pos.y);
-                        gfx.eventMode = "static";
-                        gfx.cursor = "pointer";
-
-                        const lbl = new PIXILib.Text({
-                            text: d.compactLabel || d.displayLabel || d.label,
-                            style: { fontSize: 10, fill: 0xe2e8f0, fontFamily: "monospace" },
-                        });
-                        lbl.alpha = 0;
-                        lbl.anchor.set(0.5, 0);
-                        lbl.position.set(pos.x, pos.y + d.radius + 4);
-
-                        gfx.on("pointerover", () => handleNodeHoverRef.current(rfNode.id));
-                        gfx.on("pointerout", () => clearNodeFocusRef.current());
-                        gfx.on("pointerdown", () => handleNodeClickRef.current(rfNode.id));
-
-                        nodeLayer.addChild(gfx);
-                        labelLayer.addChild(lbl);
-
-                        pixiNodesRef.current.set(rfNode.id, {
-                            id: rfNode.id, x: pos.x, y: pos.y, radius: d.radius,
-                            color: colorNum, label: d.compactLabel || d.label, path: d.path,
-                            type: d.type as PixiNode["type"],
-                            extension: d.extension, rawSize: d.rawSize,
-                            symbolKind: d.symbolKind as string | undefined,
-                            parentPath: d.parentPath,
-                            clusterFolderPath: d.clusterFolderPath as string | undefined,
-                            gfx: gfx as unknown as PixiGfx,
-                            labelText: lbl as unknown as PixiLbl,
-                            visible: true,
-                        });
-                    });
-
-                    // Build edge list
-                    pixiEdgesRef.current = rfInitialEdges.map((e) => {
-                        const edgeType = String((e.data as Record<string, unknown>)?.edgeType ?? "contains");
-                        const cssColor = EDGE_TYPE_COLORS[edgeType] ?? "rgba(52,211,153,0.6)";
-                        // Parse rgba(r,g,b,...) → hex number
-                        const m = cssColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-                        const colorHex = m
-                            ? (parseInt(m[1]) << 16) | (parseInt(m[2]) << 8) | parseInt(m[3])
-                            : 0x334155;
-                        return { id: e.id, source: e.source, target: e.target, edgeType, colorHex, visible: true };
-                    });
-
-                    drawEdgesDefault();
-                    applyVisibilityToPixiRef.current();
-                    fitPixiViewRef.current();
-                };
-            }
-        });
-
-        return () => {
-            destroyed = true;
-            workerRef.current?.terminate();
-            workerRef.current = null;
-            if (pixiAppRef.current) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (pixiAppRef.current as any).destroy(true, { children: true });
-                pixiAppRef.current = null;
-            }
-            pixiNodesRef.current.clear();
-            pixiEdgesRef.current = [];
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [rfInitialNodes, rfInitialEdges]);
+    }, [isLargeRepo]);
 
     const expandParentFolders = useCallback((path: string) => {
         const parts = path.split("/");
@@ -1550,16 +1102,16 @@ function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTree
             size: node.size,
         });
 
-        const nodeId = `file:${node.path}`;
-        const pixiNode = pixiNodesRef.current.get(nodeId);
-        if (pixiNode) {
-            focusNodeNeighborhood(nodeId);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const app = pixiAppRef.current as any;
-            if (app) {
-                app.stage.x = (app.screen?.width ?? 800) / 2 - pixiNode.x * app.stage.scale.x;
-                app.stage.y = (app.screen?.height ?? 600) / 2 - pixiNode.y * app.stage.scale.x;
-            }
+        const cy = cyRef.current;
+        if (!cy) return;
+        const cyNode = cy.getElementById(`file:${node.path}`);
+        if (cyNode && cyNode.nonempty()) {
+            focusNodeNeighborhood(cy, cyNode);
+            cy.animate({
+                center: { eles: cyNode },
+                duration: 300,
+                easing: "ease-out-quad",
+            });
         }
     }, [expandParentFolders, focusNodeNeighborhood]);
 
@@ -1638,31 +1190,317 @@ function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTree
     // Search handler
     const handleSearch = useCallback((query: string) => {
         setSearchQuery(query);
-        if (!query.trim()) { clearNodeFocus(); return; }
+        const cy = cyRef.current;
+        if (!cy) return;
+
+        // Reset any prior focus state before applying search highlight.
+        clearNodeFocus(cy);
+
+        if (!query.trim()) return;
+
         const q = query.toLowerCase();
-        pixiNodesRef.current.forEach((n) => {
-            const matches = n.label.toLowerCase().includes(q) || n.path.toLowerCase().includes(q);
-            n.gfx.alpha = matches ? 1 : 0.08;
-            n.labelText.alpha = matches ? 1 : 0;
+        const matched = cy.nodes().filter(node => {
+            const label = (node.data('label') || '').toLowerCase();
+            const path = (node.data('path') || '').toLowerCase();
+            return label.includes(q) || path.includes(q);
         });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const gfx = edgeGfxRef.current as any;
-        if (gfx) gfx.clear();
+
+        if (matched.length > 0) {
+            // Dim non-matching
+            cy.nodes().style('opacity', 0.15);
+            cy.edges().style('opacity', 0.08);
+            // Highlight matched
+            matched.style('opacity', 1);
+            matched.style('border-width', 3);
+            matched.style('border-color', '#facc15');
+            // Show labels on matched nodes
+            matched.forEach(node => {
+                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
+            });
+            // Also highlight their edges
+            matched.connectedEdges().style('opacity', 0.8);
+        }
     }, [clearNodeFocus]);
 
-    const handleZoomIn = useCallback(() => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const app = pixiAppRef.current as any;
-        if (!app) return;
-        app.stage.scale.set(Math.min(4, app.stage.scale.x * 1.2));
-    }, []);
-    const handleZoomOut = useCallback(() => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const app = pixiAppRef.current as any;
-        if (!app) return;
-        app.stage.scale.set(Math.max(0.05, app.stage.scale.x / 1.2));
-    }, []);
-    const handleFit = fitPixiView;
+    useEffect(() => {
+        if (!containerRef.current) return;
+
+        // Scale layout params based on graph size
+        const nodeCount = elements.nodes.length;
+        const repulsion = nodeCount > 200 ? 45000 : nodeCount > 100 ? 30000 : 12000;
+        const edgeLen = nodeCount > 200 ? 200 : nodeCount > 100 ? 150 : 100;
+        const gravityVal = nodeCount > 200 ? 0.1 : 0.25;
+
+        // Initialize cytoscape
+        const cy = cytoscape({
+            container: containerRef.current,
+            elements: elements,
+            style: [
+                {
+                    selector: 'node',
+                    style: {
+                        'background-color': 'data(color)',
+                        'width': 'data(size)',
+                        'height': 'data(size)',
+                        'label': isLargeRepo ? '' : 'data(displayLabel)',
+                        'color': '#ffffff',
+                        'text-valign': 'center',
+                        'text-halign': 'right',
+                        'text-margin-x': 8,
+                        'font-size': '11px',
+                        'font-family': 'monospace',
+                        'text-wrap': 'ellipsis',
+                        'text-max-width': '150px',
+                        'text-outline-width': 1.5,
+                        'text-outline-color': '#0f172a',
+                        'text-outline-opacity': 0.8,
+                    }
+                },
+                {
+                    selector: 'node[type="folder"]',
+                    style: {
+                        'border-width': 2,
+                        'border-color': 'rgba(255, 255, 255, 0.4)',
+                        'font-weight': 'bold',
+                        'font-size': '12px',
+                        'label': isLargeRepo ? '' : 'data(displayLabel)',
+                    }
+                },
+                {
+                    selector: 'node[type="folder"][showLabel = 1]',
+                    style: {
+                        'label': isLargeRepo ? 'data(compactLabel)' : 'data(displayLabel)',
+                    }
+                },
+                {
+                    selector: 'node[type="symbol"]',
+                    style: {
+                        'background-color': 'data(color)',
+                        'shape': 'ellipse',
+                        'width': 'data(size)',
+                        'height': 'data(size)',
+                        'label': isLargeRepo ? '' : 'data(compactLabel)',
+                        'font-size': '9px',
+                        'font-family': 'monospace',
+                        'text-halign': 'center',
+                        'text-valign': 'bottom',
+                        'text-margin-y': 8,
+                        'border-width': 1,
+                        'border-color': 'rgba(255,255,255,0.35)',
+                    }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="class"]',
+                    style: { 'shape': 'hexagon' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="interface"]',
+                    style: { 'shape': 'round-rectangle' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="type"]',
+                    style: { 'shape': 'diamond' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="method"]',
+                    style: { 'shape': 'triangle' }
+                },
+                {
+                    selector: 'node[type="symbol"][symbolKind="variable"]',
+                    style: { 'shape': 'pentagon' }
+                },
+                {
+                    selector: 'edge',
+                    style: {
+                        'width': 1,
+                        'line-color': '#334155',
+                        'opacity': 0.4,
+                        'curve-style': 'bezier',
+                        'control-point-step-size': 40,
+                        'target-arrow-shape': 'none'
+                    }
+                },
+                {
+                    selector: 'edge[type="contains"]',
+                    style: {
+                        'width': 1,
+                        'line-color': '#34d399',
+                        'opacity': 0.7,
+                        'curve-style': 'bezier'
+                    }
+                },
+                {
+                    selector: 'edge[type="defines"]',
+                    style: {
+                        'width': 0.9,
+                        'line-color': '#22d3ee',
+                        'opacity': 0.7,
+                        'curve-style': 'unbundled-bezier',
+                        'control-point-distances': [25],
+                        'control-point-weights': [0.5],
+                    }
+                },
+                {
+                    selector: 'edge[type="imports"]',
+                    style: {
+                        'width': 1.1,
+                        'line-color': '#3b82f6',
+                        'opacity': 0.7,
+                        'curve-style': 'bezier',
+                    }
+                },
+                {
+                    selector: 'edge[type="calls"]',
+                    style: {
+                        'width': 1.1,
+                        'line-color': '#8b5cf6',
+                        'opacity': 0.7,
+                        'curve-style': 'bezier',
+                    }
+                },
+                {
+                    selector: 'edge[type="extends"]',
+                    style: {
+                        'width': 1.2,
+                        'line-color': '#f97316',
+                        'opacity': 0.75,
+                        'curve-style': 'bezier',
+                    }
+                },
+                {
+                    selector: 'edge[type="implements"]',
+                    style: {
+                        'width': 1.2,
+                        'line-color': '#ec4899',
+                        'opacity': 0.75,
+                        'curve-style': 'bezier',
+                    }
+                },
+                {
+                    selector: 'node:selected',
+                    style: {
+                        'border-width': 3,
+                        'border-color': '#ffffff'
+                    }
+                }
+            ],
+            layout: {
+                name: 'fcose',
+                quality: "default",
+                randomize: true,
+                animate: true,
+                animationDuration: 500,
+                fit: true,
+                nodeRepulsion: repulsion,
+                idealEdgeLength: edgeLen,
+                edgeElasticity: 0.45,
+                nestingFactor: 0.1,
+                gravity: gravityVal,
+                numIter: 2500,
+                tilingPaddingVertical: 20,
+                tilingPaddingHorizontal: 20,
+                gravityRangeCompound: 1.5,
+                gravityCompound: 1.0,
+                gravityRange: 3.8,
+                initialTemp: 271,
+                coolingFactor: 0.3
+            } as unknown as cytoscape.LayoutOptions,
+            wheelSensitivity: 0.2,
+        });
+
+        // Add event listeners
+        cy.on('tap', 'node', (evt) => {
+            const node = evt.target;
+            const data = node.data();
+
+            focusNodeNeighborhood(cy, node);
+
+            if (data.type === "file") {
+                setSymbolFocus(null);
+                setFocusLine(null);
+                setShowExplorerInspector(true);
+                setSelectedFile({
+                    label: data.label,
+                    path: data.path,
+                    type: "file",
+                    extension: data.extension,
+                    size: data.rawSize
+                });
+            } else if (data.type === "symbol" && data.parentPath) {
+                const parentPath = String(data.parentPath);
+                const fileLabel = parentPath.split("/").pop() || parentPath;
+                const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                setSymbolFocus(String(data.label));
+                setFocusLine(null);
+                setShowExplorerInspector(true);
+                setSelectedFile({
+                    label: fileLabel,
+                    path: parentPath,
+                    type: "file",
+                    extension: ext,
+                });
+            }
+        });
+
+        // Tap on empty canvas resets node-focus context.
+        cy.on('tap', (evt) => {
+            if (evt.target === cy) {
+                clearNodeFocus(cy);
+            }
+        });
+
+        // Cursor styles + hover labels
+        cy.on('mouseover', 'node', (evt) => {
+            if (containerRef.current) containerRef.current.style.cursor = 'pointer';
+            const node = evt.target;
+            // Show label on hover for file nodes in large repos
+            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
+                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
+                node.style('font-size', '11px');
+                node.style('z-index', 999);
+            }
+        });
+
+        cy.on('mouseout', 'node', (evt) => {
+            if (containerRef.current) containerRef.current.style.cursor = 'default';
+            const node = evt.target;
+            // Hide label on mouseout for file nodes in large repos
+            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
+                if (!node.data('keepLabel')) {
+                    node.style('label', '');
+                }
+                node.style('z-index', 0);
+            }
+        });
+
+        cyRef.current = cy;
+        applyVisibility(cy);
+
+        return () => {
+            cy.destroy();
+        };
+    }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
+
+    useEffect(() => {
+        visibilityRef.current = {
+            showRoot,
+            showFolders,
+            showFiles,
+            showSymbols,
+            showContainsEdges,
+            showDefinesEdges,
+            showImportsEdges,
+            showCallsEdges,
+            showExtendsEdges,
+            showImplementsEdges,
+            symbolKindVisibility,
+        };
+        applyVisibility();
+    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, symbolKindVisibility, applyVisibility]);
+
+    const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
+    const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);
+    const handleFit = () => cyRef.current?.fit(undefined, 50);
 
     return (
         <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
@@ -2006,30 +1844,7 @@ function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTree
                     </div>
                 )}
 
-                <div
-                    ref={canvasContainerRef}
-                    className="w-full h-full"
-                    style={{ background: "#07050f" }}
-                    onContextMenu={(e) => { e.preventDefault(); clearNodeFocus(); }}
-                />
-
-                {/* Depth slider */}
-                <div className="absolute bottom-10 left-2 z-20 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur px-3 py-2 w-44">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">
-                        Depth: {depthLimit === Infinity ? "Full" : depthLimit}
-                    </div>
-                    <input
-                        type="range"
-                        min={0}
-                        max={maxDepth}
-                        value={depthLimit === Infinity ? maxDepth : depthLimit}
-                        onChange={(e) => {
-                            const v = Number(e.target.value);
-                            setDepthLimit(v === maxDepth ? Infinity : v);
-                        }}
-                        className="w-full h-1 accent-indigo-500"
-                    />
-                </div>
+                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl" />
 
                 <div className="absolute bottom-2 right-2 z-10 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
                     <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
@@ -2038,12 +1853,6 @@ function FileTreeGraphInner({ tree, owner, repo, fileTypeLegend = [] }: FileTree
                 </div>
             </div>
         </div>
-    );
-}
-
-export default function FileTreeGraph(props: FileTreeGraphProps) {
-    return (
-        <FileTreeGraphInner {...props} />
     );
 }
 
