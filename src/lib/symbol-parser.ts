@@ -487,6 +487,237 @@ function forEachMatch(regex: RegExp, input: string, onMatch: (name: string) => v
     }
 }
 
+// ── Multi-language file-to-file import extraction ─────────────────────────────
+
+export interface FileImportEdge {
+    fromFilePath: string;
+    toFilePath: string;
+    confidence: "high" | "medium";
+}
+
+const IMPORTABLE_CODE_EXTENSIONS = new Set([
+    "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs",
+    "py", "go", "rs", "java", "c", "cpp", "cc", "cxx", "h", "hpp", "cs",
+]);
+
+/** Returns true for source code files across all supported languages. */
+export function isImportableCodeFile(path: string): boolean {
+    const lowered = path.toLowerCase();
+    if (
+        lowered.endsWith(".d.ts") ||
+        lowered.includes("/dist/") ||
+        lowered.includes("/build/") ||
+        lowered.includes("/node_modules/")
+    ) {
+        return false;
+    }
+    const ext = lowered.split(".").pop() ?? "";
+    return IMPORTABLE_CODE_EXTENSIONS.has(ext);
+}
+
+/**
+ * Extract direct file-to-file import relationships across all supported languages.
+ * JS/TS uses the existing relative-path import resolver.
+ * Other languages use language-specific heuristics.
+ */
+export function extractFileToFileImports(
+    fileContents: Array<{ path: string; content: string }>,
+    fileSet: Set<string>,
+): FileImportEdge[] {
+    const edges: FileImportEdge[] = [];
+    const seen = new Set<string>();
+
+    function addEdge(from: string, to: string, confidence: "high" | "medium") {
+        if (from === to) return;
+        const key = `${from}\0${to}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        edges.push({ fromFilePath: from, toFilePath: to, confidence });
+    }
+
+    for (const { path: filePath, content } of fileContents) {
+        const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+
+        if (JS_TS_EXTENSIONS.has(ext)) {
+            // Reuse existing resolver — deduplicate to one edge per file pair
+            const imported = parseImportedIdentifiers(filePath, content, fileSet);
+            const resolved = new Set<string>();
+            for (const { targetPath } of imported) {
+                if (!resolved.has(targetPath)) {
+                    resolved.add(targetPath);
+                    addEdge(filePath, targetPath, "high");
+                }
+            }
+        } else if (ext === "py") {
+            for (const to of parsePythonFileImports(filePath, content, fileSet)) {
+                addEdge(filePath, to, "high");
+            }
+        } else if (ext === "go") {
+            for (const to of parseGoFileImports(filePath, content, fileSet)) {
+                addEdge(filePath, to, "medium");
+            }
+        } else if (ext === "rs") {
+            for (const to of parseRustModDecls(filePath, content, fileSet)) {
+                addEdge(filePath, to, "high");
+            }
+        } else if (ext === "java") {
+            for (const to of parseJavaFileImports(filePath, content, fileSet)) {
+                addEdge(filePath, to, "medium");
+            }
+        } else if (["c", "cpp", "cc", "cxx", "h", "hpp"].includes(ext)) {
+            for (const to of parseCFileIncludes(filePath, content, fileSet)) {
+                addEdge(filePath, to, "high");
+            }
+        } else if (ext === "cs") {
+            for (const to of parseCSharpFileUsings(filePath, content, fileSet)) {
+                addEdge(filePath, to, "medium");
+            }
+        }
+    }
+
+    return edges;
+}
+
+/** Python: relative imports `from .mod import X` and sibling `import mod`. */
+function parsePythonFileImports(filePath: string, content: string, fileSet: Set<string>): string[] {
+    const results: string[] = [];
+    const baseParts = filePath.split("/").slice(0, -1);
+
+    const relFromRe = /^from\s+(\.+)(\S*)\s+import/gm;
+    let m: RegExpExecArray | null;
+    while ((m = relFromRe.exec(content)) !== null) {
+        const levels = m[1].length - 1;
+        const modPath = m[2] ?? "";
+        const base = baseParts.slice(0, Math.max(0, baseParts.length - levels));
+        if (modPath) base.push(...modPath.split(".").filter(Boolean));
+        const joined = base.join("/");
+        const candidates = [`${joined}.py`, `${joined}/__init__.py`];
+        for (const c of candidates) {
+            if (fileSet.has(c)) { results.push(c); break; }
+        }
+    }
+
+    const directImportRe = /^import\s+(\w+)/gm;
+    while ((m = directImportRe.exec(content)) !== null) {
+        const candidate = [...baseParts, `${m[1]}.py`].join("/");
+        if (fileSet.has(candidate)) results.push(candidate);
+    }
+
+    return results;
+}
+
+/** Go: match import path suffixes against known directories containing .go files. */
+function parseGoFileImports(filePath: string, content: string, fileSet: Set<string>): string[] {
+    const importPaths: string[] = [];
+
+    const singleRe = /\bimport\s+"([^"]+)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = singleRe.exec(content)) !== null) importPaths.push(m[1]);
+
+    const blockRe = /\bimport\s+\(([^)]+)\)/g;
+    while ((m = blockRe.exec(content)) !== null) {
+        const pathRe = /"([^"]+)"/g;
+        let pm: RegExpExecArray | null;
+        while ((pm = pathRe.exec(m[1])) !== null) importPaths.push(pm[1]);
+    }
+
+    // Build dir → first .go file in that dir
+    const dirToGoFile = new Map<string, string>();
+    for (const f of fileSet) {
+        if (!f.endsWith(".go")) continue;
+        const dir = f.split("/").slice(0, -1).join("/");
+        if (!dirToGoFile.has(dir)) dirToGoFile.set(dir, f);
+    }
+
+    const results: string[] = [];
+    for (const importPath of importPaths) {
+        const parts = importPath.split("/");
+        for (let n = 1; n <= Math.min(3, parts.length); n++) {
+            const suffix = parts.slice(-n).join("/");
+            for (const [dir, f] of dirToGoFile) {
+                if (f !== filePath && (dir === suffix || dir.endsWith(`/${suffix}`))) {
+                    if (!results.includes(f)) results.push(f);
+                    break;
+                }
+            }
+        }
+    }
+    return results;
+}
+
+/** Rust: `mod name;` declarations — resolve to name.rs or name/mod.rs. */
+function parseRustModDecls(filePath: string, content: string, fileSet: Set<string>): string[] {
+    const results: string[] = [];
+    const baseParts = filePath.split("/").slice(0, -1);
+    const modRe = /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/gm;
+    let m: RegExpExecArray | null;
+    while ((m = modRe.exec(content)) !== null) {
+        const name = m[1];
+        const c1 = [...baseParts, `${name}.rs`].join("/");
+        const c2 = [...baseParts, name, "mod.rs"].join("/");
+        if (fileSet.has(c1)) results.push(c1);
+        else if (fileSet.has(c2)) results.push(c2);
+    }
+    return results;
+}
+
+/** Java: `import pkg.ClassName` → find ClassName.java anywhere in the repo. */
+function parseJavaFileImports(filePath: string, content: string, fileSet: Set<string>): string[] {
+    const results: string[] = [];
+    const importRe = /^import\s+(?:static\s+)?([A-Za-z_$][A-Za-z0-9_$.]*);/gm;
+    let m: RegExpExecArray | null;
+    while ((m = importRe.exec(content)) !== null) {
+        const parts = m[1].split(".");
+        const className = parts[parts.length - 1];
+        if (!className || className === "*") continue;
+        for (const f of fileSet) {
+            if (f !== filePath && (f.endsWith(`/${className}.java`) || f === `${className}.java`)) {
+                if (!results.includes(f)) results.push(f);
+                break;
+            }
+        }
+    }
+    return results;
+}
+
+/** C/C++: relative `#include "path/to/file.h"` only (not system includes). */
+function parseCFileIncludes(filePath: string, content: string, fileSet: Set<string>): string[] {
+    const results: string[] = [];
+    const baseParts = filePath.split("/").slice(0, -1);
+    const re = /^#include\s+"([^"]+)"/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(content)) !== null) {
+        const parts = m[1].split("/");
+        const resolved = [...baseParts];
+        for (const p of parts) {
+            if (p === "..") resolved.pop();
+            else if (p && p !== ".") resolved.push(p);
+        }
+        const candidate = resolved.join("/");
+        if (fileSet.has(candidate) && candidate !== filePath) results.push(candidate);
+    }
+    return results;
+}
+
+/** C#: `using Namespace.ClassName` → find ClassName.cs anywhere in the repo. */
+function parseCSharpFileUsings(filePath: string, content: string, fileSet: Set<string>): string[] {
+    const results: string[] = [];
+    const re = /^using\s+(?:static\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*;/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(content)) !== null) {
+        const parts = m[1].split(".");
+        const name = parts[parts.length - 1];
+        if (!name) continue;
+        for (const f of fileSet) {
+            if (f !== filePath && (f.endsWith(`/${name}.cs`) || f === `${name}.cs`)) {
+                if (!results.includes(f)) results.push(f);
+                break;
+            }
+        }
+    }
+    return results;
+}
+
 function scoreFilePriority(path: string): number {
     const lowered = path.toLowerCase();
     const parts = lowered.split("/");
