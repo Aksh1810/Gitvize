@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import cytoscape from "cytoscape";
 import {
     forceSimulation,
@@ -19,7 +19,6 @@ import fcose from "cytoscape-fcose";
 import { getFileColor } from "@/lib/file-icons";
 import { buildSymbolGraph, selectSymbolAnalysisFiles, isImportableCodeFile, extractFileToFileImports, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import Prism from "prismjs";
@@ -231,7 +230,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols, setShowSymbols] = useState(false);
+    const [showSymbols, setShowSymbols] = useState(true);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(false);
     const [showImportsEdges, setShowImportsEdges] = useState(false);
@@ -242,12 +241,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [fileImportEdges, setFileImportEdges] = useState<FileImportEdge[]>([]);
     const [multiLangLoading, setMultiLangLoading] = useState(false);
     const [symbolKindVisibility, setSymbolKindVisibility] = useState<Record<SymbolKind, boolean>>({
-        class: true,
-        function: true,
-        interface: true,
-        type: true,
-        method: true,
-        variable: true,
+        class: false,
+        function: false,
+        interface: false,
+        type: false,
+        method: false,
+        variable: false,
     });
     const [symbolLoading, setSymbolLoading] = useState(false);
     const [symbolError, setSymbolError] = useState<string | null>(null);
@@ -285,7 +284,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         showRoot: true,
         showFolders: true,
         showFiles: true,
-        showSymbols: false,
+        showSymbols: true,
         showContainsEdges: true,
         showDefinesEdges: false,
         showImportsEdges: false,
@@ -294,12 +293,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         showImplementsEdges: false,
         showFileImportEdges: false,
         symbolKindVisibility: {
-            class: true,
-            function: true,
-            interface: true,
-            type: true,
-            method: true,
-            variable: true,
+            class: false,
+            function: false,
+            interface: false,
+            type: false,
+            method: false,
+            variable: false,
         } as Record<SymbolKind, boolean>,
     });
 
@@ -614,13 +613,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         let cancelled = false;
 
         const runSymbolAnalysis = async () => {
-            if (!showSymbols) {
-                setSymbolError(null);
-                setSymbolLoading(false);
-                setSymbolDiagnostics(EMPTY_SYMBOL_DIAGNOSTICS);
-                return;
-            }
-
             const selection = selectSymbolAnalysisFiles(tree, {
                 maxFileBytes: MAX_SYMBOL_FILE_BYTES,
                 smallLimit: SYMBOL_FILE_LIMIT_SMALL,
@@ -725,7 +717,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return () => {
             cancelled = true;
         };
-    }, [owner, repo, showSymbols, tree]);
+    }, [owner, repo, tree]);
 
     // Multi-language file import analysis (Python, Go, Rust, Java, C/C++, C#)
     // Fetches non-JS/TS source files and extracts file-to-file import edges.
