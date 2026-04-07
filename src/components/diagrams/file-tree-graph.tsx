@@ -266,6 +266,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const simRef = useRef<ReturnType<typeof forceSimulation<SimNode>> | null>(null);
     const simLinksByTypeRef = useRef<Map<string, SimLink[]>>(new Map());
     const simNodeMapRef = useRef<Map<string, SimNode>>(new Map());
+    const simNodesRef = useRef<SimNode[]>([]);
+    const boundsRRef = useRef(300);
+    const prevLinkCountRef = useRef(0);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
@@ -1613,22 +1616,51 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         // Initial sim uses only structural contains edges — code edges start off
         const initialLinks = simLinksByType.get("contains") ?? [];
 
-        // Scatter initial positions proportional to graph size so repulsion starts manageable
+        // Scatter simNode positions directly (not just Cytoscape positions)
+        // so d3-force starts from a spread state, not all at (0,0)
         const nodeCount = simNodes.length;
         const scatterR = Math.sqrt(nodeCount) * 20;
+
+        // Scatter non-symbol nodes first
+        for (const n of simNodes) {
+            if (n.type !== "symbol") {
+                n.x = (Math.random() - 0.5) * 2 * scatterR;
+                n.y = (Math.random() - 0.5) * 2 * scatterR;
+            }
+        }
+        // Symbol nodes: init near their parent file (from defines links) so defines edges
+        // immediately pull in the right direction rather than dragging from across the canvas
+        for (const l of (simLinksByType.get("defines") ?? [])) {
+            const src = l.source as SimNode;
+            const tgt = l.target as SimNode;
+            if (src.type === "file" && tgt.type === "symbol") {
+                tgt.x = (src.x ?? 0) + (Math.random() - 0.5) * 40;
+                tgt.y = (src.y ?? 0) + (Math.random() - 0.5) * 40;
+            }
+        }
+        // Any symbol without a defines link: scatter normally
+        for (const n of simNodes) {
+            if (n.type === "symbol" && n.x === 0 && n.y === 0) {
+                n.x = (Math.random() - 0.5) * 2 * scatterR;
+                n.y = (Math.random() - 0.5) * 2 * scatterR;
+            }
+        }
+        // Sync Cytoscape positions from simNode positions
         cy.nodes().forEach((node) => {
-            node.position({
-                x: (Math.random() - 0.5) * 2 * scatterR,
-                y: (Math.random() - 0.5) * 2 * scatterR,
-            });
+            const sn = simNodeById.get(node.id());
+            if (sn?.x != null && sn.y != null) node.position({ x: sn.x, y: sn.y });
         });
         cy.zoom(0.6);
         cy.center();
 
+        // Initialize dynamic-force refs
+        simNodesRef.current = simNodes;
+        boundsRRef.current = Math.sqrt(nodeCount) * 80;
+        prevLinkCountRef.current = initialLinks.length;
+
         // Scale charge so total repulsion energy grows as √N instead of N
         const chargeScale = Math.max(0.05, 1 / Math.sqrt(nodeCount / 10));
         const centerStrength = nodeCount > 500 ? 0.15 : nodeCount > 100 ? 0.2 : 0.3;
-        const boundR = Math.sqrt(nodeCount) * 80;
 
         const sim = forceSimulation<SimNode>(simNodes)
             .force(
@@ -1663,8 +1695,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 for (const n of simNodes) {
                     if (n.x == null || n.y == null) continue;
                     const dist = Math.sqrt(n.x * n.x + n.y * n.y);
-                    if (dist > boundR) {
-                        const pull = ((dist - boundR) / dist) * 0.05;
+                    if (dist > boundsRRef.current) {
+                        const pull = ((dist - boundsRRef.current) / dist) * 0.05;
                         n.vx = (n.vx ?? 0) - n.x * pull;
                         n.vy = (n.vy ?? 0) - n.y * pull;
                     }
@@ -1702,7 +1734,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 }
             });
 
-            if (maxDelta > 0.4) {
+            // Adaptive render threshold: skip full canvas redraw when nearly settled
+            const renderThreshold = sim.alpha() < 0.03 ? 2.0 : 0.4;
+            if (maxDelta > renderThreshold) {
                 cy.forceRender();
             }
 
@@ -1810,6 +1844,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             cancelAnimationFrame(rafId);
             sim.stop();
             simRef.current = null;
+            simNodesRef.current = [];
             cy.destroy();
         };
     }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
@@ -1847,7 +1882,47 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 ...(s.showFileImportEdges ? (linkMap.get("fileImport")  ?? []) : []),
             ];
             lf.links(activeLinks);
-            sim.alpha(Math.max(sim.alpha(), 0.3));
+
+            // Recalculate forces based on current active graph density
+            const allSimNodes = simNodesRef.current;
+            const dynNodeCount = allSimNodes.length;
+            const avgDegree = dynNodeCount > 0 ? activeLinks.length / dynNodeCount : 0;
+            const edgeBoost = 1 + avgDegree * 0.3;
+            const newChargeScale = Math.max(0.05, 1 / Math.sqrt(Math.max(1, dynNodeCount) / 10)) * edgeBoost;
+
+            sim.force("charge", forceManyBody<SimNode>().strength((n: SimNode) => {
+                const base = n.type === "root"   ? -800
+                           : n.type === "folder" ? -400
+                           : n.type === "symbol" ? -40
+                           :                       -200;
+                return base * newChargeScale;
+            }));
+
+            const distMult = 1 + Math.log2(Math.max(2, avgDegree + 1));
+            lf.distance((l: SimLink) => {
+                if (l.edgeType === "defines")    return 40 * distMult;
+                if (l.edgeType === "fileImport") return 100 * distMult;
+                if (l.edgeType === "contains")   return 120;
+                return 80 * distMult;
+            });
+            lf.strength((l: SimLink) => {
+                if (l.edgeType === "defines")  return Math.max(0.15, 0.9 / edgeBoost);
+                if (l.edgeType === "contains") return 0.5;
+                return Math.max(0.08, 0.3 / edgeBoost);
+            });
+
+            const newCenterStr = activeLinks.length > 500 ? 0.05
+                               : activeLinks.length > 100 ? 0.12
+                               :                            0.2;
+            sim.force("center", forceCenter<SimNode>(0, 0).strength(newCenterStr));
+
+            boundsRRef.current = Math.sqrt(Math.max(1, dynNodeCount)) * 80
+                * Math.max(1, 1 + Math.log2(Math.max(1, avgDegree)));
+
+            const linkDelta = Math.abs(activeLinks.length - prevLinkCountRef.current);
+            prevLinkCountRef.current = activeLinks.length;
+            const reheatAlpha = Math.min(0.9, 0.3 + Math.sqrt(linkDelta) / 50);
+            sim.alpha(Math.max(sim.alpha(), reheatAlpha));
         }
     }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility]);
 
