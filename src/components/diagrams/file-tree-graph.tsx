@@ -9,6 +9,7 @@ import {
     forceLink,
     forceCenter,
     forceCollide,
+    type ForceLink,
     type SimulationNodeDatum,
     type SimulationLinkDatum,
 } from "d3-force";
@@ -230,14 +231,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols, setShowSymbols] = useState(true);
+    const [showSymbols, setShowSymbols] = useState(false);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
-    const [showDefinesEdges, setShowDefinesEdges] = useState(true);
-    const [showImportsEdges, setShowImportsEdges] = useState(true);
-    const [showCallsEdges, setShowCallsEdges] = useState(true);
-    const [showExtendsEdges, setShowExtendsEdges] = useState(true);
-    const [showImplementsEdges, setShowImplementsEdges] = useState(true);
-    const [showFileImportEdges, setShowFileImportEdges] = useState(true);
+    const [showDefinesEdges, setShowDefinesEdges] = useState(false);
+    const [showImportsEdges, setShowImportsEdges] = useState(false);
+    const [showCallsEdges, setShowCallsEdges] = useState(false);
+    const [showExtendsEdges, setShowExtendsEdges] = useState(false);
+    const [showImplementsEdges, setShowImplementsEdges] = useState(false);
+    const [showFileImportEdges, setShowFileImportEdges] = useState(false);
     const [fileImportEdges, setFileImportEdges] = useState<FileImportEdge[]>([]);
     const [multiLangLoading, setMultiLangLoading] = useState(false);
     const [symbolKindVisibility, setSymbolKindVisibility] = useState<Record<SymbolKind, boolean>>({
@@ -263,6 +264,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
+    const simRef = useRef<ReturnType<typeof forceSimulation<SimNode>> | null>(null);
+    const simLinksByTypeRef = useRef<Map<string, SimLink[]>>(new Map());
+    const simNodeMapRef = useRef<Map<string, SimNode>>(new Map());
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
@@ -281,14 +285,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         showRoot: true,
         showFolders: true,
         showFiles: true,
-        showSymbols: true,
+        showSymbols: false,
         showContainsEdges: true,
-        showDefinesEdges: true,
-        showImportsEdges: true,
-        showCallsEdges: true,
-        showExtendsEdges: true,
-        showImplementsEdges: true,
-        showFileImportEdges: true,
+        showDefinesEdges: false,
+        showImportsEdges: false,
+        showCallsEdges: false,
+        showExtendsEdges: false,
+        showImplementsEdges: false,
+        showFileImportEdges: false,
         symbolKindVisibility: {
             class: true,
             function: true,
@@ -1580,16 +1584,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             wheelSensitivity: 0.2,
         });
 
-        // Scatter initial positions so the simulation can expand organically
-        cy.nodes().forEach((node) => {
-            node.position({
-                x: (Math.random() - 0.5) * 100,
-                y: (Math.random() - 0.5) * 100,
-            });
-        });
-        cy.zoom(0.6);
-        cy.center();
-
         // Build d3-force sim nodes from graph elements
         const simNodes: SimNode[] = elements.nodes.map((n) => {
             const d = n.data as Record<string, unknown>;
@@ -1604,7 +1598,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
         const simNodeById = new Map(simNodes.map((n) => [n.id, n]));
 
-        const simLinks = elements.edges
+        const allSimLinks = elements.edges
             .map((e) => {
                 const d = e.data as Record<string, unknown>;
                 const src = simNodeById.get(d.source as string);
@@ -1614,19 +1608,50 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             })
             .filter((l) => l !== null) as SimLink[];
 
+        // Categorize links by type so toggles can add/remove them from the sim
+        const simLinksByType = new Map<string, SimLink[]>();
+        for (const l of allSimLinks) {
+            const bucket = simLinksByType.get(l.edgeType) ?? [];
+            bucket.push(l);
+            simLinksByType.set(l.edgeType, bucket);
+        }
+        simLinksByTypeRef.current = simLinksByType;
+        simNodeMapRef.current = simNodeById;
+
+        // Initial sim uses only structural contains edges — code edges start off
+        const initialLinks = simLinksByType.get("contains") ?? [];
+
+        // Scatter initial positions proportional to graph size so repulsion starts manageable
+        const nodeCount = simNodes.length;
+        const scatterR = Math.sqrt(nodeCount) * 20;
+        cy.nodes().forEach((node) => {
+            node.position({
+                x: (Math.random() - 0.5) * 2 * scatterR,
+                y: (Math.random() - 0.5) * 2 * scatterR,
+            });
+        });
+        cy.zoom(0.6);
+        cy.center();
+
+        // Scale charge so total repulsion energy grows as √N instead of N
+        const chargeScale = Math.max(0.05, 1 / Math.sqrt(nodeCount / 10));
+        const centerStrength = nodeCount > 500 ? 0.15 : nodeCount > 100 ? 0.2 : 0.3;
+        const boundR = Math.sqrt(nodeCount) * 80;
+
         const sim = forceSimulation<SimNode>(simNodes)
             .force(
                 "charge",
                 forceManyBody<SimNode>().strength((n) => {
-                    if (n.type === "root") return -1200;
-                    if (n.type === "folder") return -600;
-                    if (n.type === "symbol") return -60;
-                    return -250;
+                    const base = n.type === "root"   ? -800
+                               : n.type === "folder" ? -400
+                               : n.type === "symbol" ? -40
+                               :                       -200;
+                    return base * chargeScale;
                 })
             )
             .force(
                 "link",
-                forceLink<SimNode, SimLink>(simLinks)
+                forceLink<SimNode, SimLink>(initialLinks)
                     .id((n) => n.id)
                     .distance((l) => {
                         if (l.edgeType === "defines") return 40;
@@ -1640,12 +1665,25 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         return 0.3;
                     })
             )
-            .force("center", forceCenter(0, 0).strength(0.05))
+            .force("center", forceCenter(0, 0).strength(centerStrength))
             .force("collide", forceCollide<SimNode>().radius((n) => n.radius + 6))
+            .force("bounds", () => {
+                for (const n of simNodes) {
+                    if (n.x == null || n.y == null) continue;
+                    const dist = Math.sqrt(n.x * n.x + n.y * n.y);
+                    if (dist > boundR) {
+                        const pull = ((dist - boundR) / dist) * 0.05;
+                        n.vx = (n.vx ?? 0) - n.x * pull;
+                        n.vy = (n.vy ?? 0) - n.y * pull;
+                    }
+                }
+            })
             .alphaDecay(isLargeRepo ? 0.04 : 0.023)
-            .velocityDecay(0.45)
+            .velocityDecay(0.6)
             .alphaTarget(0.005)
             .stop();
+
+        simRef.current = sim;
 
         const grabbedNodeId = { current: null as string | null };
         let settled = false;
@@ -1779,6 +1817,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return () => {
             cancelAnimationFrame(rafId);
             sim.stop();
+            simRef.current = null;
             cy.destroy();
         };
     }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
@@ -1799,6 +1838,25 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             symbolKindVisibility,
         };
         applyVisibility();
+
+        // Sync active simulation links with current visibility state
+        const sim = simRef.current;
+        const lf = sim?.force<ForceLink<SimNode, SimLink>>("link");
+        if (sim && lf) {
+            const linkMap = simLinksByTypeRef.current;
+            const s = visibilityRef.current;
+            const activeLinks: SimLink[] = [
+                ...(linkMap.get("contains") ?? []),
+                ...(s.showDefinesEdges    ? (linkMap.get("defines")     ?? []) : []),
+                ...(s.showImportsEdges    ? (linkMap.get("imports")     ?? []) : []),
+                ...(s.showCallsEdges      ? (linkMap.get("calls")       ?? []) : []),
+                ...(s.showExtendsEdges    ? (linkMap.get("extends")     ?? []) : []),
+                ...(s.showImplementsEdges ? (linkMap.get("implements")  ?? []) : []),
+                ...(s.showFileImportEdges ? (linkMap.get("fileImport")  ?? []) : []),
+            ];
+            lf.links(activeLinks);
+            sim.alpha(Math.max(sim.alpha(), 0.3));
+        }
     }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility]);
 
     const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
