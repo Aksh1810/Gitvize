@@ -1720,6 +1720,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         simRef.current = sim;
 
         const grabbedNodeId = { current: null as string | null };
+        const lockedNodeId = { current: null as string | null };
         let settled = false;
         let rafId = 0;
 
@@ -1787,6 +1788,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             const node = evt.target;
             const data = node.data();
 
+            lockedNodeId.current = node.id();
             focusNodeNeighborhood(cy, node);
 
             if (data.type === "file") {
@@ -1819,17 +1821,17 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         // Tap on empty canvas resets node-focus context.
         cy.on('tap', (evt) => {
             if (evt.target === cy) {
+                lockedNodeId.current = null;
                 clearNodeFocus(cy);
             }
         });
 
-        // Cursor styles + hover labels
+        // Hover: show this node's family, blur everything else.
         cy.on('mouseover', 'node', (evt) => {
             if (containerRef.current) containerRef.current.style.cursor = 'pointer';
             const node = evt.target;
-            // Show label on hover for file nodes in large repos
+            focusNodeNeighborhood(cy, node);
             if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
                 node.style('font-size', '11px');
                 node.style('z-index', 999);
             }
@@ -1838,13 +1840,18 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         cy.on('mouseout', 'node', (evt) => {
             if (containerRef.current) containerRef.current.style.cursor = 'default';
             const node = evt.target;
-            // Hide label on mouseout for file nodes in large repos
             if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                if (!node.data('keepLabel')) {
-                    node.style('label', '');
-                }
                 node.style('z-index', 0);
             }
+            // If a node was clicked (locked), restore its focus; otherwise clear.
+            if (lockedNodeId.current) {
+                const locked = cy.getElementById(lockedNodeId.current);
+                if (locked.nonempty()) {
+                    focusNodeNeighborhood(cy, locked);
+                    return;
+                }
+            }
+            clearNodeFocus(cy);
         });
 
         cyRef.current = cy;
