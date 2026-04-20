@@ -476,6 +476,23 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         explorerWidthRef.current = explorerWidth;
     }, [explorerWidth]);
 
+    // Notify Cytoscape whenever the canvas container is resized (explorer drag,
+    // open/close, or window resize). ResizeObserver fires on actual DOM layout
+    // changes — unlike a state-based effect it also catches mid-drag updates
+    // where explorer width is written directly to the DOM without touching state.
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+        const observer = new ResizeObserver(() => {
+            const cy = cyRef.current;
+            if (!cy) return;
+            cy.resize();
+            cy.fit(undefined, 50);
+        });
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, []);
+
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
             if (!resizingRef.current) return;
@@ -484,7 +501,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             explorerWidthRef.current = nextWidth;
             // Directly update DOM to avoid React re-render lag during drag
             const el = document.getElementById("file-explorer-panel");
-            if (el) el.style.width = `${nextWidth}px`;
+            if (el) {
+                el.style.transition = "none"; // suppress CSS transition while dragging
+                el.style.width = `${nextWidth}px`;
+            }
             const inner = document.getElementById("file-explorer-inner");
             if (inner) inner.style.width = `${nextWidth}px`;
         };
@@ -494,6 +514,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             resizingRef.current = false;
             document.body.style.userSelect = "";
             document.body.style.cursor = "";
+            // Restore transition so open/close animation still works
+            const el = document.getElementById("file-explorer-panel");
+            if (el) el.style.transition = "";
             // Commit final width to React state once
             setExplorerWidth(explorerWidthRef.current);
         };
