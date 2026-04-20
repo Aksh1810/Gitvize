@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { fetchAllRepoData } from "@/lib/github";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { Contributor } from "@/types";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
@@ -42,6 +43,15 @@ function sseEvent(data: Record<string, unknown>): string {
  *   {"type":"error","message":"..."}      — unrecoverable error
  */
 export async function GET(request: NextRequest) {
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`stream:${ip}`, 20, 60_000);
+    if (!rl.ok) {
+        return new Response(
+            sseEvent({ type: "error", message: "Too many requests. Please try again later." }),
+            { status: 429, headers: { "Content-Type": "text/event-stream", "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+        );
+    }
+
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");

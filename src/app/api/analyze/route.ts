@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMockAnalysis } from "@/lib/ai";
+import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 import type { AIConfig } from "@/lib/ai";
 import type { TreeItem } from "@/types";
 
+const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
+const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
+const ALLOWED_PROVIDERS = new Set(["gemini", "anthropic", "openai"]);
+const MAX_README_LEN = 50_000;
+const MAX_TREE_ITEMS = 5_000;
+
 export async function POST(request: NextRequest) {
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`analyze:${ip}`, 20, 60_000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     try {
         const body = await request.json();
         const { owner, repo, tree, readme, aiSettings, mode } = body as {
@@ -24,6 +35,30 @@ export async function POST(request: NextRequest) {
                 { error: "owner, repo, and tree are required" },
                 { status: 400 }
             );
+        }
+
+        if (!OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
+            return NextResponse.json({ error: "invalid owner or repo format" }, { status: 400 });
+        }
+
+        if (!Array.isArray(tree) || tree.length > MAX_TREE_ITEMS) {
+            return NextResponse.json({ error: `tree must be an array with at most ${MAX_TREE_ITEMS} items` }, { status: 400 });
+        }
+
+        if (typeof readme === "string" && readme.length > MAX_README_LEN) {
+            return NextResponse.json({ error: "readme exceeds maximum length" }, { status: 400 });
+        }
+
+        if (aiSettings) {
+            if (typeof aiSettings.provider !== "string" || !ALLOWED_PROVIDERS.has(aiSettings.provider)) {
+                return NextResponse.json({ error: "invalid AI provider" }, { status: 400 });
+            }
+            if (typeof aiSettings.apiKey !== "string" || aiSettings.apiKey.length > 300) {
+                return NextResponse.json({ error: "invalid apiKey" }, { status: 400 });
+            }
+            if (aiSettings.model !== undefined && (typeof aiSettings.model !== "string" || aiSettings.model.length > 100)) {
+                return NextResponse.json({ error: "invalid model" }, { status: 400 });
+            }
         }
 
         // Check if AI is configured — via client settings, GEMINI key, or generic env var
@@ -123,7 +158,8 @@ export async function POST(request: NextRequest) {
 
                         controller.close();
                     } catch (error) {
-                        console.error("AI analysis failed, falling back to mock:", error);
+                        const rawMsg = error instanceof Error ? error.message : "unknown error";
+                        console.error("AI analysis failed, falling back to mock:", scrubSecrets(rawMsg));
                         // Fall back to mock analysis when AI fails
                         try {
                             const fallback = getMockAnalysis(owner, repo, tree);
@@ -132,7 +168,7 @@ export async function POST(request: NextRequest) {
                                     `data: ${JSON.stringify({
                                         step: "enrich",
                                         status: "complete",
-                                        message: `AI failed (${error instanceof Error ? error.message : "unknown error"}), using fallback diagram`,
+                                        message: "AI analysis failed, using fallback diagram",
                                         data: fallback,
                                     })}\n\n`
                                 )
@@ -143,10 +179,7 @@ export async function POST(request: NextRequest) {
                                     `data: ${JSON.stringify({
                                         step: "error",
                                         status: "error",
-                                        message:
-                                            error instanceof Error
-                                                ? error.message
-                                                : "Analysis failed",
+                                        message: "Analysis failed",
                                     })}\n\n`
                                 )
                             );
@@ -177,12 +210,7 @@ export async function POST(request: NextRequest) {
             });
         }
     } catch (error) {
-        return NextResponse.json(
-            {
-                error:
-                    error instanceof Error ? error.message : "Analysis failed",
-            },
-            { status: 500 }
-        );
+        const message = scrubSecrets(error instanceof Error ? error.message : "Analysis failed");
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

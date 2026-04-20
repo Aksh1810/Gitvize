@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllRepoData } from "@/lib/github";
+import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 import type { Contributor } from "@/types";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
@@ -42,6 +43,10 @@ function extractStatusCode(errorMessage: string): number | null {
 }
 
 export async function GET(request: NextRequest) {
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`repo:${ip}`, 30, 60_000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
@@ -70,8 +75,9 @@ export async function GET(request: NextRequest) {
         data.contributors = deduplicateContributors(data.contributors ?? []);
         return NextResponse.json(data);
     } catch (error) {
-        const message =
+        const raw =
             error instanceof Error ? error.message : "Failed to fetch repo data";
+        const message = scrubSecrets(raw);
         const statusCode = extractStatusCode(message) ?? 500;
         return NextResponse.json({ error: message }, { status: statusCode });
     }

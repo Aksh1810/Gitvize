@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchFileContent } from "@/lib/github";
+import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
@@ -10,6 +11,10 @@ const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
  * Returns file content via the GitHub contents API.
  */
 export async function GET(request: NextRequest) {
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`file:${ip}`, 60, 60_000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
@@ -37,7 +42,7 @@ export async function GET(request: NextRequest) {
             headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
     } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to read file";
+        const message = scrubSecrets(error instanceof Error ? error.message : "Failed to read file");
         const status = message.includes("not found") || message.includes("Not a file") ? 404 : 500;
         return NextResponse.json({ error: message }, { status });
     }

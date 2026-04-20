@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchCommitsPage } from "@/lib/github";
+import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
+// Git refs: branch names, tag names, full SHAs, and HEAD
+const SHA_PATTERN = /^[a-zA-Z0-9._\-\/]{1,200}$/;
 
 /**
  * GET /api/github/repo/commits?owner=X&repo=Y&page=N&per_page=100&sha=main
@@ -10,6 +13,10 @@ const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
  * Returns paginated commits via the GitHub REST API.
  */
 export async function GET(request: NextRequest) {
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`commits:${ip}`, 30, 60_000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
@@ -28,12 +35,15 @@ export async function GET(request: NextRequest) {
     if (!OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
         return NextResponse.json({ error: "invalid owner or repo format" }, { status: 400 });
     }
+    if (!SHA_PATTERN.test(sha)) {
+        return NextResponse.json({ error: "invalid sha or branch name" }, { status: 400 });
+    }
 
     try {
         const commits = await fetchCommitsPage(owner, repo, sha, page, perPage, token);
         return NextResponse.json(commits);
     } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to fetch commits";
+        const message = scrubSecrets(error instanceof Error ? error.message : "Failed to fetch commits");
         return NextResponse.json({ error: message }, { status: 500 });
     }
 }

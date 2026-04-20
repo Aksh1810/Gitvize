@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRepoAccess } from "@/lib/github";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
 
 export async function GET(request: NextRequest) {
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`access:${ip}`, 60, 60_000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");

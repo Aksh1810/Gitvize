@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchFileContent } from "@/lib/github";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
@@ -15,6 +16,10 @@ const MAX_PATHS = 200;
  * Files that fail to read are silently omitted from the response.
  */
 export async function POST(request: NextRequest) {
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`files:${ip}`, 30, 60_000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     let body: { owner?: unknown; repo?: unknown; paths?: unknown };
     try {
         body = await request.json();
