@@ -481,6 +481,68 @@ export async function fetchCommitAuthorMap(
     return map;
 }
 
+// --- Paginated commits (used by branch-graph "load more") ---
+
+export async function fetchCommitsPage(
+    owner: string,
+    repo: string,
+    sha: string,
+    page: number,
+    perPage: number,
+    token?: string | null,
+): Promise<Commit[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await ghFetch<any[]>(
+        `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(sha)}&per_page=${perPage}&page=${page}`,
+        token,
+        { noStore: true },
+    );
+    return data.map(mapApiCommit);
+}
+
+// --- Individual file content via GitHub contents API ---
+
+export async function fetchFileContent(
+    owner: string,
+    repo: string,
+    filePath: string,
+    token?: string | null,
+): Promise<string> {
+    const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any;
+    try {
+        data = await ghFetch<any>(
+            `/repos/${owner}/${repo}/contents/${encodedPath}`,
+            token,
+            { noStore: true },
+        );
+    } catch {
+        // GitHub returns 403/404 for blobs > 1 MB — fall back to raw content.
+        const rawRes = await fetch(
+            `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${filePath}`,
+            token ? { headers: { Authorization: `token ${token}` } } : {},
+        );
+        if (!rawRes.ok) throw new Error(`File not found: ${filePath}`);
+        return rawRes.text();
+    }
+
+    if (data.type !== "file") throw new Error("Not a file");
+
+    if (data.encoding === "base64" && typeof data.content === "string") {
+        return Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf-8");
+    }
+
+    // GitHub provides download_url for files it can't inline (e.g. large blobs).
+    if (typeof data.download_url === "string") {
+        const rawRes = await fetch(data.download_url);
+        if (!rawRes.ok) throw new Error("Failed to download file");
+        return rawRes.text();
+    }
+
+    throw new Error("File content not available");
+}
+
 // --- Fetch all repo data in parallel ---
 
 export async function fetchAllRepoData(

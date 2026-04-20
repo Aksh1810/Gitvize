@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchRepoMetadata, fetchMergedPRs } from "@/lib/github";
-import { fetchAllRepoDataLocal } from "@/lib/local-git";
+import { fetchAllRepoData } from "@/lib/github";
 import type { Contributor } from "@/types";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
 
-/** Deduplicate contributors by login (case-insensitive), then email, then name. */
 function deduplicateContributors(contributors: Contributor[]): Contributor[] {
     const merged = new Map<string, Contributor>();
 
     for (const c of contributors) {
-        // Build a dedup key: prefer login (GitHub username), fall back to email, then name
         const key = c.login
             ? c.login.toLowerCase()
             : c.email
@@ -21,7 +18,6 @@ function deduplicateContributors(contributors: Contributor[]): Contributor[] {
         const existing = merged.get(key);
         if (existing) {
             existing.contributions += c.contributions;
-            // Prefer entry with a GitHub profile (has htmlUrl or avatarUrl)
             if (!existing.htmlUrl && c.htmlUrl) {
                 existing.htmlUrl = c.htmlUrl;
                 existing.avatarUrl = c.avatarUrl;
@@ -41,7 +37,6 @@ function deduplicateContributors(contributors: Contributor[]): Contributor[] {
 function extractStatusCode(errorMessage: string): number | null {
     const match = errorMessage.match(/GitHub API error\s+(\d{3})\s+/i);
     if (!match) return null;
-
     const parsed = Number(match[1]);
     return Number.isInteger(parsed) ? parsed : null;
 }
@@ -50,7 +45,11 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
-    const token = request.headers.get("x-github-token");
+
+    const token =
+        request.headers.get("x-github-token") ??
+        process.env.GITHUB_TOKEN ??
+        null;
 
     if (!owner || !repo) {
         return NextResponse.json(
@@ -67,13 +66,8 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        const metadata = await fetchRepoMetadata(owner, repo, token);
-        const localData = await fetchAllRepoDataLocal(owner, repo, metadata.defaultBranch, token);
-        const mergedPRs = await fetchMergedPRs(owner, repo, 1, token).catch(() => []);
-
-        const data = { metadata, ...localData, mergedPRs };
+        const data = await fetchAllRepoData(owner, repo, token);
         data.contributors = deduplicateContributors(data.contributors ?? []);
-
         return NextResponse.json(data);
     } catch (error) {
         const message =

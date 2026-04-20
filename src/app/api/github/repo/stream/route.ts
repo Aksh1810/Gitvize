@@ -1,6 +1,5 @@
 import { NextRequest } from "next/server";
-import { fetchRepoMetadata, fetchMergedPRs, fetchCommitAuthorMap } from "@/lib/github";
-import { cloneRepo, fetchAllRepoDataLocal, detectDefaultBranch } from "@/lib/local-git";
+import { fetchAllRepoData } from "@/lib/github";
 import type { Contributor } from "@/types";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
@@ -35,25 +34,28 @@ function sseEvent(data: Record<string, unknown>): string {
 /**
  * GET /api/github/repo/stream?owner=X&repo=Y
  *
- * Clone-first SSE stream. Emits:
- *   {"type":"checking","message":"..."}       — immediately, while firing background API calls
- *   {"type":"metadata","message":"..."}       — background GitHub metadata fetch started
- *   {"type":"cloning","message":"..."}        — clone / cache-reuse progress
- *   {"type":"reading","message":"..."}        — local data read progress
- *   {"type":"done","payload":{...repoData}}   — local data ready; dashboard can render
- *   {"type":"enriched","payload":{metadata,mergedPRs}} — GitHub API data ready; update stats
- *   {"type":"error","message":"..."}          — unrecoverable error
+ * GitHub-API-only SSE stream (no git binary, no filesystem writes).
+ * Emits:
+ *   {"type":"checking","message":"..."}   — immediately on connect
+ *   {"type":"reading","message":"..."}    — while fetching from GitHub API
+ *   {"type":"done","payload":{...}}       — all data ready; dashboard can render
+ *   {"type":"error","message":"..."}      — unrecoverable error
  */
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
-    const token = request.headers.get("x-github-token");
+
+    // Prefer the user's PAT from the request; fall back to the server-side token.
+    const token =
+        request.headers.get("x-github-token") ??
+        process.env.GITHUB_TOKEN ??
+        null;
 
     if (!owner || !repo || !OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
         return new Response(
             sseEvent({ type: "error", message: "Invalid owner or repo" }),
-            { status: 400, headers: { "Content-Type": "text/event-stream" } }
+            { status: 400, headers: { "Content-Type": "text/event-stream" } },
         );
     }
 
@@ -66,129 +68,30 @@ export async function GET(request: NextRequest) {
             };
 
             try {
-                // Fire GitHub API calls immediately in background — parallel with clone.
-                // These are best-effort; local data is emitted as soon as clone + read is done.
-                emit({ type: "checking", message: "Preparing..." });
-                const metadataPromise = fetchRepoMetadata(owner, repo, token).catch(() => null);
-                const mergedPRsPromise = fetchMergedPRs(owner, repo, 1, token).catch(() => []);
-                const authorMapPromise = fetchCommitAuthorMap(owner, repo, token).catch(() => new Map());
-                emit({ type: "metadata", message: "Fetching metadata in background..." });
+                emit({ type: "checking", message: "Checking repository access..." });
+                emit({ type: "reading", message: "Fetching repository data from GitHub..." });
 
-                // Step 1: Clone (or reuse cached clone) — this is the heavy step.
-                let wasCached = false;
-                try {
-                    ({ wasCached } = await cloneRepo(
-                        owner,
-                        repo,
-                        token ?? undefined,
-                        (msg) => emit({ type: "cloning", message: msg }),
-                    ));
-                    if (wasCached) emit({ type: "cached" });
-                } catch (cloneErr) {
-                    const msg = cloneErr instanceof Error ? cloneErr.message : "";
-                    const friendly =
-                        /authentication|credentials|invalid.*token|could not read/i.test(msg)
-                            ? "Authentication failed. The repository may be private — add a GitHub token."
-                            : /not found|does not exist/i.test(msg)
-                                ? "Repository not found. Check the owner and repo name."
-                                : msg || "Failed to clone repository.";
-                    emit({ type: "error", message: friendly });
-                    controller.close();
-                    return;
-                }
+                const data = await fetchAllRepoData(owner, repo, token);
+                const contributors = deduplicateContributors(data.contributors);
 
-                // Detect default branch from the local clone (no re-clone).
-                const defaultBranch = await detectDefaultBranch(owner, repo, token).catch(() => "main");
-
-                // Step 2: Read all data from local clone (clone is already done — just reads).
-                const localData = await fetchAllRepoDataLocal(
-                    owner,
-                    repo,
-                    defaultBranch,
-                    token,
-                    (msg) => emit({ type: "reading", message: msg }),
-                );
-
-                const contributors = deduplicateContributors(localData.contributors);
-
-                // Build placeholder metadata from locally-known fields.
-                // Enough for the dashboard to render immediately.
-                const placeholderMetadata = {
-                    owner,
-                    repo,
-                    fullName: `${owner}/${repo}`,
-                    description: null as string | null,
-                    stars: 0,
-                    forks: 0,
-                    watchers: 0,
-                    openIssues: 0,
-                    license: null as string | null,
-                    topics: [] as string[],
-                    language: null as string | null,
-                    pushedAt: new Date().toISOString(),
-                    defaultBranch,
-                    htmlUrl: `https://github.com/${owner}/${repo}`,
-                };
-
-                // Emit done — dashboard renders immediately with local data.
                 emit({
                     type: "done",
                     payload: {
-                        metadata: placeholderMetadata,
-                        ...localData,
+                        ...data,
                         contributors,
-                        mergedPRs: [],
-                    },
-                });
-
-                // Step 3: Resolve GitHub API data (already in-flight) and enrich the dashboard.
-                const [metadata, mergedPRs, authorMap] = await Promise.all([
-                    metadataPromise,
-                    mergedPRsPromise,
-                    authorMapPromise,
-                ]);
-
-                // Merge GitHub profile data into local contributors using email as the key.
-                // Email is reliable; name matching fails because git names ≠ GitHub handles.
-                // Contributors resolved from noreply emails already have a valid htmlUrl.
-                let enrichedContributors = contributors;
-                if (authorMap.size > 0) {
-                    enrichedContributors = contributors.map((c) => {
-                        if (c.htmlUrl && !c.htmlUrl.includes("github.com/search")) return c;
-                        const gh = c.email ? authorMap.get(c.email.toLowerCase()) : undefined;
-                        if (!gh) return c;
-                        return {
-                            ...c,
-                            login: gh.login,
-                            avatarUrl: gh.avatarUrl,
-                            htmlUrl: gh.htmlUrl,
-                        };
-                    });
-                }
-
-                // Enrich commits with GitHub avatars using the same email-based map.
-                const enrichedCommits = authorMap.size > 0
-                    ? localData.commits.map((c) => {
-                          const gh = c.authorEmail ? authorMap.get(c.authorEmail.toLowerCase()) : undefined;
-                          if (!gh) return c;
-                          return { ...c, authorLogin: gh.login, authorAvatar: gh.avatarUrl };
-                      })
-                    : localData.commits;
-
-                emit({
-                    type: "enriched",
-                    payload: {
-                        metadata: metadata ?? placeholderMetadata,
-                        mergedPRs,
-                        contributors: enrichedContributors,
-                        commits: enrichedCommits,
                     },
                 });
             } catch (err) {
-                emit({
-                    type: "error",
-                    message: err instanceof Error ? err.message : "Failed to load repository",
-                });
+                const msg = err instanceof Error ? err.message : "Failed to load repository";
+                const friendly =
+                    /401|403|authentication|credentials|invalid.*token/i.test(msg)
+                        ? "Authentication failed. The repository may be private — add a GitHub token."
+                        : /404|not found|does not exist/i.test(msg)
+                            ? "Repository not found. Check the owner and repo name."
+                            : /rate limit/i.test(msg)
+                                ? "GitHub API rate limit exceeded. Add a GitHub token for higher limits."
+                                : msg;
+                emit({ type: "error", message: friendly });
             } finally {
                 controller.close();
             }

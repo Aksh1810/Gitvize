@@ -651,45 +651,49 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             setSymbolError(null);
 
             const filePayload: Array<{ path: string; content: string }> = [];
-            const queue = [...sourceFiles];
             let fetchAttempted = 0;
             let fetchSucceeded = 0;
             let cacheHits = 0;
             let fetchFailed = 0;
-            const workers = Array.from({ length: 5 }, async () => {
-                while (queue.length > 0) {
-                    const item = queue.shift();
-                    if (!item || cancelled) return;
 
+            // Split into cached vs. uncached to avoid fetching what we already have.
+            const uncachedPaths: string[] = [];
+            for (const item of sourceFiles) {
+                const cacheKey = `${owner}/${repo}/${item.path}`;
+                const cached = symbolCacheRef.current.get(cacheKey);
+                if (cached !== undefined) {
+                    cacheHits += 1;
                     fetchAttempted += 1;
-
-                    const cacheKey = `${owner}/${repo}/${item.path}`;
-                    const cached = symbolCacheRef.current.get(cacheKey);
-                    if (cached !== undefined) {
-                        cacheHits += 1;
-                        filePayload.push({ path: item.path, content: cached });
-                        continue;
-                    }
-
-                    try {
-                        const fileParams = new URLSearchParams({ owner, repo, path: item.path });
-                        const res = await fetch(`/api/github/repo/file?${fileParams}`);
-                        if (!res.ok) {
-                            fetchFailed += 1;
-                            continue;
-                        }
-                        const text = await res.text();
-                        fetchSucceeded += 1;
-                        symbolCacheRef.current.set(cacheKey, text);
-                        filePayload.push({ path: item.path, content: text });
-                    } catch {
-                        // Ignore per-file fetch failures and continue with available content.
-                        fetchFailed += 1;
-                    }
+                    filePayload.push({ path: item.path, content: cached });
+                } else {
+                    uncachedPaths.push(item.path);
                 }
-            });
+            }
 
-            await Promise.all(workers);
+            if (uncachedPaths.length > 0 && !cancelled) {
+                fetchAttempted += uncachedPaths.length;
+                try {
+                    const res = await fetch("/api/github/repo/files", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ owner, repo, paths: uncachedPaths }),
+                    });
+                    if (res.ok) {
+                        const data: { files: Array<{ path: string; content: string }> } = await res.json();
+                        fetchSucceeded += data.files.length;
+                        fetchFailed += uncachedPaths.length - data.files.length;
+                        for (const file of data.files) {
+                            symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
+                            filePayload.push(file);
+                        }
+                    } else {
+                        fetchFailed += uncachedPaths.length;
+                    }
+                } catch {
+                    fetchFailed += uncachedPaths.length;
+                }
+            }
+
             if (cancelled) return;
 
             setSymbolDiagnostics({
@@ -744,30 +748,36 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             setMultiLangLoading(true);
             const selected = nonJsTsFiles.slice(0, 60);
             const filePayload: Array<{ path: string; content: string }> = [];
-            const queue = [...selected];
 
-            const workers = Array.from({ length: 5 }, async () => {
-                while (queue.length > 0) {
-                    const item = queue.shift();
-                    if (!item || cancelled) return;
-                    const cacheKey = `${owner}/${repo}/${item.path}`;
-                    const cached = symbolCacheRef.current.get(cacheKey);
-                    if (cached !== undefined) {
-                        filePayload.push({ path: item.path, content: cached });
-                        continue;
-                    }
-                    try {
-                        const params = new URLSearchParams({ owner, repo, path: item.path });
-                        const res = await fetch(`/api/github/repo/file?${params}`);
-                        if (!res.ok) continue;
-                        const text = await res.text();
-                        symbolCacheRef.current.set(cacheKey, text);
-                        filePayload.push({ path: item.path, content: text });
-                    } catch { /* ignore per-file failures */ }
+            // Serve from cache where possible; batch-fetch the rest in one request.
+            const uncachedPaths: string[] = [];
+            for (const item of selected) {
+                const cacheKey = `${owner}/${repo}/${item.path}`;
+                const cached = symbolCacheRef.current.get(cacheKey);
+                if (cached !== undefined) {
+                    filePayload.push({ path: item.path, content: cached });
+                } else {
+                    uncachedPaths.push(item.path);
                 }
-            });
+            }
 
-            await Promise.all(workers);
+            if (uncachedPaths.length > 0 && !cancelled) {
+                try {
+                    const res = await fetch("/api/github/repo/files", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ owner, repo, paths: uncachedPaths }),
+                    });
+                    if (res.ok) {
+                        const data: { files: Array<{ path: string; content: string }> } = await res.json();
+                        for (const file of data.files) {
+                            symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
+                            filePayload.push(file);
+                        }
+                    }
+                } catch { /* ignore batch fetch failures */ }
+            }
+
             if (cancelled) return;
 
             const fileSet = new Set(tree.map((i) => i.path));
