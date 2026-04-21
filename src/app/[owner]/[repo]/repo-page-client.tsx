@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useTransition } from "react";
+import { useState, useEffect, useCallback, useMemo, useTransition, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { HelpCircle } from "lucide-react";
 import Navbar from "@/components/dashboard/navbar";
@@ -86,6 +86,9 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     });
     const [, startTransition] = useTransition();
     const [mountedTabs, setMountedTabs] = useState<DiagramTab[]>(() => [initialTab]);
+    // Tracks the active stream request so cleanup can abort it (prevents duplicate
+    // connections in React StrictMode where effects run mount→unmount→mount).
+    const abortRef = useRef<AbortController | null>(null);
 
     // One-time PAT token passed from the landing flow.
     const getToken = useCallback((): string | null => {
@@ -94,6 +97,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
     // Fetch all repo data via SSE stream
     const fetchData = useCallback(async () => {
+        // Abort any in-flight stream before opening a new one. This prevents
+        // React StrictMode's double-invoke from leaving two readers open simultaneously.
+        if (abortRef.current) {
+            abortRef.current.abort();
+        }
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const { signal } = controller;
+
         setLoading(true);
         setCachedLoad(false);
         setCloneStep("checking");
@@ -106,6 +118,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
             const res = await fetch(`/api/github/repo/stream?${params}`, {
                 headers: token ? { "x-github-token": token } : undefined,
+                signal,
             });
 
             const reader = res.body?.getReader();
@@ -115,6 +128,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             let buffer = "";
 
             while (true) {
+                if (signal.aborted) break;
                 const { done, value } = await reader.read();
                 if (done) break;
 
@@ -174,6 +188,9 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }
             }
         } catch (err) {
+            // AbortError means this request was intentionally cancelled by cleanup —
+            // do not surface it as an error or update any state.
+            if (err instanceof Error && err.name === "AbortError") return;
             const baseMessage = err instanceof Error ? err.message : "Failed to fetch repository data";
             setError(baseMessage);
             setLoading(false);
@@ -362,9 +379,13 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         }
     }, [repoData, owner, repo]);
 
-    // Load on mount
+    // Load on mount — cleanup aborts the stream if the component unmounts or the
+    // effect re-fires (e.g. React StrictMode double-invoke or owner/repo change).
     useEffect(() => {
         fetchData();
+        return () => {
+            abortRef.current?.abort();
+        };
     }, [fetchData]);
 
     // Auto-run smart analysis when data loads

@@ -85,6 +85,9 @@ export async function GET(request: NextRequest) {
                 emit({ type: "reading", message: "Fetching repository data from GitHub..." });
 
                 const data = await fetchAllRepoData(owner, repo, token);
+                console.log(
+                    `[stream] data received: fileTree=${data.fileTree?.tree?.length ?? "null"} commits=${data.commits?.length} contributors=${data.contributors?.length} branches=${data.branches?.length} deps=${data.dependencyFiles?.length}`
+                );
                 const contributors = deduplicateContributors(data.contributors);
 
                 emit({
@@ -96,13 +99,16 @@ export async function GET(request: NextRequest) {
                 });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : "Failed to load repository";
+                // Rate limit check must come before the generic 403 check — a 403 rate-limit
+                // response contains "403" in the message which would otherwise match the auth
+                // pattern first and show a misleading "Authentication failed" error.
                 const friendly =
-                    /401|403|authentication|credentials|invalid.*token/i.test(msg)
-                        ? "Authentication failed. The repository may be private — add a GitHub token."
-                        : /404|not found|does not exist/i.test(msg)
-                            ? "Repository not found. Check the owner and repo name."
-                            : /rate limit/i.test(msg)
-                                ? "GitHub API rate limit exceeded. Add a GitHub token for higher limits."
+                    /rate.?limit|secondary.?rate/i.test(msg)
+                        ? "GitHub API rate limit reached — add a GitHub token for higher limits."
+                        : /401|403|authentication|credentials|invalid.*token/i.test(msg)
+                            ? "Authentication failed. The repository may be private — add a GitHub token."
+                            : /404|not found|does not exist/i.test(msg)
+                                ? "Repository not found. Check the owner and repo name."
                                 : msg;
                 emit({ type: "error", message: friendly });
             } finally {
