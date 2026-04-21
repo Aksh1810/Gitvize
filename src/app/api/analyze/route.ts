@@ -12,7 +12,7 @@ const MAX_TREE_ITEMS = 5_000;
 
 export async function POST(request: NextRequest) {
     const ip = getClientIp(request);
-    const rl = checkRateLimit(`analyze:${ip}`, 20, 60_000);
+    const rl = checkRateLimit(`analyze:${ip}`, 60, 60_000);
     if (!rl.ok) return rateLimitResponse(rl.resetAt);
 
     try {

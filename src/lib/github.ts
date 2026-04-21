@@ -22,7 +22,9 @@ function headers(token?: string | null): HeadersInit {
     const h: HeadersInit = {
         Accept: "application/vnd.github.v3+json",
     };
-    const normalizedToken = token?.trim();
+    // Fall back to the server-side env token so every ghFetch call is
+    // authenticated even when no user token was explicitly threaded through.
+    const normalizedToken = (token ?? process.env.GITHUB_TOKEN)?.trim();
     if (normalizedToken) {
         // GitHub PAT auth is most broadly compatible with the `token` scheme.
         h.Authorization = `token ${normalizedToken}`;

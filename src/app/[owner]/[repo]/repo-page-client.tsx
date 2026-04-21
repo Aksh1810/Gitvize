@@ -89,6 +89,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // Tracks the active stream request so cleanup can abort it (prevents duplicate
     // connections in React StrictMode where effects run mount→unmount→mount).
     const abortRef = useRef<AbortController | null>(null);
+    // Prevents the auto-analyze effect from looping: once a smart-mode attempt has
+    // been made (success OR failure), we don't retry automatically. Reset when
+    // fetchData starts so a full page reload picks up fresh data.
+    const analyzeAttemptedRef = useRef(false);
 
     // One-time PAT token passed from the landing flow.
     const getToken = useCallback((): string | null => {
@@ -111,6 +115,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         setCloneStep("checking");
         setCloneMessage("");
         setError(null);
+        analyzeAttemptedRef.current = false;
 
         try {
             const token = getToken();
@@ -209,7 +214,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         }
 
         setPipelineSteps([
-            { step: "ingest", status: "running", message: "Fetching file tree..." },
+            { step: "ingest", status: "running", message: "Analyzing repository data..." },
             { step: "understand", status: "pending", message: "Waiting..." },
             { step: "enrich", status: "pending", message: "Waiting..." },
         ]);
@@ -224,6 +229,20 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 } catch { /* ignore */ }
             }
 
+            // For large repos, send only a subset: all files at depth ≤ 3 plus
+            // important root-level entry points, so the request stays manageable.
+            const rawTree = repoData.fileTree.tree;
+            let treeToSend = rawTree;
+            if (rawTree.length > 1000) {
+                const entryNames = new Set(["index", "main", "app", "server", "config", "package"]);
+                treeToSend = rawTree.filter((item) => {
+                    const depth = item.path.split("/").length - 1;
+                    if (depth <= 3) return true;
+                    const basename = (item.path.split("/").pop()?.split(".")[0] ?? "").toLowerCase();
+                    return entryNames.has(basename);
+                });
+            }
+
             const res = await fetch("/api/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -231,11 +250,25 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     mode,
                     owner,
                     repo,
-                    tree: repoData.fileTree.tree,
+                    tree: treeToSend,
                     readme: repoData.readme,
                     aiSettings,
                 }),
             });
+
+            if (res.status === 429) {
+                const rateLimitMsg = "Too many requests — please wait a moment before retrying.";
+                setPipelineSteps((prev) =>
+                    prev.map((s) =>
+                        s.status === "running" ? { ...s, status: "error" as const, message: rateLimitMsg } : s
+                    )
+                );
+                toast.error("Rate limit reached", {
+                    description: rateLimitMsg,
+                    action: { label: "Add Token", onClick: () => setAISettingsOpen(true) },
+                });
+                return;
+            }
 
             const contentType = res.headers.get("content-type");
 
@@ -388,9 +421,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         };
     }, [fetchData]);
 
-    // Auto-run smart analysis when data loads
+    // Auto-run smart analysis when data loads — run at most once per load.
+    // analyzeAttemptedRef prevents re-entry if the attempt fails (isAnalyzing
+    // goes true→false but analysis stays null, which would otherwise re-trigger).
     useEffect(() => {
-        if (repoData && !analysis && !isAnalyzing) {
+        if (repoData && !analysis && !isAnalyzing && !analyzeAttemptedRef.current) {
+            analyzeAttemptedRef.current = true;
             runAnalysis("smart");
         }
     }, [repoData, analysis, isAnalyzing, runAnalysis]);
