@@ -446,22 +446,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             );
         }
 
-        if (isAnalyzing) {
+        // Show pipeline status while analyzing OR while waiting for analysis to start.
+        // Rendering ArchitectureDiagram(analysis=null) here would start a mermaid.render()
+        // that gets cancelled one render cycle later when isAnalyzing becomes true — the
+        // dangling internal mermaid render races with the real one and causes an infinite spinner.
+        if (isAnalyzing || repoData?.fileTree) {
             return (
                 <div className="flex items-center justify-center h-full">
                     <PipelineStatusDisplay steps={pipelineSteps} />
                 </div>
-            );
-        }
-
-        if (repoData?.fileTree) {
-            return (
-                <ArchitectureDiagram
-                    analysis={null}
-                    owner={owner}
-                    repo={repo}
-                    tree={repoData.fileTree.tree}
-                />
             );
         }
 

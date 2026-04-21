@@ -43,6 +43,9 @@ function sseEvent(data: Record<string, unknown>): string {
  *   {"type":"error","message":"..."}      — unrecoverable error
  */
 export async function GET(request: NextRequest) {
+    const isVercel = process.env.VERCEL === "1";
+    console.log(`[stream] mode: ${isVercel ? "vercel-api-fallback" : "github-api"}`);
+
     const ip = getClientIp(request);
     const rl = checkRateLimit(`stream:${ip}`, 20, 60_000);
     if (!rl.ok) {

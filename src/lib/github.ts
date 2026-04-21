@@ -285,7 +285,7 @@ async function fetchCommitsForDAG(
     // fetch one page of commits so its history appears in the graph
     const missingBranches = branches
         .filter((b) => !b.isDefault && !seen.has(b.sha))
-        .slice(0, 20); // cap at 20 extra branches to limit API calls
+        .slice(0, 5); // cap at 5 extra branches to limit API calls and avoid rate exhaustion
 
     if (missingBranches.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

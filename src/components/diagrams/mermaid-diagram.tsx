@@ -45,12 +45,14 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const [isRendering, setIsRendering] = useState(true);
+    const [retryKey, setRetryKey] = useState(0);
     const panStartRef = useRef({ x: 0, y: 0 });
     const panOriginRef = useRef({ x: 0, y: 0 });
     const fitRafRef = useRef<number[]>([]);
     const lastGoodSvgRef = useRef<string>("");
     const viewTransformRef = useRef(viewTransform);
     const panOffsetRef = useRef(panOffset);
+    const isRenderingRef = useRef(isRendering);
 
     useEffect(() => {
         viewTransformRef.current = viewTransform;
@@ -59,6 +61,10 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     useEffect(() => {
         panOffsetRef.current = panOffset;
     }, [panOffset]);
+
+    useEffect(() => {
+        isRenderingRef.current = isRendering;
+    }, [isRendering]);
 
     const computeFitTransform = useCallback(() => {
         const container = containerRef.current;
@@ -108,6 +114,18 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
 
 
 
+    // 30-second frontend safety net: if mermaid.render() hangs, surface an error.
+    useEffect(() => {
+        if (!code) return;
+        const timer = window.setTimeout(() => {
+            if (isRenderingRef.current) {
+                setIsRendering(false);
+                setError("Architecture diagram timed out. Please try again.");
+            }
+        }, 30_000);
+        return () => window.clearTimeout(timer);
+    }, [code]);
+
     // Render Mermaid diagram
     useEffect(() => {
         if (!code) return;
@@ -155,7 +173,12 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
 
                 const uniqueId = `mermaid-${Date.now()}`;
                 const sanitizedCode = sanitizeMermaidForRender(code);
-                const { svg } = await mermaid.render(uniqueId, sanitizedCode);
+                const { svg } = await Promise.race([
+                    mermaid.render(uniqueId, sanitizedCode),
+                    new Promise<never>((_, reject) =>
+                        setTimeout(() => reject(new Error("Diagram render timed out")), 15_000)
+                    ),
+                ]);
 
                 if (!cancelled) {
                     setSvgContent(svg);
@@ -186,7 +209,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
             cancelled = true;
             window.clearTimeout(debounceTimer);
         };
-    }, [code]);
+    }, [code, retryKey]);
 
     useEffect(() => {
         if (!svgContent) return;
@@ -422,10 +445,22 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                         Diagram Render Error
                     </h3>
                     <p className="text-sm text-gray-400 mb-4">{error}</p>
-                    
+
+                    <Button
+                        variant="outline"
+                        onClick={() => {
+                            setError(null);
+                            setIsRendering(true);
+                            setRetryKey((k) => k + 1);
+                        }}
+                        className="w-full mb-2 bg-indigo-900/40 border-indigo-500/30 hover:bg-indigo-800/50 text-white"
+                    >
+                        Try Again
+                    </Button>
+
                     {onFallback && (
-                        <Button 
-                            variant="outline" 
+                        <Button
+                            variant="outline"
                             onClick={onFallback}
                             className="w-full mb-4 bg-slate-900 border-white/10 hover:bg-slate-800 text-white"
                         >

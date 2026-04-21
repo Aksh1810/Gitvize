@@ -196,11 +196,12 @@ function useNpmMeta(dependencies: ParsedDependency[]): Map<string, NpmMeta> {
         async function fetchMeta() {
             const results = new Map<string, NpmMeta>();
 
-            // Fetch in batches of 8 to avoid hammering the API
+            // Cap to the first 20 packages to avoid a flood of network requests.
             const batchSize = 8;
-            for (let i = 0; i < dependencies.length; i += batchSize) {
+            const capped = dependencies.slice(0, 20);
+            for (let i = 0; i < capped.length; i += batchSize) {
                 if (cancelled) return;
-                const batch = dependencies.slice(i, i + batchSize);
+                const batch = capped.slice(i, i + batchSize);
 
                 const promises = batch.map(async (dep) => {
                     try {
