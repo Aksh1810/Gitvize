@@ -273,6 +273,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
     const dragStartWidthRef = useRef(220);
+    const inspectorResizingRef = useRef(false);
+    const inspectorWidthRef = useRef(440);
+    const inspectorDragStartXRef = useRef(0);
+    const inspectorDragStartWidthRef = useRef(440);
+    const filterResizingRef = useRef(false);
+    const filterWidthRef = useRef(FILTER_PANEL_WIDTH);
+    const filterDragStartXRef = useRef(0);
+    const filterDragStartWidthRef = useRef(FILTER_PANEL_WIDTH);
     const explorerBodyRef = useRef<HTMLDivElement>(null);
     const explorerListRef = useRef<{
         element: HTMLDivElement | null;
@@ -282,7 +290,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         symbols: [],
         references: [],
     });
-    const inspectorWidth = 440;
+    const [inspectorWidth, setInspectorWidth] = useState(440);
+    const [filterPanelWidth, setFilterPanelWidth] = useState(FILTER_PANEL_WIDTH);
     const visibilityRef = useRef({
         showRoot: true,
         showFolders: true,
@@ -495,30 +504,55 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
-            if (!resizingRef.current) return;
-            const delta = event.clientX - dragStartXRef.current;
-            const nextWidth = Math.min(360, Math.max(180, dragStartWidthRef.current + delta));
-            explorerWidthRef.current = nextWidth;
-            // Directly update DOM to avoid React re-render lag during drag
-            const el = document.getElementById("file-explorer-panel");
-            if (el) {
-                el.style.transition = "none"; // suppress CSS transition while dragging
-                el.style.width = `${nextWidth}px`;
+            if (resizingRef.current) {
+                const delta = event.clientX - dragStartXRef.current;
+                const nextWidth = Math.min(360, Math.max(180, dragStartWidthRef.current + delta));
+                explorerWidthRef.current = nextWidth;
+                const el = document.getElementById("file-explorer-panel");
+                if (el) { el.style.transition = "none"; el.style.width = `${nextWidth}px`; }
+                const inner = document.getElementById("file-explorer-inner");
+                if (inner) inner.style.width = `${nextWidth}px`;
+            } else if (inspectorResizingRef.current) {
+                const delta = event.clientX - inspectorDragStartXRef.current;
+                const nextWidth = Math.min(700, Math.max(280, inspectorDragStartWidthRef.current + delta));
+                inspectorWidthRef.current = nextWidth;
+                const el = document.getElementById("inspector-panel-inner");
+                if (el) el.style.width = `${nextWidth}px`;
+                const motion = document.getElementById("inspector-panel-motion");
+                if (motion) { motion.style.transition = "none"; motion.style.width = `${nextWidth}px`; }
+            } else if (filterResizingRef.current) {
+                // Filters panel is on the right; dragging left expands it
+                const delta = filterDragStartXRef.current - event.clientX;
+                const nextWidth = Math.min(400, Math.max(180, filterDragStartWidthRef.current + delta));
+                filterWidthRef.current = nextWidth;
+                const el = document.getElementById("filter-panel-inner");
+                if (el) el.style.width = `${nextWidth}px`;
+                const motion = document.getElementById("filter-panel-motion");
+                if (motion) { motion.style.transition = "none"; motion.style.width = `${nextWidth}px`; }
             }
-            const inner = document.getElementById("file-explorer-inner");
-            if (inner) inner.style.width = `${nextWidth}px`;
         };
 
         const handleMouseUp = () => {
-            if (!resizingRef.current) return;
-            resizingRef.current = false;
+            if (resizingRef.current) {
+                resizingRef.current = false;
+                const el = document.getElementById("file-explorer-panel");
+                if (el) el.style.transition = "";
+                setExplorerWidth(explorerWidthRef.current);
+            } else if (inspectorResizingRef.current) {
+                inspectorResizingRef.current = false;
+                const motion = document.getElementById("inspector-panel-motion");
+                if (motion) motion.style.transition = "";
+                setInspectorWidth(inspectorWidthRef.current);
+            } else if (filterResizingRef.current) {
+                filterResizingRef.current = false;
+                const motion = document.getElementById("filter-panel-motion");
+                if (motion) motion.style.transition = "";
+                setFilterPanelWidth(filterWidthRef.current);
+            } else {
+                return;
+            }
             document.body.style.userSelect = "";
             document.body.style.cursor = "";
-            // Restore transition so open/close animation still works
-            const el = document.getElementById("file-explorer-panel");
-            if (el) el.style.transition = "";
-            // Commit final width to React state once
-            setExplorerWidth(explorerWidthRef.current);
         };
 
         window.addEventListener("mousemove", handleMouseMove);
@@ -2064,6 +2098,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 ><span className="absolute top-0 bottom-0 right-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>}
 
                 <motion.div
+                    id="inspector-panel-motion"
                     className="absolute left-full top-0 h-full z-40 overflow-hidden"
                     initial={false}
                     animate={{
@@ -2075,7 +2110,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         opacity: { duration: 0.5, ease: "easeInOut" },
                     }}
                 >
-                    <div style={{ width: inspectorWidth }} className="h-full">
+                    <div id="inspector-panel-inner" style={{ width: inspectorWidth }} className="h-full relative">
+                    {showExplorerInspector && (
+                        <div
+                            className="absolute top-0 right-0 h-full w-2 cursor-col-resize z-50 group"
+                            onMouseDown={(e) => {
+                                inspectorResizingRef.current = true;
+                                inspectorDragStartXRef.current = e.clientX;
+                                inspectorDragStartWidthRef.current = inspectorWidthRef.current;
+                                document.body.style.userSelect = "none";
+                                document.body.style.cursor = "col-resize";
+                            }}
+                        ><span className="absolute top-0 bottom-0 right-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>
+                    )}
                     <div className="h-full rounded-2xl bg-[#070b15]/95 backdrop-blur-xl border border-border/30 flex flex-col overflow-hidden">
                         <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
                             <div className="flex items-center justify-between px-3 py-2.5">
@@ -2181,10 +2228,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </div>
 
                 <motion.div
+                    id="filter-panel-motion"
                     className="absolute top-0 right-0 bottom-0 z-20 overflow-hidden"
                     initial={false}
                     animate={{
-                        width: showRightFilters ? FILTER_PANEL_WIDTH : 0,
+                        width: showRightFilters ? filterPanelWidth : 0,
                         opacity: showRightFilters ? 1 : 0,
                     }}
                     transition={{
@@ -2192,7 +2240,20 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         opacity: { duration: 0.5, ease: "easeInOut" },
                     }}
                 >
-                    <div style={{ width: FILTER_PANEL_WIDTH }} className="h-full rounded-2xl bg-slate-900/95 backdrop-blur border border-slate-700/80 flex flex-col overflow-hidden">
+                    <div id="filter-panel-inner" style={{ width: filterPanelWidth }} className="h-full relative">
+                    {showRightFilters && (
+                        <div
+                            className="absolute top-0 left-0 h-full w-2 cursor-col-resize z-50 group"
+                            onMouseDown={(e) => {
+                                filterResizingRef.current = true;
+                                filterDragStartXRef.current = e.clientX;
+                                filterDragStartWidthRef.current = filterWidthRef.current;
+                                document.body.style.userSelect = "none";
+                                document.body.style.cursor = "col-resize";
+                            }}
+                        ><span className="absolute top-0 bottom-0 left-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>
+                    )}
+                    <div className="h-full rounded-2xl bg-slate-900/95 backdrop-blur border border-slate-700/80 flex flex-col overflow-hidden">
                         <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-800">
                             <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
                             <button onClick={() => setShowRightFilters(false)} className="text-slate-400 hover:text-slate-200" aria-label="Close filters">
@@ -2299,6 +2360,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                 )}
                             </div>
                         </div>
+                    </div>
                     </div>
                 </motion.div>
 
