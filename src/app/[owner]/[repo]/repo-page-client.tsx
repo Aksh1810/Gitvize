@@ -236,9 +236,9 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             if (rawTree.length > 1000) {
                 const entryNames = new Set(["index", "main", "app", "server", "config", "package"]);
                 treeToSend = rawTree.filter((item) => {
-                    const depth = item.path.split("/").length - 1;
-                    if (depth <= 3) return true;
-                    const basename = (item.path.split("/").pop()?.split(".")[0] ?? "").toLowerCase();
+                    const parts = item.path.split("/");
+                    if (parts.length - 1 <= 3) return true;
+                    const basename = (parts[parts.length - 1].split(".")[0] ?? "").toLowerCase();
                     return entryNames.has(basename);
                 });
             }
@@ -257,7 +257,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             });
 
             if (res.status === 429) {
-                const rateLimitMsg = "Too many requests — please wait a moment before retrying.";
+                const rateLimitMsg = "Too many requests. Please try again later.";
                 setPipelineSteps((prev) =>
                     prev.map((s) =>
                         s.status === "running" ? { ...s, status: "error" as const, message: rateLimitMsg } : s
