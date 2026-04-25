@@ -10,6 +10,10 @@ import {
   LayoutDashboard,
   Star,
   ExternalLink,
+  Users,
+  GitPullRequest,
+  Search,
+  Network,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import BrandLogo from "@/components/ui/brand-logo";
@@ -24,6 +28,37 @@ const iconMap: Record<string, React.ReactNode> = {
   Brain: <Brain className="w-6 h-6" />,
   LayoutDashboard: <LayoutDashboard className="w-6 h-6" />,
 };
+
+const USE_CASES = [
+  {
+    icon: <Users className="w-6 h-6" />,
+    iconBg: "bg-cyan-400/10 text-cyan-400",
+    title: "Joining a new codebase",
+    description:
+      "Starting at a new job or contributing to open source? See the entire architecture in seconds instead of spending hours reading file trees.",
+  },
+  {
+    icon: <GitPullRequest className="w-6 h-6" />,
+    iconBg: "bg-indigo/10 text-indigo",
+    title: "Code review",
+    description:
+      "Understand what a PR actually touches and how those files connect to the rest of the codebase before reviewing a single line.",
+  },
+  {
+    icon: <Search className="w-6 h-6" />,
+    iconBg: "bg-amber-400/10 text-amber-400",
+    title: "Finding the right file",
+    description:
+      "Navigate large repos by seeing which files are most connected. Hub nodes are the ones that matter most.",
+  },
+  {
+    icon: <Network className="w-6 h-6" />,
+    iconBg: "bg-pink-400/10 text-pink-400",
+    title: "Understanding dependencies",
+    description:
+      "See exactly which files import which, where circular dependencies exist, and which modules are most coupled.",
+  },
+];
 
 export default function LandingPage() {
   const router = useRouter();
@@ -227,6 +262,33 @@ export default function LandingPage() {
             ))}
           </div>
         </motion.div>
+
+        {/* When to use GitViz */}
+        <motion.section
+          variants={fadeSlideUp}
+          initial="hidden"
+          animate="show"
+          transition={{ ...transitions.soft, delay: 0.2 }}
+          className="w-full max-w-5xl mx-auto mb-20"
+        >
+          <h2 className="text-3xl font-bold text-center mb-12">
+            When to use <span className="gradient-text">GitViz</span>
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            {USE_CASES.map((item) => (
+              <div
+                key={item.title}
+                className="surface-neo-soft interactive-lift p-6 rounded-2xl"
+              >
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${item.iconBg}`}>
+                  {item.icon}
+                </div>
+                <h3 className="font-semibold text-lg mb-2">{item.title}</h3>
+                <p className="text-sm text-muted-foreground">{item.description}</p>
+              </div>
+            ))}
+          </div>
+        </motion.section>
 
         {/* How it Works */}
         <motion.section
