@@ -1729,14 +1729,24 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         const chargeScale = Math.max(0.05, 1 / Math.sqrt(nodeCount / 10));
         const centerStrength = nodeCount > 500 ? 0.15 : nodeCount > 100 ? 0.2 : 0.3;
 
+        // Precompute total connection count per node (all edge types) for connectivity-based charge
+        const connectionCounts = new Map<string, number>();
+        for (const l of allSimLinks) {
+            const srcId = (l.source as SimNode).id;
+            const tgtId = (l.target as SimNode).id;
+            connectionCounts.set(srcId, (connectionCounts.get(srcId) ?? 0) + 1);
+            connectionCounts.set(tgtId, (connectionCounts.get(tgtId) ?? 0) + 1);
+        }
+
         const sim = forceSimulation<SimNode>(simNodes)
             .force(
                 "charge",
                 forceManyBody<SimNode>().strength((n) => {
-                    const base = n.type === "root"   ? -800
-                               : n.type === "folder" ? -400
-                               : n.type === "symbol" ? -40
-                               :                       -200;
+                    const connections = connectionCounts.get(n.id) ?? 0;
+                    const base = connections === 0 ? -800
+                               : connections <= 2  ? -400
+                               : connections <= 5  ? -200
+                               :                     -100;
                     return base * chargeScale;
                 })
             )
@@ -1745,19 +1755,28 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 forceLink<SimNode, SimLink>(initialLinks)
                     .id((n) => n.id)
                     .distance((l) => {
-                        if (l.edgeType === "defines") return 40;
-                        if (l.edgeType === "fileImport") return 100;
-                        if (l.edgeType === "contains") return 120;
-                        return 80;
+                        if (l.edgeType === "defines")    return 40;
+                        if (l.edgeType === "fileImport") return 80;
+                        if (l.edgeType === "contains")   return 160;
+                        return 120;
                     })
                     .strength((l) => {
-                        if (l.edgeType === "defines") return 0.9;
-                        if (l.edgeType === "contains") return 0.5;
-                        return 0.3;
+                        if (l.edgeType === "defines")    return 0.9;
+                        if (l.edgeType === "fileImport") return 1.0;
+                        if (l.edgeType === "contains")   return 0.3;
+                        return 0.8;
                     })
             )
             .force("center", forceCenter(0, 0).strength(centerStrength))
-            .force("collide", forceCollide<SimNode>().radius((n) => n.radius + 6))
+            .force("collide", forceCollide<SimNode>()
+                .radius((n) => {
+                    if (n.type === "root")   return 60;
+                    if (n.type === "folder") return 40;
+                    if (n.type === "file")   return 20;
+                    return 12;
+                })
+                .strength(0.9)
+            )
             .force("bounds", () => {
                 for (const n of simNodes) {
                     if (n.x == null || n.y == null) continue;
@@ -1775,6 +1794,17 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             .stop();
 
         simRef.current = sim;
+
+        // Pre-warm simulation so nodes start spread out rather than piled
+        const warmupTicks = nodeCount > 500 ? 20 : nodeCount > 100 ? 50 : 80;
+        for (let i = 0; i < warmupTicks; i++) sim.tick();
+        cy.batch(() => {
+            for (const n of simNodes) {
+                if (n.x == null || n.y == null) continue;
+                const cn = cy.getElementById(n.id);
+                if (cn.nonempty()) cn.position({ x: n.x, y: n.y });
+            }
+        });
 
         const grabbedNodeId = { current: null as string | null };
         const lockedNodeId = { current: null as string | null };
@@ -1964,25 +1994,34 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             const edgeBoost = 1 + avgDegree * 0.3;
             const newChargeScale = Math.max(0.05, 1 / Math.sqrt(Math.max(1, dynNodeCount) / 10)) * edgeBoost;
 
+            const dynConnectionCounts = new Map<string, number>();
+            for (const l of activeLinks) {
+                const srcId = (l.source as SimNode).id;
+                const tgtId = (l.target as SimNode).id;
+                dynConnectionCounts.set(srcId, (dynConnectionCounts.get(srcId) ?? 0) + 1);
+                dynConnectionCounts.set(tgtId, (dynConnectionCounts.get(tgtId) ?? 0) + 1);
+            }
             sim.force("charge", forceManyBody<SimNode>().strength((n: SimNode) => {
-                const base = n.type === "root"   ? -800
-                           : n.type === "folder" ? -400
-                           : n.type === "symbol" ? -40
-                           :                       -200;
+                const connections = dynConnectionCounts.get(n.id) ?? 0;
+                const base = connections === 0 ? -800
+                           : connections <= 2  ? -400
+                           : connections <= 5  ? -200
+                           :                     -100;
                 return base * newChargeScale;
             }));
 
             const distMult = 1 + Math.log2(Math.max(2, avgDegree + 1));
             lf.distance((l: SimLink) => {
-                if (l.edgeType === "defines")    return 40 * distMult;
-                if (l.edgeType === "fileImport") return 100 * distMult;
-                if (l.edgeType === "contains")   return 120;
-                return 80 * distMult;
+                if (l.edgeType === "defines")    return 40;
+                if (l.edgeType === "fileImport") return 80 * distMult;
+                if (l.edgeType === "contains")   return 160;
+                return 120 * distMult;
             });
             lf.strength((l: SimLink) => {
-                if (l.edgeType === "defines")  return Math.max(0.15, 0.9 / edgeBoost);
-                if (l.edgeType === "contains") return 0.5;
-                return Math.max(0.08, 0.3 / edgeBoost);
+                if (l.edgeType === "defines")    return Math.max(0.15, 0.9  / edgeBoost);
+                if (l.edgeType === "fileImport") return Math.max(0.2,  1.0  / edgeBoost);
+                if (l.edgeType === "contains")   return 0.3;
+                return Math.max(0.08, 0.8 / edgeBoost);
             });
 
             const newCenterStr = activeLinks.length > 500 ? 0.05
