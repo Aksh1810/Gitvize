@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff, KeyRound } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, ExternalLink } from "lucide-react";
 
 export const GITHUB_PAT_TRANSIENT_KEY = "gitvize_github_pat_once";
 const GITHUB_PAT_LEGACY_TRANSIENT_KEY = "gitviz_github_pat_once";
@@ -76,6 +76,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                     <DialogTitle className="flex items-center gap-2 text-lg">
                         <KeyRound className="w-5 h-5 text-cyan-300" />
                         GitHub Token
+                        <Lock className="w-4 h-4 text-slate-400 ml-auto" />
                     </DialogTitle>
                     <DialogDescription>
                         Add a Personal Access Token to access private repositories and increase rate limits.
@@ -84,18 +85,52 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                 </DialogHeader>
 
                 <div className="space-y-5 py-2">
+                    <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                                Never stored on our servers
+                            </span>
+                        </div>
+                        <ul className="space-y-1 text-[11px] text-slate-400">
+                            <li>• Stored only in your browser&apos;s session memory — cleared when you close the tab</li>
+                            <li>• Sent directly from your browser to GitHub&apos;s API</li>
+                            <li>• Never transmitted to or logged by our servers</li>
+                            <li>
+                                • Revoke anytime at{" "}
+                                <a
+                                    href="https://github.com/settings/tokens"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-cyan-400 hover:underline"
+                                >
+                                    github.com/settings/tokens
+                                </a>
+                            </li>
+                        </ul>
+                        <a
+                            href="https://github.com/Aksh1810/Gitviz"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+                        >
+                            <ExternalLink className="w-3 h-3" />
+                            Don&apos;t trust us? Read the source
+                        </a>
+                    </div>
+
                     <div className="space-y-2 rounded-lg border border-border/50 bg-slate-900/70 p-3">
                         <div className="flex items-center justify-between">
                             <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                                 Personal Access Token
                             </Label>
                             <a
-                                href="https://github.com/settings/tokens"
+                                href="https://github.com/settings/tokens/new?scopes=public_repo&description=GitViz"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[10px] text-cyan-300 hover:underline"
+                                className="inline-flex items-center gap-1 text-[10px] text-cyan-300 hover:underline"
                             >
-                                Create token {"->"}
+                                Create token <ExternalLink className="w-3 h-3" />
                             </a>
                         </div>
 
@@ -118,7 +153,8 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                         </div>
 
                         <p className="text-[11px] text-muted-foreground">
-                            Recommended scopes: repo (private repos), read:org (org private repos), public_repo (public only).
+                            Minimum scope: <span className="text-slate-300 font-medium">public_repo</span> for public repos.
+                            Add <span className="text-slate-300 font-medium">repo</span> for private repo access.
                         </p>
                     </div>
                 </div>
