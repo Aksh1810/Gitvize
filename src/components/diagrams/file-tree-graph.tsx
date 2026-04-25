@@ -120,6 +120,8 @@ const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
 const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
 const CODE_ROW_HEIGHT = 24;
 const FILTER_PANEL_WIDTH = 220;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 5;
 
 const FOLDER_SORT_PRIORITY: Record<string, number> = {
     src: 0,
@@ -1645,7 +1647,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     }
                 }
             ],
-            wheelSensitivity: 0.2,
+            userZoomingEnabled: false,
+            minZoom: MIN_ZOOM,
+            maxZoom: MAX_ZOOM,
         });
 
         // Build d3-force sim nodes from graph elements
@@ -1946,7 +1950,23 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         cyRef.current = cy;
         applyVisibility(cy);
 
+        const wheelContainer = containerRef.current!;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            const cyInst = cyRef.current;
+            if (!cyInst) return;
+            const factor = e.deltaY < 0 ? 1.15 : 0.87;
+            const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cyInst.zoom() * factor));
+            const rect = wheelContainer.getBoundingClientRect();
+            cyInst.zoom({
+                level: newZoom,
+                renderedPosition: { x: e.clientX - rect.left, y: e.clientY - rect.top },
+            });
+        };
+        wheelContainer.addEventListener('wheel', onWheel, { passive: false });
+
         return () => {
+            wheelContainer.removeEventListener('wheel', onWheel);
             cancelAnimationFrame(rafId);
             sim.stop();
             simRef.current = null;
