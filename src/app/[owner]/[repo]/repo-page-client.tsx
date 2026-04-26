@@ -221,11 +221,42 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             toastId = toast.loading("Generating Premium Architecture Diagram...");
         }
 
+        // Compute trimmed tree before setting pipeline steps so the ingest
+        // message can include the sampling count.
+        const rawTree = repoData.fileTree.tree;
+        const totalFileCount = rawTree.filter(i => i.type === "blob").length;
+        const MAX_ANALYZE_FILES = 500;
+        const priorityDirs = new Set(["src", "lib", "kernel", "drivers", "include", "app", "core", "api", "pkg"]);
+        const codeExts = new Set(["ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "c", "h", "cpp", "rb", "vue", "swift", "kt"]);
+        let treeToSend: typeof rawTree = rawTree;
+        let ingestMsg = "Analyzing repository data...";
+        if (rawTree.length > MAX_ANALYZE_FILES) {
+            treeToSend = rawTree
+                .filter(i => i.type === "blob")
+                .map(item => {
+                    const parts = item.path.split("/");
+                    const depth = parts.length - 1;
+                    let score = Math.max(0, 6 - depth) * 10;
+                    if (priorityDirs.has((parts[0] ?? "").toLowerCase())) score += 20;
+                    const ext = (parts[parts.length - 1].split(".").pop() ?? "").toLowerCase();
+                    if (codeExts.has(ext)) score += 10;
+                    return { item, score };
+                })
+                .sort((a, b) => b.score - a.score)
+                .slice(0, MAX_ANALYZE_FILES)
+                .map(s => s.item);
+            ingestMsg = `Analyzing top ${MAX_ANALYZE_FILES} most relevant files out of ${totalFileCount} total`;
+            console.log(`[analyze] sampled ${treeToSend.length} of ${totalFileCount} files for analysis`);
+        }
+
         setPipelineSteps([
-            { step: "ingest", status: "running", message: "Analyzing repository data..." },
+            { step: "ingest", status: "running", message: ingestMsg },
             { step: "understand", status: "pending", message: "Waiting..." },
             { step: "enrich", status: "pending", message: "Waiting..." },
         ]);
+
+        let analyzeTimeoutId: ReturnType<typeof setTimeout> | null = null;
+        const analyzeAbort = new AbortController();
 
         try {
             // Load AI settings from localStorage to send to server
@@ -237,20 +268,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 } catch { /* ignore */ }
             }
 
-            // For large repos, send only a subset: all files at depth ≤ 3 plus
-            // important root-level entry points, so the request stays manageable.
-            const rawTree = repoData.fileTree.tree;
-            let treeToSend = rawTree;
-            if (rawTree.length > 1000) {
-                const entryNames = new Set(["index", "main", "app", "server", "config", "package"]);
-                treeToSend = rawTree.filter((item) => {
-                    const parts = item.path.split("/");
-                    if (parts.length - 1 <= 3) return true;
-                    const basename = (parts[parts.length - 1].split(".")[0] ?? "").toLowerCase();
-                    return entryNames.has(basename);
-                });
-            }
-
+            analyzeTimeoutId = setTimeout(() => analyzeAbort.abort(), 25_000);
             const res = await fetch("/api/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -262,7 +280,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     readme: repoData.readme,
                     aiSettings,
                 }),
+                signal: analyzeAbort.signal,
             });
+            clearTimeout(analyzeTimeoutId);
+            analyzeTimeoutId = null;
 
             if (res.status === 429) {
                 const rateLimitMsg = "Too many requests. Please try again later.";
@@ -355,13 +376,30 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     }
                 }
             } else {
-                // Handle JSON response (smart mode or premium fallback mode)
-                const data = await res.json();
-                if (data.error) throw new Error(data.error);
+                // Handle JSON response (smart mode or premium fallback mode).
+                // Always check res.ok before parsing — a 413 or other infra error
+                // returns plain text, not JSON, and res.json() would throw.
+                if (!res.ok) {
+                    const bodyText = await res.text().catch(() => "");
+                    if (res.status === 413)
+                        throw new Error("Repository is too large for full analysis. Showing architecture based on top-level structure.");
+                    if (res.status === 408 || res.status === 504)
+                        throw new Error("Analysis timed out. Try a smaller repo or add a GitHub token for faster access.");
+                    let serverError = "";
+                    try { const j = JSON.parse(bodyText); serverError = typeof j.error === "string" ? j.error : ""; } catch { /* plain text body */ }
+                    throw new Error(serverError || `Analysis failed (HTTP ${res.status}). Please try again.`);
+                }
+                let data: Record<string, unknown>;
+                try {
+                    data = await res.json();
+                } catch {
+                    throw new Error("Analysis failed — server returned an unexpected response. Please try again.");
+                }
+                if (data.error) throw new Error(data.error as string);
 
                 const result = {
-                    architecture: data.architecture,
-                    annotations: data.annotations,
+                    architecture: data.architecture as ArchitectureAnalysis,
+                    annotations: data.annotations as FileAnnotation[],
                     source: data.mode === "smart" ? ("smart" as const) : (data.mock ? ("fallback" as const) : ("ai" as const)),
                 };
 
@@ -387,7 +425,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }
             }
         } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
+            const rawMsg = err instanceof Error ? err.message : String(err);
+            const errorMsg = (err instanceof Error && err.name === "AbortError")
+                ? "Analysis timed out. Try a smaller repo or add a GitHub token for faster access."
+                : /Unexpected token|is not valid JSON/i.test(rawMsg)
+                ? "Analysis failed — server returned an unexpected response. Please try again."
+                : rawMsg;
             setPipelineSteps((prev) =>
                 prev.map((s) =>
                     s.status === "running"
@@ -411,11 +454,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }
             }
         } finally {
+            if (analyzeTimeoutId !== null) clearTimeout(analyzeTimeoutId);
             setIsAnalyzing(false);
             // If toastId is still visible as loading and wasn't swept by success/error (e.g. edge cases), dismiss it safely.
             // Sonner ignores dismiss() if it's already updated to a strict state like success/error/warning that auto-closes.
             if (toastId) {
-                setTimeout(() => toast.dismiss(toastId), 5000); 
+                setTimeout(() => toast.dismiss(toastId), 5000);
             }
         }
     }, [repoData, owner, repo]);
@@ -534,11 +578,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         if (repoData?.fileTree) {
             return (
                 <div className="relative h-full w-full">
-                    {repoData.fileTree.truncated && (
-                        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded-lg text-xs bg-amber-500/15 border border-amber-500/30 text-amber-300 backdrop-blur-sm pointer-events-none">
-                            This repo has too many files — showing a representative sample
-                        </div>
-                    )}
+                    
                     <FileTreeGraph
                         tree={repoData.fileTree.tree}
                         owner={owner}
