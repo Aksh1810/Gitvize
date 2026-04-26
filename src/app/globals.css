@@ -703,9 +703,7 @@
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #f8fafc, #cbd5e1, #e5e7eb);
-  background-size: 200% 200%;
-  animation: gradient-shift 5s ease infinite;
+  background: linear-gradient(to right, #ffffff 0%, #ffffff 50%, #c4b5fd 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

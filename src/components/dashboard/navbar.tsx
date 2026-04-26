@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion } from "framer-motion";
 import {
     Download,
     Share2,
@@ -27,23 +27,6 @@ export default function Navbar({
     onExport,
     onAISettings,
 }: NavbarProps) {
-    const { scrollY } = useScroll();
-    const background = useTransform(
-        scrollY,
-        [0, 80],
-        ["rgba(10, 14, 26, 0.55)", "rgba(10, 14, 26, 0.92)"]
-    );
-    const borderColor = useTransform(
-        scrollY,
-        [0, 80],
-        ["rgba(255, 255, 255, 0.1)", "rgba(255, 255, 255, 0.2)"]
-    );
-    const shadow = useTransform(
-        scrollY,
-        [0, 80],
-        ["0 8px 24px rgba(2, 6, 23, 0.25)", "0 16px 40px rgba(2, 6, 23, 0.55)"]
-    );
-
     const handleShare = () => {
         const url = `${window.location.origin}/${owner}/${repo}`;
         navigator.clipboard.writeText(url).then(() => {
@@ -55,13 +38,11 @@ export default function Navbar({
 
     return (
         <motion.nav
-            className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-2xl"
+            className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-xl bg-[#0a0e1a]/80 border-b border-white/[0.06]"
             initial={{ y: -18, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={transitions.soft}
-            style={{ backgroundColor: background, borderColor, boxShadow: shadow, borderBottomWidth: "1px" }}
         >
-            <div className="absolute inset-0 nav-sheen" />
             <div className="max-w-[1800px] mx-auto flex items-center justify-between relative">
                 {/* Logo */}
                 <Link
