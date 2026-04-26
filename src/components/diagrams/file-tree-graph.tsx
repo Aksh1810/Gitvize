@@ -2,20 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { motion } from "framer-motion";
-import cytoscape from "cytoscape";
-import {
-    forceSimulation,
-    forceManyBody,
-    forceLink,
-    forceCenter,
-    forceCollide,
-    type ForceLink,
-    type SimulationNodeDatum,
-    type SimulationLinkDatum,
-} from "d3-force";
+import { Graph } from "@cosmos.gl/graph";
 import { List, type RowComponentProps } from "react-window";
-// @ts-expect-error fcose is an extension package without bundled TS types.
-import fcose from "cytoscape-fcose";
 import { cn } from "@/lib/utils";
 import { getFileColor } from "@/lib/file-icons";
 import { buildSymbolGraph, selectSymbolAnalysisFiles, isImportableCodeFile, extractFileToFileImports, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
@@ -51,10 +39,6 @@ const extToPrismLang: Record<string, string> = {
     xml: "markup", svg: "markup",
 };
 
-// Register the fcose layout extension
-if (typeof window !== "undefined") {
-    cytoscape.use(fcose);
-}
 
 interface FileTreeGraphProps {
     tree: TreeItem[];
@@ -105,14 +89,18 @@ interface SymbolDiagnostics {
     limit: number;
 }
 
-interface SimNode extends SimulationNodeDatum {
+interface SimNode {
     id: string;
     type: "root" | "folder" | "file" | "symbol";
     radius: number;
-}
-
-interface SimLink extends SimulationLinkDatum<SimNode> {
-    edgeType: string;
+    label: string;
+    ext?: string;
+    showLabel?: number;
+    symbolKind?: SymbolKind;
+    parentPath?: string;
+    path?: string;
+    rawSize?: number;
+    hubScore?: number;
 }
 
 const EXPLORER_ROW_HEIGHT = 30;
@@ -120,8 +108,6 @@ const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
 const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
 const CODE_ROW_HEIGHT = 24;
 const FILTER_PANEL_WIDTH = 220;
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 5;
 
 const FOLDER_SORT_PRIORITY: Record<string, number> = {
     src: 0,
@@ -212,9 +198,166 @@ const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
     limit: 0,
 };
 
+function hexToRgba01(hex: string): [number, number, number, number] {
+    const h = hex.replace("#", "");
+    const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+    const r = parseInt(full.slice(0, 2), 16) / 255;
+    const g = parseInt(full.slice(2, 4), 16) / 255;
+    const b = parseInt(full.slice(4, 6), 16) / 255;
+    return [isNaN(r) ? 0.5 : r, isNaN(g) ? 0.5 : g, isNaN(b) ? 0.5 : b, 1];
+}
+
+function symbolKindToShape(kind: SymbolKind): number {
+    switch (kind) {
+        case "class":     return 5; // Hexagon
+        case "interface": return 1; // Square
+        case "type":      return 3; // Diamond
+        case "method":    return 2; // Triangle
+        case "variable":  return 4; // Pentagon
+        default:          return 0; // Circle (function)
+    }
+}
+
+function edgeTypeColor(type: string): [number, number, number, number] {
+    switch (type) {
+        case "fileImport":  return [0.98, 0.75, 0.14, 0.40];
+        case "defines":     return [0.13, 0.83, 0.93, 0.70];
+        case "imports":     return [0.23, 0.51, 0.96, 0.70];
+        case "calls":       return [0.54, 0.36, 0.96, 0.70];
+        case "extends":     return [0.97, 0.45, 0.09, 0.75];
+        case "implements":  return [0.92, 0.28, 0.60, 0.75];
+        case "contains":    return [0.20, 0.83, 0.60, 0.70];
+        default:            return [1.00, 1.00, 1.00, 0.12];
+    }
+}
+
+interface VisibilityState {
+    showRoot: boolean;
+    showFolders: boolean;
+    showFiles: boolean;
+    showSymbols: boolean;
+    showContainsEdges: boolean;
+    showDefinesEdges: boolean;
+    showImportsEdges: boolean;
+    showCallsEdges: boolean;
+    showExtendsEdges: boolean;
+    showImplementsEdges: boolean;
+    showFileImportEdges: boolean;
+    symbolKindVisibility: Record<SymbolKind, boolean>;
+}
+
+function filterByVisibility(
+    elements: { nodes: Array<{ data: Record<string, unknown> }>; edges: Array<{ data: Record<string, unknown> }> },
+    state: VisibilityState
+) {
+    const visNodeIds = new Set<string>();
+    const visNodes = elements.nodes.filter((n) => {
+        const type = n.data.type as string;
+        const id = n.data.id as string;
+        const kind = n.data.symbolKind as SymbolKind | undefined;
+        if (type === "folder" && id === "root") {
+            if (!state.showRoot) return false;
+        } else if (type === "folder") {
+            if (!state.showFolders) return false;
+        } else if (type === "file") {
+            if (!state.showFiles) return false;
+        } else if (type === "symbol") {
+            if (!state.showSymbols || !state.showFiles) return false;
+            if (kind && !state.symbolKindVisibility[kind]) return false;
+        }
+        visNodeIds.add(id);
+        return true;
+    });
+
+    const symbolsVisible = state.showSymbols && state.showFiles;
+    const visEdges = elements.edges.filter((e) => {
+        const type = e.data.type as string;
+        const source = e.data.source as string;
+        const target = e.data.target as string;
+        if (!visNodeIds.has(source) || !visNodeIds.has(target)) return false;
+        switch (type) {
+            case "contains":   return state.showContainsEdges;
+            case "defines":    return state.showDefinesEdges && symbolsVisible;
+            case "imports":    return state.showImportsEdges && symbolsVisible;
+            case "calls":      return state.showCallsEdges && symbolsVisible;
+            case "extends":    return state.showExtendsEdges && symbolsVisible;
+            case "implements": return state.showImplementsEdges && symbolsVisible;
+            case "fileImport": return state.showFileImportEdges && state.showFiles;
+            default:           return false;
+        }
+    });
+
+    return { visNodes, visEdges };
+}
+
+function buildCosmosArrays(
+    visNodes: Array<{ data: Record<string, unknown> }>,
+    visEdges: Array<{ data: Record<string, unknown> }>
+) {
+    const count = visNodes.length;
+    const eCount = visEdges.length;
+    const nodeIndexMap = new Map<string, number>();
+    visNodes.forEach((n, i) => nodeIndexMap.set(n.data.id as string, i));
+
+    const pointPositions = new Float32Array(count * 2);
+    const pointColors    = new Float32Array(count * 4);
+    const pointSizes     = new Float32Array(count);
+    const pointShapes    = new Float32Array(count);
+    const simNodeList: SimNode[] = [];
+
+    const scatterRadius = Math.sqrt(Math.max(1, count)) * 40;
+    visNodes.forEach((n, i) => {
+        const angle = (i / Math.max(1, count)) * Math.PI * 2;
+        pointPositions[i * 2]     = Math.cos(angle) * scatterRadius;
+        pointPositions[i * 2 + 1] = Math.sin(angle) * scatterRadius;
+
+        const size = (n.data.size as number) ?? 10;
+        pointSizes[i] = size;
+
+        const [r, g, b, a] = hexToRgba01((n.data.color as string) || "#888888");
+        pointColors[i * 4]     = r;
+        pointColors[i * 4 + 1] = g;
+        pointColors[i * 4 + 2] = b;
+        pointColors[i * 4 + 3] = a;
+
+        const type = n.data.type as SimNode["type"];
+        const kind = n.data.symbolKind as SymbolKind | undefined;
+        pointShapes[i] = (type === "symbol" && kind) ? symbolKindToShape(kind) : 0;
+
+        simNodeList.push({
+            id: n.data.id as string,
+            type,
+            radius: size / 2,
+            label: ((n.data.displayLabel ?? n.data.label) as string) || "",
+            ext: n.data.extension as string | undefined,
+            showLabel: n.data.showLabel as number | undefined,
+            symbolKind: kind,
+            parentPath: n.data.parentPath as string | undefined,
+            path: n.data.path as string | undefined,
+            rawSize: n.data.rawSize as number | undefined,
+            hubScore: n.data.hubScore as number | undefined,
+        });
+    });
+
+    const linkArray = new Float32Array(eCount * 2);
+    const linkColors = new Float32Array(eCount * 4);
+    visEdges.forEach((e, i) => {
+        const srcIdx = nodeIndexMap.get(e.data.source as string) ?? 0;
+        const tgtIdx = nodeIndexMap.get(e.data.target as string) ?? 0;
+        linkArray[i * 2]     = srcIdx;
+        linkArray[i * 2 + 1] = tgtIdx;
+        const [r, g, b, a] = edgeTypeColor(e.data.type as string);
+        linkColors[i * 4]     = r;
+        linkColors[i * 4 + 1] = g;
+        linkColors[i * 4 + 2] = b;
+        linkColors[i * 4 + 3] = a;
+    });
+
+    return { pointPositions, pointColors, pointSizes, pointShapes, linkArray, linkColors, nodeIndexMap, simNodeList };
+}
+
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
-    const cyRef = useRef<cytoscape.Core | null>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
     const codePanelRef = useRef<HTMLDivElement>(null);
     const codeListRef = useRef<{
@@ -267,17 +410,13 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
-    const simRef = useRef<ReturnType<typeof forceSimulation<SimNode>> | null>(null);
-    const simLinksByTypeRef = useRef<Map<string, SimLink[]>>(new Map());
-    const simNodeMapRef = useRef<Map<string, SimNode>>(new Map());
-    const simNodesRef = useRef<SimNode[]>([]);
-    const boundsRRef = useRef(300);
-    const savedPositionsRef = useRef<{
-        zoom: number;
-        pan: { x: number; y: number };
-        nodes: Record<string, { x: number; y: number }>;
-    } | null>(null);
-    const prevLinkCountRef = useRef(0);
+    const graphRef = useRef<InstanceType<typeof Graph> | null>(null);
+    const nodeIndexMapRef = useRef<Map<string, number>>(new Map());
+    const visibleNodesRef = useRef<SimNode[]>([]);
+    const baseColorsRef = useRef<Float32Array>(new Float32Array(0));
+    const labelRafRef = useRef<number>(0);
+    const labelCanvasRef = useRef<HTMLCanvasElement>(null);
+    const lockedNodeIdxRef = useRef<number | null>(null);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
@@ -301,7 +440,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     });
     const [inspectorWidth, setInspectorWidth] = useState(440);
     const [filterPanelWidth, setFilterPanelWidth] = useState(FILTER_PANEL_WIDTH);
-    const visibilityRef = useRef({
+    const visibilityRef = useRef<VisibilityState>({
         showRoot: true,
         showFolders: true,
         showFiles: true,
@@ -320,7 +459,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             type: false,
             method: false,
             variable: false,
-        } as Record<SymbolKind, boolean>,
+        },
     });
 
     const explorerTree = useMemo<ExplorerNode>(() => {
@@ -494,22 +633,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         explorerWidthRef.current = explorerWidth;
     }, [explorerWidth]);
 
-    // Notify Cytoscape whenever the canvas container is resized (explorer drag,
-    // open/close, or window resize). ResizeObserver fires on actual DOM layout
-    // changes — unlike a state-based effect it also catches mid-drag updates
-    // where explorer width is written directly to the DOM without touching state.
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return;
-        const observer = new ResizeObserver(() => {
-            const cy = cyRef.current;
-            if (!cy) return;
-            cy.resize();
-            cy.fit(undefined, 50);
-        });
-        observer.observe(container);
-        return () => observer.disconnect();
-    }, []);
+    // cosmos.gl auto-handles canvas resize — this observer is no longer needed.
 
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
@@ -869,8 +993,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
     // Build graph elements — show all files
     const elements = useMemo(() => {
-        const nodes: cytoscape.NodeDefinition[] = [];
-        const edges: cytoscape.EdgeDefinition[] = [];
+        const nodes: Array<{ data: Record<string, unknown> }> = [];
+        const edges: Array<{ data: Record<string, unknown> }> = [];
         const addedFolders = new Set<string>();
 
         // Smart filtering for large repos: score and prioritise the most important files.
@@ -1184,9 +1308,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { nodes, edges };
     }, [tree, repo, symbolGraph, fileImportEdges]);
 
-    // Is this a large repo?
-    const isLargeRepo = elements.nodes.length > 80;
-
     // Compute cluster info from elements
     const clusterInfo = useMemo(() => {
         const folders = elements.nodes.filter((n) => n.data && (n.data as Record<string, unknown>).type === "folder").length;
@@ -1227,116 +1348,47 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
-    const applyVisibility = useCallback((targetCy?: cytoscape.Core | null) => {
-        const cy = targetCy ?? cyRef.current;
-        if (!cy) return;
+    const applyVisibility = useCallback(() => {
+        const graph = graphRef.current;
+        if (!graph) return;
+        const { visNodes, visEdges } = filterByVisibility(elements, visibilityRef.current);
+        const { pointPositions, pointColors, pointSizes, pointShapes, linkArray, linkColors, nodeIndexMap, simNodeList } = buildCosmosArrays(visNodes, visEdges);
+        nodeIndexMapRef.current = nodeIndexMap;
+        visibleNodesRef.current = simNodeList;
+        baseColorsRef.current = pointColors.slice();
+        lockedNodeIdxRef.current = null;
+        const labelNodeIndices = simNodeList
+            .map((nd, i) => ({ nd, i }))
+            .filter(({ nd }) => nd.type === "root" || nd.type === "folder" || nd.showLabel === 1 || (nd.hubScore !== undefined && nd.hubScore > 0))
+            .map(({ i }) => i);
+        graph.setPointPositions(pointPositions);
+        graph.setPointColors(pointColors);
+        graph.setPointSizes(pointSizes);
+        graph.setPointShapes(pointShapes);
+        graph.setLinks(linkArray);
+        graph.setLinkColors(linkColors);
+        graph.trackPointPositionsByIndices(labelNodeIndices);
+        graph.start();
+    }, [elements]);
 
-        const state = visibilityRef.current;
-        cy.batch(() => {
-            cy.getElementById("root").style("display", state.showRoot ? "element" : "none");
-            cy.nodes('node[type="folder"]').not('#root').style("display", state.showFolders ? "element" : "none");
-            cy.nodes('node[type="file"]').style("display", state.showFiles ? "element" : "none");
-
-            const symbolsVisible = state.showSymbols && state.showFiles;
-            cy.nodes('node[type="symbol"]').forEach((node) => {
-                const kind = node.data("symbolKind") as SymbolKind | undefined;
-                const kindVisible = kind ? state.symbolKindVisibility[kind] : true;
-                node.style("display", symbolsVisible && kindVisible ? "element" : "none");
-            });
-
-            cy.edges('edge[type="contains"]').style(
-                "display",
-                state.showContainsEdges ? "element" : "none"
-            );
-
-            cy.edges('edge[type="defines"]').style(
-                "display",
-                state.showDefinesEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="imports"]').style(
-                "display",
-                state.showImportsEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="calls"]').style(
-                "display",
-                state.showCallsEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="extends"]').style(
-                "display",
-                state.showExtendsEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="implements"]').style(
-                "display",
-                state.showImplementsEdges && symbolsVisible ? "element" : "none"
-            );
-
-            cy.edges('edge[type="fileImport"]').style(
-                "display",
-                state.showFileImportEdges && state.showFiles ? "element" : "none"
-            );
-        });
-    }, []);
-
-    const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
-        cy.nodes().forEach(node => {
-            node.style('opacity', 1);
-            node.removeData('keepLabel');
-            if (node.data('type') === 'folder') {
-                node.style('border-width', 2);
-                node.style('border-color', 'rgba(255,255,255,0.4)');
-            } else if (node.data('type') === 'symbol') {
-                node.style('border-width', 1);
-                node.style('border-color', 'rgba(255,255,255,0.35)');
-            } else {
-                node.style('border-width', 0);
-                node.style('border-color', 'transparent');
-            }
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('label', '');
-            }
-        });
-
-        cy.edges().forEach(edge => {
-            edge.style('opacity', 0.6);
-            edge.style('width', 1);
-            edge.style('shadow-blur', 0);
-            edge.style('shadow-opacity', 0);
-        });
-    }, [isLargeRepo]);
-
-    const focusNodeNeighborhood = useCallback((cy: cytoscape.Core, node: cytoscape.NodeSingular) => {
-        // Dim everything first, then re-highlight connected context.
-        cy.nodes().style('opacity', 0.12);
-        cy.edges().style('opacity', 0.06);
-        cy.nodes().removeData('keepLabel');
-
-        const neighborhood = node.closedNeighborhood();
-        neighborhood.nodes().style('opacity', 1);
-        neighborhood.edges().style('opacity', 0.92);
-        neighborhood.edges().style('width', 2);
-        neighborhood.edges().style('shadow-blur', 8);
-        neighborhood.edges().style('shadow-opacity', 0.6);
-        neighborhood.edges().style('shadow-color', '#93c5fd');
-
-        neighborhood.nodes().forEach(n => {
-            n.data('keepLabel', 1);
-        });
-
-        // Primary focus node gets strongest emphasis.
-        node.style('border-width', 3);
-        node.style('border-color', '#facc15');
-
-        // Improve readability in large repos by revealing labels for focused neighborhood.
-        if (isLargeRepo) {
-            neighborhood.nodes().forEach(n => {
-                n.style('label', n.data('compactLabel') || n.data('displayLabel') || n.data('label'));
-            });
+    const applyHoverEffect = useCallback((hoveredIdx: number | undefined) => {
+        const graph = graphRef.current;
+        if (!graph) return;
+        if (hoveredIdx === undefined) {
+            graph.setPointColors(baseColorsRef.current.slice());
+            return;
         }
-    }, [isLargeRepo]);
+        const adjacent = graph.getAdjacentIndices(hoveredIdx) ?? [];
+        const adjacentSet = new Set(adjacent);
+        const newColors = baseColorsRef.current.slice();
+        const n = visibleNodesRef.current.length;
+        for (let i = 0; i < n; i++) {
+            if (i !== hoveredIdx && !adjacentSet.has(i)) {
+                newColors[i * 4 + 3] = 0.08;
+            }
+        }
+        graph.setPointColors(newColors);
+    }, []);
 
     const expandParentFolders = useCallback((path: string) => {
         const parts = path.split("/");
@@ -1370,18 +1422,13 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             size: node.size,
         });
 
-        const cy = cyRef.current;
-        if (!cy) return;
-        const cyNode = cy.getElementById(`file:${node.path}`);
-        if (cyNode && cyNode.nonempty()) {
-            focusNodeNeighborhood(cy, cyNode);
-            cy.animate({
-                center: { eles: cyNode },
-                duration: 300,
-                easing: "ease-out-quad",
-            });
+        const idx = nodeIndexMapRef.current.get(`file:${node.path}`);
+        if (idx !== undefined) {
+            applyHoverEffect(idx);
+            lockedNodeIdxRef.current = idx;
+            graphRef.current?.zoomToPointByIndex(idx, 400, 3);
         }
-    }, [expandParentFolders, focusNodeNeighborhood]);
+    }, [expandParentFolders, applyHoverEffect]);
 
     const handleExplorerKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
         if (!showExplorer || explorerRows.length === 0) return;
@@ -1458,565 +1505,181 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     // Search handler
     const handleSearch = useCallback((query: string) => {
         setSearchQuery(query);
-        const cy = cyRef.current;
-        if (!cy) return;
+        const graph = graphRef.current;
+        if (!graph) return;
 
-        // Reset any prior focus state before applying search highlight.
-        clearNodeFocus(cy);
-
-        if (!query.trim()) return;
+        if (!query.trim()) {
+            graph.setPointColors(baseColorsRef.current.slice());
+            return;
+        }
 
         const q = query.toLowerCase();
-        const matched = cy.nodes().filter(node => {
-            const label = (node.data('label') || '').toLowerCase();
-            const path = (node.data('path') || '').toLowerCase();
-            return label.includes(q) || path.includes(q);
+        const newColors = baseColorsRef.current.slice();
+        let anyMatch = false;
+        visibleNodesRef.current.forEach((node, i) => {
+            const labelStr = (node.label || "").toLowerCase();
+            const pathStr = (node.path || "").toLowerCase();
+            if (labelStr.includes(q) || pathStr.includes(q)) {
+                anyMatch = true;
+                newColors[i * 4]     = 0.98;
+                newColors[i * 4 + 1] = 0.90;
+                newColors[i * 4 + 2] = 0.00;
+                newColors[i * 4 + 3] = 1.0;
+            } else {
+                newColors[i * 4 + 3] = 0.08;
+            }
         });
-
-        if (matched.length > 0) {
-            // Dim non-matching
-            cy.nodes().style('opacity', 0.15);
-            cy.edges().style('opacity', 0.08);
-            // Highlight matched
-            matched.style('opacity', 1);
-            matched.style('border-width', 3);
-            matched.style('border-color', '#facc15');
-            // Show labels on matched nodes
-            matched.forEach(node => {
-                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
-            });
-            // Also highlight their edges
-            matched.connectedEdges().style('opacity', 0.8);
-        }
-    }, [clearNodeFocus]);
+        if (anyMatch) graph.setPointColors(newColors);
+    }, []);
 
     useEffect(() => {
         if (!containerRef.current) return;
 
-        const savedPos = savedPositionsRef.current;
-        savedPositionsRef.current = null;
+        const { visNodes, visEdges } = filterByVisibility(elements, visibilityRef.current);
+        const { pointPositions, pointColors, pointSizes, pointShapes, linkArray, linkColors, nodeIndexMap, simNodeList } = buildCosmosArrays(visNodes, visEdges);
 
-        // Initialize cytoscape
-        const cy = cytoscape({
-            container: containerRef.current,
-            elements: elements,
-            style: [
-                {
-                    selector: 'node',
-                    style: {
-                        'background-color': 'data(color)',
-                        'width': 'data(size)',
-                        'height': 'data(size)',
-                        'label': isLargeRepo ? '' : 'data(displayLabel)',
-                        'color': '#ffffff',
-                        'text-valign': 'center',
-                        'text-halign': 'right',
-                        'text-margin-x': 8,
-                        'font-size': '11px',
-                        'font-family': 'monospace',
-                        'text-wrap': 'ellipsis',
-                        'text-max-width': '150px',
-                        'text-outline-width': 1.5,
-                        'text-outline-color': '#0f172a',
-                        'text-outline-opacity': 0.8,
-                    }
-                },
-                {
-                    selector: 'node[type="folder"]',
-                    style: {
-                        'border-width': 2,
-                        'border-color': 'rgba(255, 255, 255, 0.4)',
-                        'font-weight': 'bold',
-                        'font-size': '12px',
-                        'label': isLargeRepo ? '' : 'data(displayLabel)',
-                    }
-                },
-                {
-                    selector: 'node[type="folder"][showLabel = 1]',
-                    style: {
-                        'label': isLargeRepo ? 'data(compactLabel)' : 'data(displayLabel)',
-                    }
-                },
-                {
-                    selector: 'node[type="symbol"]',
-                    style: {
-                        'background-color': 'data(color)',
-                        'shape': 'ellipse',
-                        'width': 'data(size)',
-                        'height': 'data(size)',
-                        'label': isLargeRepo ? '' : 'data(compactLabel)',
-                        'font-size': '9px',
-                        'font-family': 'monospace',
-                        'text-halign': 'center',
-                        'text-valign': 'bottom',
-                        'text-margin-y': 8,
-                        'border-width': 1,
-                        'border-color': 'rgba(255,255,255,0.35)',
-                    }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="class"]',
-                    style: { 'shape': 'hexagon' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="interface"]',
-                    style: { 'shape': 'round-rectangle' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="type"]',
-                    style: { 'shape': 'diamond' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="method"]',
-                    style: { 'shape': 'triangle' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="variable"]',
-                    style: { 'shape': 'pentagon' }
-                },
-                {
-                    selector: 'edge',
-                    style: {
-                        'width': 1,
-                        'line-color': '#334155',
-                        'opacity': 0.4,
-                        'curve-style': 'bezier',
-                        'control-point-step-size': 40,
-                        'target-arrow-shape': 'none'
-                    }
-                },
-                {
-                    selector: 'edge[type="contains"]',
-                    style: {
-                        'width': 1,
-                        'line-color': '#34d399',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier'
-                    }
-                },
-                {
-                    selector: 'edge[type="defines"]',
-                    style: {
-                        'width': 0.9,
-                        'line-color': '#22d3ee',
-                        'opacity': 0.7,
-                        'curve-style': 'unbundled-bezier',
-                        'control-point-distances': [25],
-                        'control-point-weights': [0.5],
-                    }
-                },
-                {
-                    selector: 'edge[type="imports"]',
-                    style: {
-                        'width': 1.1,
-                        'line-color': '#3b82f6',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="calls"]',
-                    style: {
-                        'width': 1.1,
-                        'line-color': '#8b5cf6',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="extends"]',
-                    style: {
-                        'width': 1.2,
-                        'line-color': '#f97316',
-                        'opacity': 0.75,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="implements"]',
-                    style: {
-                        'width': 1.2,
-                        'line-color': '#ec4899',
-                        'opacity': 0.75,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    // File-to-file code dependency edge — visually distinct from tree edges
-                    selector: 'edge[type="fileImport"]',
-                    style: {
-                        'width': 1.5,
-                        'line-color': '#fbbf24',
-                        'opacity': 0.55,
-                        'curve-style': 'unbundled-bezier',
-                        'control-point-distances': [40],
-                        'control-point-weights': [0.5],
-                        'line-style': 'dashed',
-                        'line-dash-pattern': [6, 4],
-                        'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#fbbf24',
-                        'arrow-scale': 0.8,
-                    }
-                },
-                {
-                    selector: 'node:selected',
-                    style: {
-                        'border-width': 3,
-                        'border-color': '#ffffff'
-                    }
-                }
-            ],
-            userZoomingEnabled: false,
-            minZoom: MIN_ZOOM,
-            maxZoom: MAX_ZOOM,
-        });
+        nodeIndexMapRef.current = nodeIndexMap;
+        visibleNodesRef.current = simNodeList;
+        baseColorsRef.current = pointColors.slice();
+        lockedNodeIdxRef.current = null;
 
-        // Build d3-force sim nodes from graph elements
-        const simNodes: SimNode[] = elements.nodes.map((n) => {
-            const d = n.data as Record<string, unknown>;
-            const id = d.id as string;
-            const sp = savedPos?.nodes[id];
-            return {
-                id,
-                type: ((d.type as string) ?? "file") as SimNode["type"],
-                radius: typeof d.size === "number" ? (d.size as number) / 2 : 8,
-                x: sp?.x ?? 0,
-                y: sp?.y ?? 0,
-            };
-        });
+        const nodeCount = simNodeList.length;
+        const repulsion = nodeCount > 5000 ? 0.15 : nodeCount > 2000 ? 0.25 : nodeCount > 500 ? 0.4 : 0.5;
+        const gravity   = nodeCount > 5000 ? 0.30 : nodeCount > 2000 ? 0.20 : nodeCount > 500 ? 0.1 : 0.05;
+        const friction  = nodeCount > 5000 ? 0.80 : nodeCount > 2000 ? 0.60 : nodeCount > 500 ? 0.2 : 0.05;
+        const decay     = nodeCount > 5000 ? 1000 : nodeCount > 2000 ? 3000 : nodeCount > 500 ? 10000 : 100000;
 
-        // True when re-initializing after symbol analysis completes (positions already settled)
-        const hasSavedPos = savedPos !== null &&
-            simNodes.some(n => savedPos.nodes[n.id] !== undefined);
-
-        const simNodeById = new Map(simNodes.map((n) => [n.id, n]));
-
-        const allSimLinks = elements.edges
-            .map((e) => {
-                const d = e.data as Record<string, unknown>;
-                const src = simNodeById.get(d.source as string);
-                const tgt = simNodeById.get(d.target as string);
-                if (!src || !tgt) return null;
-                return { source: src, target: tgt, edgeType: (d.type as string) ?? "contains" } as unknown as SimLink;
-            })
-            .filter((l) => l !== null) as SimLink[];
-
-        // Categorize links by type so toggles can add/remove them from the sim
-        const simLinksByType = new Map<string, SimLink[]>();
-        for (const l of allSimLinks) {
-            const bucket = simLinksByType.get(l.edgeType) ?? [];
-            bucket.push(l);
-            simLinksByType.set(l.edgeType, bucket);
-        }
-        simLinksByTypeRef.current = simLinksByType;
-        simNodeMapRef.current = simNodeById;
-
-        // Initial sim uses only structural contains edges — code edges start off
-        const initialLinks = simLinksByType.get("contains") ?? [];
-
-        // Scatter simNode positions directly (not just Cytoscape positions)
-        // so d3-force starts from a spread state, not all at (0,0)
-        const nodeCount = simNodes.length;
-        const scatterR = Math.sqrt(nodeCount) * 20;
-
-        // Scatter non-symbol nodes first (skip if restoring saved positions)
-        if (!hasSavedPos) {
-            for (const n of simNodes) {
-                if (n.type !== "symbol") {
-                    n.x = (Math.random() - 0.5) * 2 * scatterR;
-                    n.y = (Math.random() - 0.5) * 2 * scatterR;
-                }
-            }
-        }
-        // Symbol nodes: init near their parent file (from defines links) so defines edges
-        // immediately pull in the right direction rather than dragging from across the canvas
-        for (const l of (simLinksByType.get("defines") ?? [])) {
-            const src = l.source as SimNode;
-            const tgt = l.target as SimNode;
-            if (src.type === "file" && tgt.type === "symbol" && tgt.x === 0 && tgt.y === 0) {
-                tgt.x = (src.x ?? 0) + (Math.random() - 0.5) * 40;
-                tgt.y = (src.y ?? 0) + (Math.random() - 0.5) * 40;
-            }
-        }
-        // Any symbol without a defines link: scatter normally
-        for (const n of simNodes) {
-            if (n.type === "symbol" && n.x === 0 && n.y === 0) {
-                n.x = (Math.random() - 0.5) * 2 * scatterR;
-                n.y = (Math.random() - 0.5) * 2 * scatterR;
-            }
-        }
-        // Sync Cytoscape positions from simNode positions
-        cy.nodes().forEach((node) => {
-            const sn = simNodeById.get(node.id());
-            if (sn?.x != null && sn.y != null) node.position({ x: sn.x, y: sn.y });
-        });
-        if (hasSavedPos && savedPos) {
-            cy.viewport({ zoom: savedPos.zoom, pan: savedPos.pan });
-        } else {
-            cy.zoom(0.6);
-            cy.center();
-        }
-
-        // Initialize dynamic-force refs
-        simNodesRef.current = simNodes;
-        boundsRRef.current = Math.sqrt(nodeCount) * 80;
-        prevLinkCountRef.current = initialLinks.length;
-
-        // Scale charge so total repulsion energy grows as √N instead of N
-        const chargeScale = Math.max(0.05, 1 / Math.sqrt(nodeCount / 10));
-        const centerStrength = nodeCount > 500 ? 0.15 : nodeCount > 100 ? 0.2 : 0.3;
-
-        // Precompute total connection count per node (all edge types) for connectivity-based charge
-        const connectionCounts = new Map<string, number>();
-        for (const l of allSimLinks) {
-            const srcId = (l.source as SimNode).id;
-            const tgtId = (l.target as SimNode).id;
-            connectionCounts.set(srcId, (connectionCounts.get(srcId) ?? 0) + 1);
-            connectionCounts.set(tgtId, (connectionCounts.get(tgtId) ?? 0) + 1);
-        }
-
-        const sim = forceSimulation<SimNode>(simNodes)
-            .force(
-                "charge",
-                forceManyBody<SimNode>().strength((n) => {
-                    const connections = connectionCounts.get(n.id) ?? 0;
-                    const base = connections === 0 ? -800
-                               : connections <= 2  ? -400
-                               : connections <= 5  ? -200
-                               :                     -100;
-                    return base * chargeScale;
-                })
-            )
-            .force(
-                "link",
-                forceLink<SimNode, SimLink>(initialLinks)
-                    .id((n) => n.id)
-                    .distance((l) => {
-                        if (l.edgeType === "defines")    return 40;
-                        if (l.edgeType === "fileImport") return 80;
-                        if (l.edgeType === "contains")   return 160;
-                        return 120;
-                    })
-                    .strength((l) => {
-                        if (l.edgeType === "defines")    return 0.9;
-                        if (l.edgeType === "fileImport") return 1.0;
-                        if (l.edgeType === "contains")   return 0.3;
-                        return 0.8;
-                    })
-            )
-            .force("center", forceCenter(0, 0).strength(centerStrength))
-            .force("collide", forceCollide<SimNode>()
-                .radius((n) => {
-                    if (n.type === "root")   return 60;
-                    if (n.type === "folder") return 40;
-                    if (n.type === "file")   return 20;
-                    return 12;
-                })
-                .strength(0.9)
-            )
-            .force("bounds", () => {
-                for (const n of simNodes) {
-                    if (n.x == null || n.y == null) continue;
-                    const dist = Math.sqrt(n.x * n.x + n.y * n.y);
-                    if (dist > boundsRRef.current) {
-                        const pull = ((dist - boundsRRef.current) / dist) * 0.05;
-                        n.vx = (n.vx ?? 0) - n.x * pull;
-                        n.vy = (n.vy ?? 0) - n.y * pull;
-                    }
-                }
-            })
-            .alphaDecay(isLargeRepo ? 0.04 : 0.023)
-            .velocityDecay(0.6)
-            .alphaTarget(0.005)
-            .stop();
-
-        simRef.current = sim;
-
-        // Pre-warm simulation so nodes start spread out rather than piled.
-        // Skip when restoring saved positions — nodes are already settled.
-        if (!hasSavedPos) {
-            const warmupTicks = nodeCount > 500 ? 20 : nodeCount > 100 ? 50 : 80;
-            for (let i = 0; i < warmupTicks; i++) sim.tick();
-            cy.batch(() => {
-                for (const n of simNodes) {
-                    if (n.x == null || n.y == null) continue;
-                    const cn = cy.getElementById(n.id);
-                    if (cn.nonempty()) cn.position({ x: n.x, y: n.y });
-                }
-            });
-        }
-
-        const grabbedNodeId = { current: null as string | null };
-        const lockedNodeId = { current: null as string | null };
-        // Skip auto-fit when re-initializing after symbol analysis (viewport already restored)
-        let settled = hasSavedPos;
-        let rafId = 0;
-
-        function loop() {
-            sim.tick();
-
-            let maxDelta = 0;
-            cy.batch(() => {
-                for (const n of simNodes) {
-                    if (n.id === grabbedNodeId.current) continue;
-                    if (n.x == null || n.y == null) continue;
-                    const cyNode = cy.getElementById(n.id);
-                    if (!cyNode.nonempty()) continue;
-                    const pos = cyNode.position();
-                    const dx = n.x - pos.x;
-                    const dy = n.y - pos.y;
-                    const delta = Math.abs(dx) + Math.abs(dy);
-                    if (delta > 0.4) {
-                        maxDelta = Math.max(maxDelta, delta);
-                        cyNode.position({ x: n.x, y: n.y });
-                    }
-                }
-            });
-
-            // Adaptive render threshold: skip full canvas redraw when nearly settled
-            const renderThreshold = sim.alpha() < 0.03 ? 2.0 : 0.4;
-            if (maxDelta > renderThreshold) {
-                cy.forceRender();
-            }
-
-            if (!settled && sim.alpha() < 0.04) {
-                settled = true;
-                cy.fit(cy.elements(), 50);
-            }
-
-            rafId = requestAnimationFrame(loop);
-        }
-
-        rafId = requestAnimationFrame(loop);
-
-        // Drag handlers: pin/unpin nodes in d3-force while Cytoscape handles visual drag
-        cy.on("grab", "node", (evt) => {
-            const pos = evt.target.position();
-            const simNode = simNodeById.get(evt.target.id());
-            if (simNode) { simNode.fx = pos.x; simNode.fy = pos.y; }
-            grabbedNodeId.current = evt.target.id();
-            sim.alpha(Math.max(sim.alpha(), 0.3));
-        });
-
-        cy.on("drag", "node", (evt) => {
-            const pos = evt.target.position();
-            const simNode = simNodeById.get(evt.target.id());
-            if (simNode) { simNode.fx = pos.x; simNode.fy = pos.y; }
-        });
-
-        cy.on("free", "node", (evt) => {
-            const simNode = simNodeById.get(evt.target.id());
-            if (simNode) { simNode.fx = null; simNode.fy = null; }
-            grabbedNodeId.current = null;
-            sim.alpha(Math.max(sim.alpha(), 0.25));
-        });
-
-        // Add event listeners
-        cy.on('tap', 'node', (evt) => {
-            const node = evt.target;
-            const data = node.data();
-
-            lockedNodeId.current = node.id();
-            focusNodeNeighborhood(cy, node);
-
-            if (data.type === "file") {
-                setSymbolFocus(null);
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: data.label,
-                    path: data.path,
-                    type: "file",
-                    extension: data.extension,
-                    size: data.rawSize
-                });
-            } else if (data.type === "symbol" && data.parentPath) {
-                const parentPath = String(data.parentPath);
-                const fileLabel = parentPath.split("/").pop() || parentPath;
-                const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
-                setSymbolFocus(String(data.label));
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: fileLabel,
-                    path: parentPath,
-                    type: "file",
-                    extension: ext,
-                });
-            }
-        });
-
-        // Tap on empty canvas resets node-focus context.
-        cy.on('tap', (evt) => {
-            if (evt.target === cy) {
-                lockedNodeId.current = null;
-                clearNodeFocus(cy);
-            }
-        });
-
-        // Hover: show this node's family, blur everything else.
-        cy.on('mouseover', 'node', (evt) => {
-            if (containerRef.current) containerRef.current.style.cursor = 'pointer';
-            const node = evt.target;
-            focusNodeNeighborhood(cy, node);
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('font-size', '11px');
-                node.style('z-index', 999);
-            }
-        });
-
-        cy.on('mouseout', 'node', (evt) => {
-            if (containerRef.current) containerRef.current.style.cursor = 'default';
-            const node = evt.target;
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('z-index', 0);
-            }
-            // If a node was clicked (locked), restore its focus; otherwise clear.
-            if (lockedNodeId.current) {
-                const locked = cy.getElementById(lockedNodeId.current);
-                if (locked.nonempty()) {
-                    focusNodeNeighborhood(cy, locked);
+        const graph = new Graph(containerRef.current, {
+            backgroundColor: '#07050f',
+            fitViewOnInit: true,
+            fitViewDelay: 300,
+            enableDrag: true,
+            curvedLinks: false,
+            renderLinks: true,
+            pointSizeScale: 1,
+            linkWidthScale: 1,
+            simulationRepulsion: repulsion,
+            simulationGravity: gravity,
+            simulationFriction: friction,
+            simulationLinkSpring: 0.5,
+            simulationLinkDistance: nodeCount > 1000 ? 50 : 80,
+            simulationDecay: decay,
+            renderHoveredPointRing: true,
+            hoveredPointRingColor: '#facc15',
+            hoveredPointCursor: 'pointer',
+            onClick: (pointIndex: number | undefined) => {
+                if (pointIndex === undefined) {
+                    lockedNodeIdxRef.current = null;
+                    graphRef.current?.setPointColors(baseColorsRef.current.slice());
                     return;
                 }
-            }
-            clearNodeFocus(cy);
+                const node = visibleNodesRef.current[pointIndex];
+                if (!node) return;
+                lockedNodeIdxRef.current = pointIndex;
+                applyHoverEffect(pointIndex);
+                if (node.type === "file") {
+                    setSymbolFocus(null);
+                    setFocusLine(null);
+                    setShowExplorerInspector(true);
+                    setSelectedFile({
+                        label: node.label,
+                        path: node.path ?? "",
+                        type: "file",
+                        extension: node.ext,
+                        size: node.rawSize,
+                    });
+                } else if (node.type === "symbol" && node.parentPath) {
+                    const fileLabel = node.parentPath.split("/").pop() || node.parentPath;
+                    const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                    setSymbolFocus(node.label);
+                    setFocusLine(null);
+                    setShowExplorerInspector(true);
+                    setSelectedFile({
+                        label: fileLabel,
+                        path: node.parentPath,
+                        type: "file",
+                        extension: ext,
+                    });
+                }
+            },
+            onMouseMove: (pointIndex: number | undefined) => {
+                if (lockedNodeIdxRef.current !== null) return;
+                if (pointIndex === undefined) {
+                    graphRef.current?.setPointColors(baseColorsRef.current.slice());
+                } else {
+                    applyHoverEffect(pointIndex);
+                }
+            },
         });
 
-        cyRef.current = cy;
-        applyVisibility(cy);
+        graphRef.current = graph;
 
-        const wheelContainer = containerRef.current!;
-        const onWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            const cyInst = cyRef.current;
-            if (!cyInst) return;
-            const factor = e.deltaY < 0 ? 1.15 : 0.87;
-            const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cyInst.zoom() * factor));
-            const rect = wheelContainer.getBoundingClientRect();
-            cyInst.zoom({
-                level: newZoom,
-                renderedPosition: { x: e.clientX - rect.left, y: e.clientY - rect.top },
+        graph.setPointPositions(pointPositions);
+        graph.setPointColors(pointColors);
+        graph.setPointSizes(pointSizes);
+        graph.setPointShapes(pointShapes);
+        graph.setLinks(linkArray);
+        graph.setLinkColors(linkColors);
+
+        const labelNodeIndices = simNodeList
+            .map((nd, i) => ({ nd, i }))
+            .filter(({ nd }) => nd.type === "root" || nd.type === "folder" || nd.showLabel === 1 || (nd.hubScore !== undefined && nd.hubScore > 0))
+            .map(({ i }) => i);
+        graph.trackPointPositionsByIndices(labelNodeIndices);
+        graph.start();
+
+        const labelCanvas = labelCanvasRef.current;
+        function drawLabels() {
+            if (!labelCanvas || !graphRef.current) {
+                labelRafRef.current = requestAnimationFrame(drawLabels);
+                return;
+            }
+            const ctx = labelCanvas.getContext("2d");
+            if (!ctx) {
+                labelRafRef.current = requestAnimationFrame(drawLabels);
+                return;
+            }
+            const dpr = window.devicePixelRatio || 1;
+            const w = labelCanvas.clientWidth;
+            const h = labelCanvas.clientHeight;
+            if (w > 0 && h > 0 && (labelCanvas.width !== Math.round(w * dpr) || labelCanvas.height !== Math.round(h * dpr))) {
+                labelCanvas.width = Math.round(w * dpr);
+                labelCanvas.height = Math.round(h * dpr);
+                ctx.scale(dpr, dpr);
+            }
+            ctx.clearRect(0, 0, w, h);
+            const posMap = graphRef.current.getTrackedPointPositionsMap();
+            ctx.font = "11px monospace";
+            ctx.fillStyle = "#94a3b8";
+            ctx.textBaseline = "middle";
+            posMap.forEach((spacePos, idx) => {
+                const nd = visibleNodesRef.current[idx];
+                if (!nd) return;
+                const screenPos = graphRef.current!.spaceToScreenPosition(spacePos);
+                if (!screenPos) return;
+                ctx.fillText(nd.label, screenPos[0] + nd.radius + 4, screenPos[1]);
             });
-        };
-        wheelContainer.addEventListener('wheel', onWheel, { passive: false });
+            labelRafRef.current = requestAnimationFrame(drawLabels);
+        }
+        labelRafRef.current = requestAnimationFrame(drawLabels);
 
         return () => {
-            wheelContainer.removeEventListener('wheel', onWheel);
-            cancelAnimationFrame(rafId);
-            sim.stop();
-            simRef.current = null;
-            simNodesRef.current = [];
-            // Save viewport + node positions so re-init (e.g. after symbol analysis) is seamless
-            const saved: { zoom: number; pan: { x: number; y: number }; nodes: Record<string, { x: number; y: number }> } = {
-                zoom: cy.zoom(),
-                pan: cy.pan(),
-                nodes: {},
-            };
-            cy.nodes().forEach(n => { saved.nodes[n.id()] = n.position(); });
-            savedPositionsRef.current = saved;
-            cy.destroy();
+            cancelAnimationFrame(labelRafRef.current);
+            graph.destroy();
+            graphRef.current = null;
         };
-    }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
+    }, [elements, applyHoverEffect]);
+
+    // Tab visibility: pause simulation when tab is hidden
+    useEffect(() => {
+        const handler = () => {
+            if (document.hidden) graphRef.current?.pause();
+            else graphRef.current?.unpause();
+        };
+        document.addEventListener("visibilitychange", handler);
+        return () => document.removeEventListener("visibilitychange", handler);
+    }, []);
+
 
     useEffect(() => {
         visibilityRef.current = {
@@ -2034,79 +1697,18 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             symbolKindVisibility,
         };
         applyVisibility();
-
-        // Sync active simulation links with current visibility state
-        const sim = simRef.current;
-        const lf = sim?.force<ForceLink<SimNode, SimLink>>("link");
-        if (sim && lf) {
-            const linkMap = simLinksByTypeRef.current;
-            const s = visibilityRef.current;
-            const activeLinks: SimLink[] = [
-                ...(linkMap.get("contains") ?? []),
-                ...(s.showDefinesEdges    ? (linkMap.get("defines")     ?? []) : []),
-                ...(s.showImportsEdges    ? (linkMap.get("imports")     ?? []) : []),
-                ...(s.showCallsEdges      ? (linkMap.get("calls")       ?? []) : []),
-                ...(s.showExtendsEdges    ? (linkMap.get("extends")     ?? []) : []),
-                ...(s.showImplementsEdges ? (linkMap.get("implements")  ?? []) : []),
-                ...(s.showFileImportEdges ? (linkMap.get("fileImport")  ?? []) : []),
-            ];
-            lf.links(activeLinks);
-
-            // Recalculate forces based on current active graph density
-            const allSimNodes = simNodesRef.current;
-            const dynNodeCount = allSimNodes.length;
-            const avgDegree = dynNodeCount > 0 ? activeLinks.length / dynNodeCount : 0;
-            const edgeBoost = 1 + avgDegree * 0.3;
-            const newChargeScale = Math.max(0.05, 1 / Math.sqrt(Math.max(1, dynNodeCount) / 10)) * edgeBoost;
-
-            const dynConnectionCounts = new Map<string, number>();
-            for (const l of activeLinks) {
-                const srcId = (l.source as SimNode).id;
-                const tgtId = (l.target as SimNode).id;
-                dynConnectionCounts.set(srcId, (dynConnectionCounts.get(srcId) ?? 0) + 1);
-                dynConnectionCounts.set(tgtId, (dynConnectionCounts.get(tgtId) ?? 0) + 1);
-            }
-            sim.force("charge", forceManyBody<SimNode>().strength((n: SimNode) => {
-                const connections = dynConnectionCounts.get(n.id) ?? 0;
-                const base = connections === 0 ? -800
-                           : connections <= 2  ? -400
-                           : connections <= 5  ? -200
-                           :                     -100;
-                return base * newChargeScale;
-            }));
-
-            const distMult = 1 + Math.log2(Math.max(2, avgDegree + 1));
-            lf.distance((l: SimLink) => {
-                if (l.edgeType === "defines")    return 40;
-                if (l.edgeType === "fileImport") return 80 * distMult;
-                if (l.edgeType === "contains")   return 160;
-                return 120 * distMult;
-            });
-            lf.strength((l: SimLink) => {
-                if (l.edgeType === "defines")    return Math.max(0.15, 0.9  / edgeBoost);
-                if (l.edgeType === "fileImport") return Math.max(0.2,  1.0  / edgeBoost);
-                if (l.edgeType === "contains")   return 0.3;
-                return Math.max(0.08, 0.8 / edgeBoost);
-            });
-
-            const newCenterStr = activeLinks.length > 500 ? 0.05
-                               : activeLinks.length > 100 ? 0.12
-                               :                            0.2;
-            sim.force("center", forceCenter<SimNode>(0, 0).strength(newCenterStr));
-
-            boundsRRef.current = Math.sqrt(Math.max(1, dynNodeCount)) * 80
-                * Math.max(1, 1 + Math.log2(Math.max(1, avgDegree)));
-
-            const linkDelta = Math.abs(activeLinks.length - prevLinkCountRef.current);
-            prevLinkCountRef.current = activeLinks.length;
-            const reheatAlpha = Math.min(0.9, 0.3 + Math.sqrt(linkDelta) / 50);
-            sim.alpha(Math.max(sim.alpha(), reheatAlpha));
-        }
     }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility]);
 
-    const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
-    const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);
-    const handleFit = () => cyRef.current?.fit(undefined, 50);
+    const handleZoomIn = () => {
+        const g = graphRef.current;
+        if (g) g.zoom(g.getZoomLevel() * 1.4, 200);
+    };
+    const handleZoomOut = () => {
+        const g = graphRef.current;
+        if (g) g.zoom(g.getZoomLevel() * 0.7, 200);
+    };
+    const handleFit = () => graphRef.current?.fitView(300);
+
 
     const handlePreset = (preset: "overview" | "clusters" | "full") => {
         setActivePreset(preset);
@@ -2507,6 +2109,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 )}
 
                 <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl" />
+                <canvas ref={labelCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
 
                 <div className="absolute bottom-2 right-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1 flex flex-row items-center gap-1">

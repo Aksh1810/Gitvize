@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@cosmos.gl/graph": "^2.6.4",
     "@radix-ui/react-slot": "^1.2.4",
     "@types/cytoscape": "^3.21.9",
     "@types/prismjs": "^1.26.6",
