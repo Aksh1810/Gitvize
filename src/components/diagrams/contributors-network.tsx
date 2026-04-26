@@ -28,23 +28,35 @@ function AvatarWithFallback({ src, alt, className }: { src?: string; alt: string
 
 interface ContributorsNetworkProps {
     contributors: Contributor[];
+    truncated?: boolean;
+    fetchError?: string | null;
 }
 
 export default function ContributorsNetwork({
     contributors,
+    truncated,
+    fetchError,
 }: ContributorsNetworkProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"commits" | "name">("commits");
 
     if (contributors.length === 0) {
+        const emptyMsg =
+            fetchError === "rate_limited"
+                ? "GitHub API rate limit reached. Add a token to load contributor data."
+                : fetchError
+                ? "Failed to load contributor data. Try adding a GitHub token."
+                : "No contributors found for this repository.";
         return (
             <div className="flex items-center justify-center h-full">
                 <div className="text-center">
                     <div className="text-4xl mb-4">👥</div>
-                    <p className="text-sm text-gray-400">No contributor data available.</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                        Try adding a GitHub Personal Access Token for private repos.
-                    </p>
+                    <p className="text-sm text-gray-400">{emptyMsg}</p>
+                    {fetchError && (
+                        <p className="text-xs text-gray-500 mt-1">
+                            Add a GitHub Personal Access Token to increase rate limits.
+                        </p>
+                    )}
                 </div>
             </div>
         );
@@ -60,6 +72,12 @@ export default function ContributorsNetwork({
                     <Badge variant="secondary" className="text-[10px]">{contributors.length}</Badge>
                 </div>
             </div>
+
+            {truncated && (
+                <div className="shrink-0 px-4 py-1 text-xs text-amber-400/80 bg-amber-500/5 border-b border-amber-500/20">
+                    Showing top {contributors.length} contributors by commit count
+                </div>
+            )}
 
             {/* Content */}
             <div className="flex-1 overflow-hidden">

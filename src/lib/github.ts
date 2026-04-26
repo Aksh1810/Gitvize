@@ -162,19 +162,43 @@ export async function fetchContributors(
     owner: string,
     repo: string,
     token?: string | null
-): Promise<Contributor[]> {
+): Promise<{ data: Contributor[]; truncated: boolean }> {
+    const hasToken = !!(token?.trim() || process.env.GITHUB_TOKEN?.trim());
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ghFetch<any[]>(
-        `/repos/${owner}/${repo}/contributors?per_page=30`,
+    const page1 = await ghFetch<any[]>(
+        `/repos/${owner}/${repo}/contributors?per_page=100&page=1`,
         token
     );
-    return data.map((c) => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mapItem = (c: any): Contributor => ({
         login: c.login,
         id: c.id,
         avatarUrl: c.avatar_url,
         contributions: c.contributions,
         htmlUrl: c.html_url,
-    }));
+    });
+    const all: Contributor[] = page1.map(mapItem);
+
+    // With a token, paginate up to 500 total (5 pages of 100)
+    if (hasToken && page1.length === 100) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const extraPages = await Promise.allSettled<any[]>(
+            [2, 3, 4, 5].map((p) =>
+                ghFetch<any[]>(
+                    `/repos/${owner}/${repo}/contributors?per_page=100&page=${p}`,
+                    token
+                )
+            )
+        );
+        for (const result of extraPages) {
+            if (result.status !== "fulfilled" || result.value.length === 0) break;
+            all.push(...result.value.map(mapItem));
+            if (result.value.length < 100) break;
+        }
+    }
+
+    return { data: all, truncated: all.length === 500 };
 }
 
 // --- Branches ---
@@ -558,11 +582,21 @@ export async function fetchAllRepoData(
     repo: string,
     token?: string | null
 ) {
-    const [metadata, contributors, languages] = await Promise.all([
+    let contributorsFetchError: string | null = null;
+    const [metadata, contributorsResult, languages] = await Promise.all([
         fetchRepoMetadata(owner, repo, token),
-        fetchContributors(owner, repo, token).catch(() => []),
+        fetchContributors(owner, repo, token).catch((err) => {
+            const msg = (err as Error)?.message ?? String(err);
+            console.warn("[contributors] fetch failed:", msg);
+            contributorsFetchError = /rate.?limit|secondary.?rate/i.test(msg)
+                ? "rate_limited"
+                : "fetch_failed";
+            return { data: [] as Contributor[], truncated: false };
+        }),
         fetchLanguages(owner, repo, token).catch(() => ({})),
     ]);
+    const contributors = contributorsResult.data;
+    const contributorsTruncated = contributorsResult.truncated;
 
     // Fetch branches first so their HEAD SHAs can seed the multi-branch commit fetch
     const branches = await fetchBranches(owner, repo, metadata.defaultBranch, token).catch(() => []);
@@ -584,6 +618,8 @@ export async function fetchAllRepoData(
         metadata,
         fileTree,
         contributors,
+        contributorsTruncated,
+        contributorsFetchError,
         branches,
         commits,
         readme,

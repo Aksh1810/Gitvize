@@ -43,6 +43,8 @@ interface RepoData {
     metadata: RepoMetadata;
     fileTree: FileTreeResponse | null;
     contributors: Contributor[];
+    contributorsTruncated?: boolean;
+    contributorsFetchError?: string | null;
     branches: Branch[];
     commits: Commit[];
     readme: string;
@@ -597,8 +599,14 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     }, [fileTypeLegend, owner, repo, repoData?.fileTree]);
 
     const contributorsTabContent = useMemo(
-        () => <ContributorsNetwork contributors={repoData?.contributors ?? []} />,
-        [repoData?.contributors]
+        () => (
+            <ContributorsNetwork
+                contributors={repoData?.contributors ?? []}
+                truncated={repoData?.contributorsTruncated}
+                fetchError={repoData?.contributorsFetchError}
+            />
+        ),
+        [repoData?.contributors, repoData?.contributorsTruncated, repoData?.contributorsFetchError]
     );
 
     const branchesTabContent = useMemo(() => {
