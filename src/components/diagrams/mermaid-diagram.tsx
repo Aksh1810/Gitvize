@@ -267,7 +267,8 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
         return () => {
             clearPendingFitFrames();
         };
-    }, [clearPendingFitFrames]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
         if (e.button !== 0) return;

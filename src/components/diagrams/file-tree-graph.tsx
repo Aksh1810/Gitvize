@@ -272,6 +272,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const simNodeMapRef = useRef<Map<string, SimNode>>(new Map());
     const simNodesRef = useRef<SimNode[]>([]);
     const boundsRRef = useRef(300);
+    const savedPositionsRef = useRef<{
+        zoom: number;
+        pan: { x: number; y: number };
+        nodes: Record<string, { x: number; y: number }>;
+    } | null>(null);
     const prevLinkCountRef = useRef(0);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
@@ -675,7 +680,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
     useEffect(() => {
         let cancelled = false;
+        let idleId = 0;
 
+        idleId = requestIdleCallback(() => {
         const runSymbolAnalysis = async () => {
             const selection = selectSymbolAnalysisFiles(tree, {
                 maxFileBytes: MAX_SYMBOL_FILE_BYTES,
@@ -781,9 +788,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         };
 
         runSymbolAnalysis();
+        }); // end requestIdleCallback
 
         return () => {
             cancelled = true;
+            cancelIdleCallback(idleId);
         };
     }, [owner, repo, tree]);
 
@@ -791,7 +800,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     // Fetches non-JS/TS source files and extracts file-to-file import edges.
     useEffect(() => {
         let cancelled = false;
+        let idleId = 0;
 
+        idleId = requestIdleCallback(() => {
         const runMultiLangAnalysis = async () => {
             const jstsExts = new Set(["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"]);
             const nonJsTsFiles = tree.filter((item) => {
@@ -848,7 +859,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         };
 
         runMultiLangAnalysis();
-        return () => { cancelled = true; };
+        }); // end requestIdleCallback
+
+        return () => {
+            cancelled = true;
+            cancelIdleCallback(idleId);
+        };
     }, [owner, repo, tree]);
 
     // Build graph elements — show all files
@@ -1477,6 +1493,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     useEffect(() => {
         if (!containerRef.current) return;
 
+        const savedPos = savedPositionsRef.current;
+        savedPositionsRef.current = null;
+
         // Initialize cytoscape
         const cy = cytoscape({
             container: containerRef.current,
@@ -1655,14 +1674,20 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         // Build d3-force sim nodes from graph elements
         const simNodes: SimNode[] = elements.nodes.map((n) => {
             const d = n.data as Record<string, unknown>;
+            const id = d.id as string;
+            const sp = savedPos?.nodes[id];
             return {
-                id: d.id as string,
+                id,
                 type: ((d.type as string) ?? "file") as SimNode["type"],
                 radius: typeof d.size === "number" ? (d.size as number) / 2 : 8,
-                x: 0,
-                y: 0,
+                x: sp?.x ?? 0,
+                y: sp?.y ?? 0,
             };
         });
+
+        // True when re-initializing after symbol analysis completes (positions already settled)
+        const hasSavedPos = savedPos !== null &&
+            simNodes.some(n => savedPos.nodes[n.id] !== undefined);
 
         const simNodeById = new Map(simNodes.map((n) => [n.id, n]));
 
@@ -1694,11 +1719,13 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         const nodeCount = simNodes.length;
         const scatterR = Math.sqrt(nodeCount) * 20;
 
-        // Scatter non-symbol nodes first
-        for (const n of simNodes) {
-            if (n.type !== "symbol") {
-                n.x = (Math.random() - 0.5) * 2 * scatterR;
-                n.y = (Math.random() - 0.5) * 2 * scatterR;
+        // Scatter non-symbol nodes first (skip if restoring saved positions)
+        if (!hasSavedPos) {
+            for (const n of simNodes) {
+                if (n.type !== "symbol") {
+                    n.x = (Math.random() - 0.5) * 2 * scatterR;
+                    n.y = (Math.random() - 0.5) * 2 * scatterR;
+                }
             }
         }
         // Symbol nodes: init near their parent file (from defines links) so defines edges
@@ -1706,7 +1733,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         for (const l of (simLinksByType.get("defines") ?? [])) {
             const src = l.source as SimNode;
             const tgt = l.target as SimNode;
-            if (src.type === "file" && tgt.type === "symbol") {
+            if (src.type === "file" && tgt.type === "symbol" && tgt.x === 0 && tgt.y === 0) {
                 tgt.x = (src.x ?? 0) + (Math.random() - 0.5) * 40;
                 tgt.y = (src.y ?? 0) + (Math.random() - 0.5) * 40;
             }
@@ -1723,8 +1750,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             const sn = simNodeById.get(node.id());
             if (sn?.x != null && sn.y != null) node.position({ x: sn.x, y: sn.y });
         });
-        cy.zoom(0.6);
-        cy.center();
+        if (hasSavedPos && savedPos) {
+            cy.viewport({ zoom: savedPos.zoom, pan: savedPos.pan });
+        } else {
+            cy.zoom(0.6);
+            cy.center();
+        }
 
         // Initialize dynamic-force refs
         simNodesRef.current = simNodes;
@@ -1801,20 +1832,24 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
         simRef.current = sim;
 
-        // Pre-warm simulation so nodes start spread out rather than piled
-        const warmupTicks = nodeCount > 500 ? 20 : nodeCount > 100 ? 50 : 80;
-        for (let i = 0; i < warmupTicks; i++) sim.tick();
-        cy.batch(() => {
-            for (const n of simNodes) {
-                if (n.x == null || n.y == null) continue;
-                const cn = cy.getElementById(n.id);
-                if (cn.nonempty()) cn.position({ x: n.x, y: n.y });
-            }
-        });
+        // Pre-warm simulation so nodes start spread out rather than piled.
+        // Skip when restoring saved positions — nodes are already settled.
+        if (!hasSavedPos) {
+            const warmupTicks = nodeCount > 500 ? 20 : nodeCount > 100 ? 50 : 80;
+            for (let i = 0; i < warmupTicks; i++) sim.tick();
+            cy.batch(() => {
+                for (const n of simNodes) {
+                    if (n.x == null || n.y == null) continue;
+                    const cn = cy.getElementById(n.id);
+                    if (cn.nonempty()) cn.position({ x: n.x, y: n.y });
+                }
+            });
+        }
 
         const grabbedNodeId = { current: null as string | null };
         const lockedNodeId = { current: null as string | null };
-        let settled = false;
+        // Skip auto-fit when re-initializing after symbol analysis (viewport already restored)
+        let settled = hasSavedPos;
         let rafId = 0;
 
         function loop() {
@@ -1971,6 +2006,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             sim.stop();
             simRef.current = null;
             simNodesRef.current = [];
+            // Save viewport + node positions so re-init (e.g. after symbol analysis) is seamless
+            const saved: { zoom: number; pan: { x: number; y: number }; nodes: Record<string, { x: number; y: number }> } = {
+                zoom: cy.zoom(),
+                pan: cy.pan(),
+                nodes: {},
+            };
+            cy.nodes().forEach(n => { saved.nodes[n.id()] = n.position(); });
+            savedPositionsRef.current = saved;
             cy.destroy();
         };
     }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
