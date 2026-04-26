@@ -5,6 +5,7 @@
 import type {
     RepoMetadata,
     FileTreeResponse,
+    TreeItem,
     Contributor,
     Branch,
     Commit,
@@ -117,21 +118,26 @@ export async function fetchFileTree(
         token,
         { noStore: true }
     );
-    return {
-        sha: data.sha,
-        tree: data.tree.map(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (item: any) => ({
-                path: item.path,
-                mode: item.mode,
-                type: item.type,
-                sha: item.sha,
-                size: item.size,
-                url: item.url,
-            })
-        ),
-        truncated: data.truncated,
-    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allItems: TreeItem[] = data.tree.map((item: any) => ({
+        path: item.path,
+        mode: item.mode,
+        type: item.type,
+        sha: item.sha,
+        size: item.size,
+        url: item.url,
+    }));
+
+    // Cap at 5,000 items to keep SSE payload manageable for very large repos.
+    // The file-tree-graph has its own 2,000-node cap; this just prevents a
+    // 46,000-item Linux-scale tree from producing a 9MB SSE done event.
+    const MAX_TREE_ITEMS = 5000;
+    const truncated = data.truncated || allItems.length > MAX_TREE_ITEMS;
+    const tree = allItems.length > MAX_TREE_ITEMS
+        ? allItems.slice(0, MAX_TREE_ITEMS)
+        : allItems;
+
+    return { sha: data.sha, tree, truncated };
 }
 
 // --- README ---

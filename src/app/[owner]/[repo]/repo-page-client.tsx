@@ -131,6 +131,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
             const decoder = new TextDecoder();
             let buffer = "";
+            let receivedDone = false;
 
             while (true) {
                 if (signal.aborted) break;
@@ -163,6 +164,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     }
 
                     if (type === "done") {
+                        receivedDone = true;
                         setRepoData(event.payload as RepoData);
                         setLoading(false);
                         // Don't return — keep reading for the enriched event.
@@ -191,6 +193,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         setCloneMessage((event.message as string) ?? "");
                     }
                 }
+            }
+            // Stream closed without a "done" event (e.g. Vercel timeout, network drop).
+            // Prevent the loading spinner from hanging indefinitely.
+            if (!receivedDone && !signal.aborted) {
+                setError("Repository data could not be loaded. The repo may be too large or the request timed out.");
+                setLoading(false);
             }
         } catch (err) {
             // AbortError means this request was intentionally cancelled by cleanup —
@@ -525,12 +533,19 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const filesTabContent = useMemo(() => {
         if (repoData?.fileTree) {
             return (
-                <FileTreeGraph
-                    tree={repoData.fileTree.tree}
-                    owner={owner}
-                    repo={repo}
-                    fileTypeLegend={fileTypeLegend}
-                />
+                <div className="relative h-full w-full">
+                    {repoData.fileTree.truncated && (
+                        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded-lg text-xs bg-amber-500/15 border border-amber-500/30 text-amber-300 backdrop-blur-sm pointer-events-none">
+                            This repo has too many files — showing a representative sample
+                        </div>
+                    )}
+                    <FileTreeGraph
+                        tree={repoData.fileTree.tree}
+                        owner={owner}
+                        repo={repo}
+                        fileTypeLegend={fileTypeLegend}
+                    />
+                </div>
             );
         }
 
