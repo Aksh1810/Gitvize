@@ -44,82 +44,90 @@ export default function KnowledgeGraph({
         return buildGraphData(tree, analysis || undefined, owner, repo);
     }, [tree, analysis, owner, repo]);
 
-    // Apply force-directed layout (simplified ForceAtlas2)
-    const positionedNodes = useMemo(() => {
-        const nodes = [...graphData.nodes];
-        const edges = graphData.edges;
+    // Positioned nodes — start with circular layout, settle via deferred simulation
+    const [positionedNodes, setPositionedNodes] = useState<GraphNode[]>([]);
+
+    useEffect(() => {
+        // Shallow-copy nodes so mutation doesn't affect graphData
+        const nodes = graphData.nodes.map(n => ({ ...n }));
         const nodeCount = nodes.length;
 
-        if (nodeCount === 0) return nodes;
+        if (nodeCount === 0) {
+            setPositionedNodes([]);
+            return;
+        }
 
-        // Initialize positions in a circle
+        // Immediately place nodes in a circle so the canvas has something to render
         nodes.forEach((node, i) => {
             const angle = (2 * Math.PI * i) / nodeCount;
             const radius = Math.min(300, nodeCount * 3);
             node.x = Math.cos(angle) * radius;
             node.y = Math.sin(angle) * radius;
         });
+        setPositionedNodes([...nodes]);
 
-        // Simple force simulation (50 iterations)
-        const nodeMap = new Map(nodes.map(n => [n.id, n]));
+        // Run the full force simulation in a deferred macrotask so it never blocks paint
+        let cancelled = false;
+        const timer = setTimeout(() => {
+            if (cancelled) return;
+            const edges = graphData.edges;
+            const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-        for (let iter = 0; iter < 80; iter++) {
-            const temp = 1 - iter / 80; // cooling
+            for (let iter = 0; iter < 80; iter++) {
+                const temp = 1 - iter / 80;
 
-            // Repulsive forces between all nodes
-            for (let i = 0; i < nodes.length; i++) {
-                for (let j = i + 1; j < nodes.length; j++) {
-                    const dx = (nodes[j].x || 0) - (nodes[i].x || 0);
-                    const dy = (nodes[j].y || 0) - (nodes[i].y || 0);
-                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-
-                    const repForce = (150 * temp) / dist;
-                    const fx = (dx / dist) * repForce;
-                    const fy = (dy / dist) * repForce;
-
-                    nodes[i].x = (nodes[i].x || 0) - fx;
-                    nodes[i].y = (nodes[i].y || 0) - fy;
-                    nodes[j].x = (nodes[j].x || 0) + fx;
-                    nodes[j].y = (nodes[j].y || 0) + fy;
+                for (let i = 0; i < nodes.length; i++) {
+                    for (let j = i + 1; j < nodes.length; j++) {
+                        const dx = (nodes[j].x || 0) - (nodes[i].x || 0);
+                        const dy = (nodes[j].y || 0) - (nodes[i].y || 0);
+                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                        const repForce = (150 * temp) / dist;
+                        const fx = (dx / dist) * repForce;
+                        const fy = (dy / dist) * repForce;
+                        nodes[i].x = (nodes[i].x || 0) - fx;
+                        nodes[i].y = (nodes[i].y || 0) - fy;
+                        nodes[j].x = (nodes[j].x || 0) + fx;
+                        nodes[j].y = (nodes[j].y || 0) + fy;
+                    }
                 }
+
+                edges.forEach(edge => {
+                    const source = nodeMap.get(edge.source);
+                    const target = nodeMap.get(edge.target);
+                    if (!source || !target) return;
+                    const dx = (target.x || 0) - (source.x || 0);
+                    const dy = (target.y || 0) - (source.y || 0);
+                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                    const attForce = dist * 0.01 * temp;
+                    const fx = (dx / dist) * attForce;
+                    const fy = (dy / dist) * attForce;
+                    source.x = (source.x || 0) + fx;
+                    source.y = (source.y || 0) + fy;
+                    target.x = (target.x || 0) - fx;
+                    target.y = (target.y || 0) - fy;
+                });
+
+                nodes.forEach(n1 => {
+                    if (n1.cluster === undefined) return;
+                    nodes.forEach(n2 => {
+                        if (n1 === n2 || n2.cluster !== n1.cluster) return;
+                        const dx = (n2.x || 0) - (n1.x || 0);
+                        const dy = (n2.y || 0) - (n1.y || 0);
+                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                        const force = dist * 0.002 * temp;
+                        n1.x = (n1.x || 0) + (dx / dist) * force;
+                        n1.y = (n1.y || 0) + (dy / dist) * force;
+                    });
+                });
             }
 
-            // Attractive forces along edges
-            edges.forEach(edge => {
-                const source = nodeMap.get(edge.source);
-                const target = nodeMap.get(edge.target);
-                if (!source || !target) return;
+            setPositionedNodes([...nodes]);
+        }, 0);
 
-                const dx = (target.x || 0) - (source.x || 0);
-                const dy = (target.y || 0) - (source.y || 0);
-                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-
-                const attForce = dist * 0.01 * temp;
-                const fx = (dx / dist) * attForce;
-                const fy = (dy / dist) * attForce;
-
-                source.x = (source.x || 0) + fx;
-                source.y = (source.y || 0) + fy;
-                target.x = (target.x || 0) - fx;
-                target.y = (target.y || 0) - fy;
-            });
-
-            // Cluster attraction — same cluster nodes attract slightly
-            nodes.forEach(n1 => {
-                if (n1.cluster === undefined) return;
-                nodes.forEach(n2 => {
-                    if (n1 === n2 || n2.cluster !== n1.cluster) return;
-                    const dx = (n2.x || 0) - (n1.x || 0);
-                    const dy = (n2.y || 0) - (n1.y || 0);
-                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                    const force = dist * 0.002 * temp;
-                    n1.x = (n1.x || 0) + (dx / dist) * force;
-                    n1.y = (n1.y || 0) + (dy / dist) * force;
-                });
-            });
-        }
-
-        return nodes;
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
     }, [graphData]);
 
     // Filter by search
