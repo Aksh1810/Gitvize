@@ -285,7 +285,7 @@ function filterByVisibility(
             case "fileImport": return state.showFileImportEdges && state.showFiles;
             default:           return false;
         }
-    });
+    }); 
 
     return { visNodes, visEdges };
 }
@@ -311,8 +311,9 @@ function buildCosmosArrays(
         pointPositions[i * 2]     = Math.cos(angle) * scatterRadius;
         pointPositions[i * 2 + 1] = Math.sin(angle) * scatterRadius;
 
-        const size = (n.data.size as number) ?? 10;
-        pointSizes[i] = size;
+        const type = n.data.type as SimNode["type"];
+        const cosmosSize = type === "root" ? 28 : type === "folder" ? 18 : type === "file" ? 10 : 6;
+        pointSizes[i] = cosmosSize;
 
         const [r, g, b, a] = hexToRgba01((n.data.color as string) || "#888888");
         pointColors[i * 4]     = r;
@@ -320,14 +321,13 @@ function buildCosmosArrays(
         pointColors[i * 4 + 2] = b;
         pointColors[i * 4 + 3] = a;
 
-        const type = n.data.type as SimNode["type"];
         const kind = n.data.symbolKind as SymbolKind | undefined;
         pointShapes[i] = (type === "symbol" && kind) ? symbolKindToShape(kind) : 0;
 
         simNodeList.push({
             id: n.data.id as string,
             type,
-            radius: size / 2,
+            radius: cosmosSize / 2,
             label: ((n.data.displayLabel ?? n.data.label) as string) || "",
             ext: n.data.extension as string | undefined,
             showLabel: n.data.showLabel as number | undefined,
@@ -411,6 +411,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const graphRef = useRef<InstanceType<typeof Graph> | null>(null);
+    const savedZoomRef = useRef<number | null>(null);
+    const fitObserverRef = useRef<ResizeObserver | null>(null);
+    const fitDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const nodeIndexMapRef = useRef<Map<string, number>>(new Map());
     const visibleNodesRef = useRef<SimNode[]>([]);
     const baseColorsRef = useRef<Float32Array>(new Float32Array(0));
@@ -1369,6 +1372,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         graph.setLinkColors(linkColors);
         graph.trackPointPositionsByIndices(labelNodeIndices);
         graph.start();
+        graph.render();
     }, [elements]);
 
     const applyHoverEffect = useCallback((hoveredIdx: number | undefined) => {
@@ -1544,15 +1548,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         lockedNodeIdxRef.current = null;
 
         const nodeCount = simNodeList.length;
-        const repulsion = nodeCount > 5000 ? 0.15 : nodeCount > 2000 ? 0.25 : nodeCount > 500 ? 0.4 : 0.5;
-        const gravity   = nodeCount > 5000 ? 0.30 : nodeCount > 2000 ? 0.20 : nodeCount > 500 ? 0.1 : 0.05;
-        const friction  = nodeCount > 5000 ? 0.80 : nodeCount > 2000 ? 0.60 : nodeCount > 500 ? 0.2 : 0.05;
-        const decay     = nodeCount > 5000 ? 1000 : nodeCount > 2000 ? 3000 : nodeCount > 500 ? 10000 : 100000;
+        const repulsion = nodeCount > 5000 ? 0.15 : nodeCount > 2000 ? 0.3 : nodeCount > 500 ? 0.6 : 1.0;
+        const gravity   = nodeCount > 5000 ? 0.25 : nodeCount > 2000 ? 0.15 : nodeCount > 500 ? 0.1 : 0.05;
+        // friction: 0→stops immediately, 1→never stops; cosmos default is 0.85
+        const friction  = nodeCount > 5000 ? 0.9 : nodeCount > 2000 ? 0.88 : nodeCount > 500 ? 0.86 : 0.85;
+        // decay: larger = more steps before alpha→0; cosmos default is 5000
+        const decay     = nodeCount > 5000 ? 2000 : nodeCount > 2000 ? 3000 : nodeCount > 500 ? 4000 : 5000;
 
         const graph = new Graph(containerRef.current, {
             backgroundColor: '#07050f',
-            fitViewOnInit: true,
-            fitViewDelay: 300,
+            fitViewOnInit: false,
             enableDrag: true,
             curvedLinks: false,
             renderLinks: true,
@@ -1627,6 +1632,33 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             .map(({ i }) => i);
         graph.trackPointPositionsByIndices(labelNodeIndices);
         graph.start();
+        graph.render();
+
+        if (savedZoomRef.current !== null) {
+            graph.setZoomLevel(savedZoomRef.current, 0);
+        } else {
+            let lastW = 0, lastH = 0;
+            const container = containerRef.current!;
+            const scheduleCheck = () => {
+                if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current);
+                fitDebounceRef.current = setTimeout(() => {
+                    graphRef.current?.fitView(300);
+                    fitObserverRef.current?.disconnect();
+                    fitObserverRef.current = null;
+                }, 150);
+            };
+            fitObserverRef.current = new ResizeObserver((entries) => {
+                const r = entries[0]?.contentRect;
+                if (!r) return;
+                if (r.width !== lastW || r.height !== lastH) {
+                    lastW = r.width;
+                    lastH = r.height;
+                    scheduleCheck();
+                }
+            });
+            fitObserverRef.current.observe(container);
+            scheduleCheck();
+        }
 
         const labelCanvas = labelCanvasRef.current;
         function drawLabels() {
@@ -1664,6 +1696,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         labelRafRef.current = requestAnimationFrame(drawLabels);
 
         return () => {
+            savedZoomRef.current = graphRef.current?.getZoomLevel() ?? null;
+            if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current);
+            if (fitObserverRef.current) { fitObserverRef.current.disconnect(); fitObserverRef.current = null; }
             cancelAnimationFrame(labelRafRef.current);
             graph.destroy();
             graphRef.current = null;
