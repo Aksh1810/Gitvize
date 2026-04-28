@@ -437,6 +437,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const graphRef = useRef<InstanceType<typeof Graph> | null>(null);
     const savedZoomRef = useRef<number | null>(null);
+    const draggedNodeIdxRef = useRef<number>(-1);
     const nodeIndexMapRef = useRef<Map<string, number>>(new Map());
     const visibleNodesRef = useRef<SimNode[]>([]);
     const baseColorsRef = useRef<Float32Array>(new Float32Array(0));
@@ -1640,6 +1641,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 }
             },
             onMouseMove: (pointIndex: number | undefined) => {
+                // Track last hovered index for drag repulsion (before the locked guard)
+                if (pointIndex !== undefined) draggedNodeIdxRef.current = pointIndex;
                 if (lockedNodeIdxRef.current !== null) return;
                 if (pointIndex === undefined) {
                     graphRef.current?.setPointColors(baseColorsRef.current.slice());
@@ -1647,8 +1650,44 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     applyHoverEffect(pointIndex);
                 }
             },
-            onDrag: () => {
-                graphRef.current?.start(0.1);
+            onDragStart: () => {
+                graphRef.current?.start(0.8);
+            },
+            onDrag: (e) => {
+                // e.subject is {x,y} screen coords — NOT {index, position}.
+                // draggingPointIndex is set internally by cosmos.gl; we track it via onMouseMove.
+                const g = graphRef.current;
+                const dragIdx = draggedNodeIdxRef.current;
+                if (!g || !e.subject || dragIdx < 0) return;
+                const raw = g.getPointPositions();
+                const positions = new Float32Array(raw.length);
+                for (let k = 0; k < raw.length; k++) positions[k] = raw[k];
+                const dragX = positions[dragIdx * 2];
+                const dragY = positions[dragIdx * 2 + 1];
+                const RADIUS = 600;
+                const STRENGTH = 60;
+                let changed = false;
+                for (let i = 0; i < positions.length / 2; i++) {
+                    if (i === dragIdx) continue;
+                    const dx = positions[i * 2] - dragX;
+                    const dy = positions[i * 2 + 1] - dragY;
+                    const dist2 = dx * dx + dy * dy;
+                    if (dist2 > 0 && dist2 < RADIUS * RADIUS) {
+                        const dist = Math.sqrt(dist2);
+                        const force = ((RADIUS - dist) / RADIUS) * STRENGTH;
+                        positions[i * 2]     += (dx / dist) * force;
+                        positions[i * 2 + 1] += (dy / dist) * force;
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    g.setPointPositions(positions, true);
+                    g.start(0.4);
+                }
+            },
+            onDragEnd: () => {
+                draggedNodeIdxRef.current = -1;
+                graphRef.current?.start(0.2);
             },
         });
 
