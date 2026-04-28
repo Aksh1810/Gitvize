@@ -305,11 +305,36 @@ function buildCosmosArrays(
     const pointShapes    = new Float32Array(count);
     const simNodeList: SimNode[] = [];
 
-    const scatterRadius = Math.sqrt(Math.max(1, count)) * 40;
+    // Sorted concentric ring layout: root at center, folders ring 1, files ring 2, symbols ring 3.
+    // Nodes sorted by path within each ring so siblings (same folder / same file) are adjacent.
+    const SPACE_CENTER = 4096; // cosmos.gl simulation space 0-8192; gravity center at 4096,4096
+    type RingItem = { idx: number; path: string };
+    const byType: Record<string, RingItem[]> = { root: [], folder: [], file: [], symbol: [] };
     visNodes.forEach((n, i) => {
-        const angle = (i / Math.max(1, count)) * Math.PI * 2;
-        pointPositions[i * 2]     = Math.cos(angle) * scatterRadius;
-        pointPositions[i * 2 + 1] = Math.sin(angle) * scatterRadius;
+        const t = (n.data.type as string) in byType ? (n.data.type as string) : "file";
+        byType[t].push({ idx: i, path: (n.data.path as string) ?? "" });
+    });
+    for (const arr of Object.values(byType)) {
+        arr.sort((a, b) => a.path.localeCompare(b.path));
+    }
+    const placeRing = (items: RingItem[], minRadius: number, minSpacing: number) => {
+        if (items.length === 0) return;
+        const radius = Math.min(3800, Math.max(minRadius, (items.length * minSpacing) / (Math.PI * 2)));
+        items.forEach(({ idx }, j) => {
+            const angle = (j / items.length) * Math.PI * 2;
+            pointPositions[idx * 2]     = SPACE_CENTER + Math.cos(angle) * radius;
+            pointPositions[idx * 2 + 1] = SPACE_CENTER + Math.sin(angle) * radius;
+        });
+    };
+    if (byType.root[0]) {
+        pointPositions[byType.root[0].idx * 2]     = SPACE_CENTER;
+        pointPositions[byType.root[0].idx * 2 + 1] = SPACE_CENTER;
+    }
+    placeRing(byType.folder, 250, 50);
+    placeRing(byType.file,   700, 30);
+    placeRing(byType.symbol, 1100, 18);
+
+    visNodes.forEach((n, i) => {
 
         const type = n.data.type as SimNode["type"];
         const cosmosSize = type === "root" ? 28 : type === "folder" ? 18 : type === "file" ? 10 : 6;
@@ -412,8 +437,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const graphRef = useRef<InstanceType<typeof Graph> | null>(null);
     const savedZoomRef = useRef<number | null>(null);
-    const fitObserverRef = useRef<ResizeObserver | null>(null);
-    const fitDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const nodeIndexMapRef = useRef<Map<string, number>>(new Map());
     const visibleNodesRef = useRef<SimNode[]>([]);
     const baseColorsRef = useRef<Float32Array>(new Float32Array(0));
@@ -1548,16 +1571,22 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         lockedNodeIdxRef.current = null;
 
         const nodeCount = simNodeList.length;
-        const repulsion = nodeCount > 5000 ? 0.15 : nodeCount > 2000 ? 0.3 : nodeCount > 500 ? 0.6 : 1.0;
-        const gravity   = nodeCount > 5000 ? 0.25 : nodeCount > 2000 ? 0.15 : nodeCount > 500 ? 0.1 : 0.05;
+        // Repulsion must be much higher than cosmos default (1.0) to prevent node collapse
+        const repulsion = nodeCount > 5000 ? 0.5  : nodeCount > 2000 ? 1.0  : nodeCount > 500 ? 2.0  : 3.0;
+        // Gravity must be very low or it overcomes repulsion and collapses all nodes
+        const gravity   = nodeCount > 5000 ? 0.05 : nodeCount > 2000 ? 0.03 : nodeCount > 500 ? 0.02 : 0.01;
         // friction: 0→stops immediately, 1→never stops; cosmos default is 0.85
-        const friction  = nodeCount > 5000 ? 0.9 : nodeCount > 2000 ? 0.88 : nodeCount > 500 ? 0.86 : 0.85;
+        const friction  = nodeCount > 5000 ? 0.9  : nodeCount > 2000 ? 0.88 : nodeCount > 500 ? 0.86 : 0.85;
         // decay: larger = more steps before alpha→0; cosmos default is 5000
         const decay     = nodeCount > 5000 ? 2000 : nodeCount > 2000 ? 3000 : nodeCount > 500 ? 4000 : 5000;
+        // Link distance relative to 8192-unit space; 50-80 is too small and collapses nodes together
+        const linkDist  = nodeCount > 5000 ? 80   : nodeCount > 2000 ? 120  : nodeCount > 500 ? 200  : 300;
 
+        const isFirstRender = savedZoomRef.current === null;
         const graph = new Graph(containerRef.current, {
             backgroundColor: '#07050f',
-            fitViewOnInit: false,
+            fitViewOnInit: isFirstRender,
+            fitViewDelay: isFirstRender ? 600 : 0,
             enableDrag: true,
             curvedLinks: false,
             renderLinks: true,
@@ -1566,8 +1595,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             simulationRepulsion: repulsion,
             simulationGravity: gravity,
             simulationFriction: friction,
-            simulationLinkSpring: 0.5,
-            simulationLinkDistance: nodeCount > 1000 ? 50 : 80,
+            simulationLinkSpring: 0.15,
+            simulationLinkDistance: linkDist,
             simulationDecay: decay,
             renderHoveredPointRing: true,
             hoveredPointRingColor: '#facc15',
@@ -1634,30 +1663,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         graph.start();
         graph.render();
 
-        if (savedZoomRef.current !== null) {
+        if (!isFirstRender && savedZoomRef.current !== null) {
             graph.setZoomLevel(savedZoomRef.current, 0);
-        } else {
-            let lastW = 0, lastH = 0;
-            const container = containerRef.current!;
-            const scheduleCheck = () => {
-                if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current);
-                fitDebounceRef.current = setTimeout(() => {
-                    graphRef.current?.fitView(300);
-                    fitObserverRef.current?.disconnect();
-                    fitObserverRef.current = null;
-                }, 150);
-            };
-            fitObserverRef.current = new ResizeObserver((entries) => {
-                const r = entries[0]?.contentRect;
-                if (!r) return;
-                if (r.width !== lastW || r.height !== lastH) {
-                    lastW = r.width;
-                    lastH = r.height;
-                    scheduleCheck();
-                }
-            });
-            fitObserverRef.current.observe(container);
-            scheduleCheck();
         }
 
         const labelCanvas = labelCanvasRef.current;
@@ -1697,8 +1704,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
         return () => {
             savedZoomRef.current = graphRef.current?.getZoomLevel() ?? null;
-            if (fitDebounceRef.current) clearTimeout(fitDebounceRef.current);
-            if (fitObserverRef.current) { fitObserverRef.current.disconnect(); fitObserverRef.current = null; }
             cancelAnimationFrame(labelRafRef.current);
             graph.destroy();
             graphRef.current = null;
