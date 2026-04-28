@@ -1598,6 +1598,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             simulationLinkSpring: 0.15,
             simulationLinkDistance: linkDist,
             simulationDecay: decay,
+            simulationCenter: 0.1,
+            enableRightClickRepulsion: true,
+            simulationRepulsionFromMouse: 8,
             renderHoveredPointRing: true,
             hoveredPointRingColor: '#facc15',
             hoveredPointCursor: 'pointer',
@@ -1643,6 +1646,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 } else {
                     applyHoverEffect(pointIndex);
                 }
+            },
+            onDrag: () => {
+                graphRef.current?.start(0.1);
             },
         });
 
