@@ -57,11 +57,6 @@ export function getCachedDiagram(
     }
 }
 
-/** Check if a cached diagram exists for a repo */
-export function hasCachedDiagram(owner: string, repo: string): boolean {
-    return getCachedDiagram(owner, repo) !== null;
-}
-
 /** Evict oldest cached entries when over limit */
 function evictOldEntries(): void {
     if (typeof window === "undefined") return;

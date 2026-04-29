@@ -248,7 +248,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 .slice(0, MAX_ANALYZE_FILES)
                 .map(s => s.item);
             ingestMsg = `Analyzing top ${MAX_ANALYZE_FILES} most relevant files out of ${totalFileCount} total`;
-            console.log(`[analyze] sampled ${treeToSend.length} of ${totalFileCount} files for analysis`);
         }
 
         setPipelineSteps([
