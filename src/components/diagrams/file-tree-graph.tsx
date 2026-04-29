@@ -6,7 +6,7 @@ import { Graph } from "@cosmos.gl/graph";
 import { List, type RowComponentProps } from "react-window";
 import { cn } from "@/lib/utils";
 import { getFileColor } from "@/lib/file-icons";
-import { buildSymbolGraph, selectSymbolAnalysisFiles, isImportableCodeFile, extractFileToFileImports, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
+import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
@@ -384,6 +384,8 @@ function buildCosmosArrays(
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
+    const symbolWorkerRef = useRef<Worker | null>(null);
+    const importWorkerRef = useRef<Worker | null>(null);
     const codePanelRef = useRef<HTMLDivElement>(null);
     const codeListRef = useRef<{
         element: HTMLDivElement | null;
@@ -461,7 +463,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         element: HTMLDivElement | null;
         scrollToRow: (config: { index: number; align?: "auto" | "center" | "end" | "smart" | "start"; behavior?: "auto" | "instant" | "smooth" }) => void;
     } | null>(null);
-    const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
+    const [symbolGraph, setSymbolGraph] = useState<import("@/lib/symbol-parser").SymbolGraphData>({
         symbols: [],
         references: [],
     });
@@ -930,12 +932,32 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 return;
             }
 
-            const graph = buildSymbolGraph(filePayload, {
-                maxReferences: tree.length > 800 ? 400 : 420,
-            });
+            // Terminate any in-flight worker from a prior tree change before
+            // starting a new one so stale results are never applied.
+            symbolWorkerRef.current?.terminate();
+            symbolWorkerRef.current = null;
 
-            setSymbolGraph(graph);
-            setSymbolLoading(false);
+            const maxReferences = tree.length > 800 ? 400 : 420;
+
+            const worker = new Worker(
+                new URL("../../workers/symbol-analysis.worker.ts", import.meta.url)
+            );
+            symbolWorkerRef.current = worker;
+
+            worker.onmessage = (ev: MessageEvent<{ type: "symbolGraph"; data: import("@/lib/symbol-parser").SymbolGraphData }>) => {
+                if (cancelled) { worker.terminate(); symbolWorkerRef.current = null; return; }
+                setSymbolGraph(ev.data.data);
+                setSymbolLoading(false);
+                worker.terminate();
+                symbolWorkerRef.current = null;
+            };
+            worker.onerror = () => {
+                if (!cancelled) setSymbolLoading(false);
+                worker.terminate();
+                symbolWorkerRef.current = null;
+            };
+
+            worker.postMessage({ type: "buildSymbolGraph", fileContents: filePayload, maxReferences });
         };
 
         runSymbolAnalysis();
@@ -944,6 +966,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return () => {
             cancelled = true;
             cancelIdleCallback(idleId);
+            symbolWorkerRef.current?.terminate();
+            symbolWorkerRef.current = null;
         };
     }, [owner, repo, tree]);
 
@@ -1003,10 +1027,30 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
             if (cancelled) return;
 
-            const fileSet = new Set(tree.map((i) => i.path));
-            const edges = extractFileToFileImports(filePayload, fileSet);
-            setFileImportEdges(edges);
-            setMultiLangLoading(false);
+            const fileSet = tree.map((i) => i.path);
+
+            importWorkerRef.current?.terminate();
+            importWorkerRef.current = null;
+
+            const worker = new Worker(
+                new URL("../../workers/symbol-analysis.worker.ts", import.meta.url)
+            );
+            importWorkerRef.current = worker;
+
+            worker.onmessage = (ev: MessageEvent<{ type: "importEdges"; data: FileImportEdge[] }>) => {
+                if (cancelled) { worker.terminate(); importWorkerRef.current = null; return; }
+                setFileImportEdges(ev.data.data);
+                setMultiLangLoading(false);
+                worker.terminate();
+                importWorkerRef.current = null;
+            };
+            worker.onerror = () => {
+                if (!cancelled) setMultiLangLoading(false);
+                worker.terminate();
+                importWorkerRef.current = null;
+            };
+
+            worker.postMessage({ type: "extractFileToFileImports", fileContents: filePayload, fileSet });
         };
 
         runMultiLangAnalysis();
@@ -1015,6 +1059,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return () => {
             cancelled = true;
             cancelIdleCallback(idleId);
+            importWorkerRef.current?.terminate();
+            importWorkerRef.current = null;
         };
     }, [owner, repo, tree]);
 
