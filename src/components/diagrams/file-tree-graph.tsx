@@ -234,50 +234,6 @@ interface VisibilityState {
     symbolKindVisibility: Record<SymbolKind, boolean>;
 }
 
-function filterByVisibility(
-    elements: { nodes: Array<{ data: Record<string, unknown> }>; edges: Array<{ data: Record<string, unknown> }> },
-    state: VisibilityState
-) {
-    const visNodeIds = new Set<string>();
-    const visNodes = elements.nodes.filter((n) => {
-        const type = n.data.type as string;
-        const id = n.data.id as string;
-        const kind = n.data.symbolKind as SymbolKind | undefined;
-        if (type === "folder" && id === "root") {
-            if (!state.showRoot) return false;
-        } else if (type === "folder") {
-            if (!state.showFolders) return false;
-        } else if (type === "file") {
-            if (!state.showFiles) return false;
-        } else if (type === "symbol") {
-            if (!state.showSymbols || !state.showFiles) return false;
-            if (kind && !state.symbolKindVisibility[kind]) return false;
-        }
-        visNodeIds.add(id);
-        return true;
-    });
-
-    const symbolsVisible = state.showSymbols && state.showFiles;
-    const visEdges = elements.edges.filter((e) => {
-        const type = e.data.type as string;
-        const source = e.data.source as string;
-        const target = e.data.target as string;
-        if (!visNodeIds.has(source) || !visNodeIds.has(target)) return false;
-        switch (type) {
-            case "contains":   return state.showContainsEdges;
-            case "defines":    return state.showDefinesEdges && symbolsVisible;
-            case "imports":    return state.showImportsEdges && symbolsVisible;
-            case "calls":      return state.showCallsEdges && symbolsVisible;
-            case "extends":    return state.showExtendsEdges && symbolsVisible;
-            case "implements": return state.showImplementsEdges && symbolsVisible;
-            case "fileImport": return state.showFileImportEdges && state.showFiles;
-            default:           return false;
-        }
-    }); 
-
-    return { visNodes, visEdges };
-}
-
 // Sigma reserves the `type` attribute for its renderer program name.
 // We store our semantic node kind as `nodeType` instead.
 type SigmaNodeAttrs = Omit<SimNode, "type"> & {
@@ -1873,6 +1829,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
             const nodeCount = graph.order;
             const sigma = new SigmaClass(graph, containerRef.current!, {
+                allowInvalidContainer: true,
                 renderEdgeLabels: false,
                 defaultEdgeType: "line",
                 defaultNodeType: "circle",
