@@ -1572,10 +1572,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         const sigma = sigmaRef.current;
         if (!graph || !sigma || graph.order === 0) return;
 
-        // Build d3 node objects seeded from current Graphology positions
+        // Build d3 node objects seeded from current Graphology positions (visible only)
         const d3Nodes: D3Node[] = [];
         const nodeMap = new Map<string, D3Node>();
         graph.forEachNode((id, attrs) => {
+            if (attrs.hidden) return;
             const node: D3Node = {
                 id,
                 nodeType: attrs.nodeType as SimNode["type"],
@@ -1587,9 +1588,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             nodeMap.set(id, node);
         });
 
-        // Build d3 link objects
+        // Build d3 link objects (visible only)
         const d3Links: D3Link[] = [];
         graph.forEachEdge((_id, attrs, src, tgt) => {
+            if (attrs.hidden) return;
             const source = nodeMap.get(src);
             const target = nodeMap.get(tgt);
             if (source && target) {
@@ -1646,6 +1648,63 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 animFrameRef.current = requestAnimationFrame(tick);
             };
             animFrameRef.current = requestAnimationFrame(tick);
+        });
+    }, []);
+
+    // Update d3 sim forces in-place with only currently visible nodes/edges, then bump alpha.
+    // Preserves current positions and velocities — no teardown, no camera reset.
+    const reheatSim = useCallback(() => {
+        const sim = simRef.current;
+        const graph = graphRef.current;
+        if (!sim || !graph) return;
+
+        const d3Nodes: D3Node[] = [];
+        const nodeMap = new Map<string, D3Node>();
+        graph.forEachNode((id, attrs) => {
+            if (attrs.hidden) return;
+            const existing = simNodesRef.current.get(id);
+            const node: D3Node = existing ?? {
+                id,
+                nodeType: attrs.nodeType as SimNode["type"],
+                size: attrs.size as number,
+                x: attrs.x as number,
+                y: attrs.y as number,
+            };
+            d3Nodes.push(node);
+            nodeMap.set(id, node);
+        });
+        const d3Links: D3Link[] = [];
+        graph.forEachEdge((_id, attrs, src, tgt) => {
+            if (attrs.hidden) return;
+            const source = nodeMap.get(src);
+            const target = nodeMap.get(tgt);
+            if (source && target) {
+                d3Links.push({ source, target, edgeType: attrs.edgeType as string });
+            }
+        });
+        simNodesRef.current = nodeMap;
+
+        import("d3-force").then((d3) => {
+            const s = simRef.current;
+            if (!s) return;
+            const linkForce = d3.forceLink<D3Node, D3Link>(d3Links)
+                .id((n) => n.id)
+                .distance((l) => d3LinkDistance((l as D3Link).edgeType))
+                .strength(0.4);
+            s.nodes(d3Nodes);
+            s.force("charge", d3.forceManyBody<D3Node>().strength((n) => d3ChargeFor(n.nodeType)));
+            s.force("link", linkForce as unknown as d3.Force<D3Node, D3Link>);
+            s.force("collision", d3.forceCollide<D3Node>().radius((n) => n.size + 3).strength(0.7));
+            // Bump alpha so RAF tick produces movement; no restart of d3's internal timer
+            s.alpha(Math.max(s.alpha(), 0.2)).alphaTarget(0.003);
+            if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+            layoutSettledRef.current = false;
+            const nodeCount = d3Nodes.length;
+            const settleMs = nodeCount < 200 ? 2000 : nodeCount < 1000 ? 4000 : 5000;
+            layoutStopTimerRef.current = setTimeout(() => {
+                s.alphaTarget(0.001);
+                layoutSettledRef.current = true;
+            }, settleMs);
         });
     }, []);
 
@@ -1800,10 +1859,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             graphRef.current = graph;
 
             // Seed any elements already available by the time the import resolves.
+            // Sync ALL nodes/edges — applyVisibility (called below) sets hidden correctly.
             const elems = elementsRef.current;
             if (elems.nodes.length) {
-                const { visNodes, visEdges } = filterByVisibility(elems, visibilityRef.current);
-                const { nodeList, pathToId } = syncGraphData(graph, visNodes, visEdges);
+                const { nodeList, pathToId } = syncGraphData(
+                    graph,
+                    elems.nodes as Array<{ data: Record<string, unknown> }>,
+                    elems.edges as Array<{ data: Record<string, unknown> }>
+                );
                 visibleNodesRef.current = nodeList;
                 pathToIdRef.current = pathToId;
             }
@@ -1948,8 +2011,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         const sigma = sigmaRef.current;
         if (!graph || !sigma) return;
 
-        const { visNodes, visEdges } = filterByVisibility(elements, visibilityRef.current);
-        const { nodeList, pathToId } = syncGraphData(graph, visNodes, visEdges);
+        // Sync ALL elements — applyVisibility sets hidden attrs, restartLayout only picks up visible ones.
+        const { nodeList, pathToId } = syncGraphData(
+            graph,
+            elements.nodes as Array<{ data: Record<string, unknown> }>,
+            elements.edges as Array<{ data: Record<string, unknown> }>
+        );
         visibleNodesRef.current = nodeList;
         pathToIdRef.current = pathToId;
         lockedNodeIdRef.current = null;
@@ -1992,7 +2059,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             symbolKindVisibility,
         };
         applyVisibility();
-    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility]);
+        reheatSim();
+    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility, reheatSim]);
 
     const handleZoomIn = () => {
         sigmaRef.current?.getCamera().animatedZoom({ duration: 200 });
