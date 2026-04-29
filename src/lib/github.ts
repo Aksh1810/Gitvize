@@ -5,6 +5,7 @@
 import type {
     RepoMetadata,
     FileTreeResponse,
+    TreeItem,
     Contributor,
     Branch,
     Commit,
@@ -117,21 +118,26 @@ export async function fetchFileTree(
         token,
         { noStore: true }
     );
-    return {
-        sha: data.sha,
-        tree: data.tree.map(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (item: any) => ({
-                path: item.path,
-                mode: item.mode,
-                type: item.type,
-                sha: item.sha,
-                size: item.size,
-                url: item.url,
-            })
-        ),
-        truncated: data.truncated,
-    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allItems: TreeItem[] = data.tree.map((item: any) => ({
+        path: item.path,
+        mode: item.mode,
+        type: item.type,
+        sha: item.sha,
+        size: item.size,
+        url: item.url,
+    }));
+
+    // Cap at 5,000 items to keep SSE payload manageable for very large repos.
+    // The file-tree-graph has its own 2,000-node cap; this just prevents a
+    // 46,000-item Linux-scale tree from producing a 9MB SSE done event.
+    const MAX_TREE_ITEMS = 5000;
+    const truncated = data.truncated || allItems.length > MAX_TREE_ITEMS;
+    const tree = allItems.length > MAX_TREE_ITEMS
+        ? allItems.slice(0, MAX_TREE_ITEMS)
+        : allItems;
+
+    return { sha: data.sha, tree, truncated };
 }
 
 // --- README ---
@@ -156,19 +162,43 @@ export async function fetchContributors(
     owner: string,
     repo: string,
     token?: string | null
-): Promise<Contributor[]> {
+): Promise<{ data: Contributor[]; truncated: boolean }> {
+    const hasToken = !!(token?.trim() || process.env.GITHUB_TOKEN?.trim());
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ghFetch<any[]>(
-        `/repos/${owner}/${repo}/contributors?per_page=30`,
+    const page1 = await ghFetch<any[]>(
+        `/repos/${owner}/${repo}/contributors?per_page=100&page=1`,
         token
     );
-    return data.map((c) => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mapItem = (c: any): Contributor => ({
         login: c.login,
         id: c.id,
         avatarUrl: c.avatar_url,
         contributions: c.contributions,
         htmlUrl: c.html_url,
-    }));
+    });
+    const all: Contributor[] = page1.map(mapItem);
+
+    // With a token, paginate up to 500 total (5 pages of 100)
+    if (hasToken && page1.length === 100) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const extraPages = await Promise.allSettled<any[]>(
+            [2, 3, 4, 5].map((p) =>
+                ghFetch<any[]>(
+                    `/repos/${owner}/${repo}/contributors?per_page=100&page=${p}`,
+                    token
+                )
+            )
+        );
+        for (const result of extraPages) {
+            if (result.status !== "fulfilled" || result.value.length === 0) break;
+            all.push(...result.value.map(mapItem));
+            if (result.value.length < 100) break;
+        }
+    }
+
+    return { data: all, truncated: all.length === 500 };
 }
 
 // --- Branches ---
@@ -396,21 +426,6 @@ export async function checkRepoAccess(
     };
 }
 
-// --- Latest Commit SHA (for cache key) ---
-
-export async function fetchLatestSha(
-    owner: string,
-    repo: string,
-    token?: string | null
-): Promise<string> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ghFetch<any[]>(
-        `/repos/${owner}/${repo}/commits?per_page=1`,
-        token
-    );
-    return data[0]?.sha ?? "";
-}
-
 // --- Dependency Files ---
 
 const MANIFEST_FILES = [
@@ -447,40 +462,6 @@ export async function fetchDependencyFiles(
                 r.status === "fulfilled"
         )
         .map((r) => r.value);
-}
-
-// --- Commit author map (email → GitHub login/avatar) ---
-// Fetches recent commits from the GitHub API. Each commit carries both the
-// git author email and the linked GitHub account, giving us a reliable
-// email-to-profile mapping to enrich local git contributor data.
-
-export async function fetchCommitAuthorMap(
-    owner: string,
-    repo: string,
-    token?: string | null,
-): Promise<Map<string, { login: string; avatarUrl: string; htmlUrl: string }>> {
-    type GHCommit = {
-        commit: { author: { email: string } };
-        author: { login: string; avatar_url: string; html_url: string } | null;
-    };
-    const commits = await ghFetch<GHCommit[]>(
-        `/repos/${owner}/${repo}/commits?per_page=100`,
-        token,
-    ).catch(() => [] as GHCommit[]);
-
-    const map = new Map<string, { login: string; avatarUrl: string; htmlUrl: string }>();
-    for (const c of commits) {
-        if (!c.author) continue;
-        const email = c.commit.author.email?.toLowerCase();
-        if (email && !map.has(email)) {
-            map.set(email, {
-                login: c.author.login,
-                avatarUrl: c.author.avatar_url,
-                htmlUrl: c.author.html_url,
-            });
-        }
-    }
-    return map;
 }
 
 // --- Paginated commits (used by branch-graph "load more") ---
@@ -552,11 +533,21 @@ export async function fetchAllRepoData(
     repo: string,
     token?: string | null
 ) {
-    const [metadata, contributors, languages] = await Promise.all([
+    let contributorsFetchError: string | null = null;
+    const [metadata, contributorsResult, languages] = await Promise.all([
         fetchRepoMetadata(owner, repo, token),
-        fetchContributors(owner, repo, token).catch(() => []),
+        fetchContributors(owner, repo, token).catch((err) => {
+            const msg = (err as Error)?.message ?? String(err);
+            console.warn("[contributors] fetch failed:", msg);
+            contributorsFetchError = /rate.?limit|secondary.?rate/i.test(msg)
+                ? "rate_limited"
+                : "fetch_failed";
+            return { data: [] as Contributor[], truncated: false };
+        }),
         fetchLanguages(owner, repo, token).catch(() => ({})),
     ]);
+    const contributors = contributorsResult.data;
+    const contributorsTruncated = contributorsResult.truncated;
 
     // Fetch branches first so their HEAD SHAs can seed the multi-branch commit fetch
     const branches = await fetchBranches(owner, repo, metadata.defaultBranch, token).catch(() => []);
@@ -578,6 +569,8 @@ export async function fetchAllRepoData(
         metadata,
         fileTree,
         contributors,
+        contributorsTruncated,
+        contributorsFetchError,
         branches,
         commits,
         readme,

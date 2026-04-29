@@ -185,56 +185,81 @@ interface NpmMeta {
     homepage: string | null;
 }
 
+// Module-level cache so npm metadata survives re-renders and tab switches.
+const npmMetaCache = new Map<string, NpmMeta>();
+
 function useNpmMeta(dependencies: ParsedDependency[]): Map<string, NpmMeta> {
-    const [meta, setMeta] = useState<Map<string, NpmMeta>>(new Map());
+    // Stable key: only the sorted package names, not the full array reference.
+    const packageKey = useMemo(
+        () => dependencies.map((d) => d.name).sort().join(","),
+        [dependencies]
+    );
+
+    const [meta, setMeta] = useState<Map<string, NpmMeta>>(() => {
+        // Initialise from cache so first render already has data from prior visits.
+        const cached = new Map<string, NpmMeta>();
+        for (const dep of dependencies) {
+            const hit = npmMetaCache.get(dep.name);
+            if (hit) cached.set(dep.name, hit);
+        }
+        return cached;
+    });
 
     useEffect(() => {
-        if (dependencies.length === 0) return;
+        const uncached = dependencies
+            .slice(0, 20)
+            .filter((d) => !npmMetaCache.has(d.name));
+
+        if (uncached.length === 0) return;
 
         let cancelled = false;
 
         async function fetchMeta() {
-            const results = new Map<string, NpmMeta>();
-
-            // Cap to the first 20 packages to avoid a flood of network requests.
             const batchSize = 8;
-            const capped = dependencies.slice(0, 20);
-            for (let i = 0; i < capped.length; i += batchSize) {
+            for (let i = 0; i < uncached.length; i += batchSize) {
                 if (cancelled) return;
-                const batch = capped.slice(i, i + batchSize);
+                const batch = uncached.slice(i, i + batchSize);
 
-                const promises = batch.map(async (dep) => {
-                    try {
-                        const encodedName = dep.name.startsWith("@")
-                            ? `@${encodeURIComponent(dep.name.slice(1))}`
-                            : encodeURIComponent(dep.name);
+                await Promise.all(
+                    batch.map(async (dep) => {
+                        try {
+                            const encodedName = dep.name.startsWith("@")
+                                ? `@${encodeURIComponent(dep.name.slice(1))}`
+                                : encodeURIComponent(dep.name);
 
-                        const [pointRes, regRes] = await Promise.all([
-                            fetch(`https://api.npmjs.org/downloads/point/last-week/${encodedName}`).then(r => r.ok ? r.json() : null).catch(() => null),
-                            fetch(`https://registry.npmjs.org/${encodedName}`, { headers: { Accept: "application/vnd.npm.install-v1+json" } }).then(r => r.ok ? r.json() : null).catch(() => null),
-                        ]);
+                            const [pointRes, regRes] = await Promise.all([
+                                fetch(`https://api.npmjs.org/downloads/point/last-week/${encodedName}`).then(r => r.ok ? r.json() : null).catch(() => null),
+                                fetch(`https://registry.npmjs.org/${encodedName}`, { headers: { Accept: "application/vnd.npm.install-v1+json" } }).then(r => r.ok ? r.json() : null).catch(() => null),
+                            ]);
 
-                        results.set(dep.name, {
-                            downloads: pointRes?.downloads ?? null,
-                            description: regRes?.description ?? null,
-                            homepage: regRes?.homepage ?? null,
-                        });
-                    } catch {
-                        results.set(dep.name, { downloads: null, description: null, homepage: null });
-                    }
-                });
-
-                await Promise.all(promises);
+                            const result: NpmMeta = {
+                                downloads: pointRes?.downloads ?? null,
+                                description: regRes?.description ?? null,
+                                homepage: regRes?.homepage ?? null,
+                            };
+                            npmMetaCache.set(dep.name, result);
+                        } catch {
+                            npmMetaCache.set(dep.name, { downloads: null, description: null, homepage: null });
+                        }
+                    })
+                );
 
                 if (!cancelled) {
-                    setMeta(new Map(results));
+                    // Snapshot the full cache for all known deps after each batch.
+                    const snapshot = new Map<string, NpmMeta>();
+                    for (const dep of dependencies.slice(0, 20)) {
+                        const hit = npmMetaCache.get(dep.name);
+                        if (hit) snapshot.set(dep.name, hit);
+                    }
+                    setMeta(snapshot);
                 }
             }
         }
 
         fetchMeta();
         return () => { cancelled = true; };
-    }, [dependencies]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [packageKey]);
 
     return meta;
 }

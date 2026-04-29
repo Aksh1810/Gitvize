@@ -2,23 +2,13 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { motion } from "framer-motion";
-import cytoscape from "cytoscape";
-import {
-    forceSimulation,
-    forceManyBody,
-    forceLink,
-    forceCenter,
-    forceCollide,
-    type ForceLink,
-    type SimulationNodeDatum,
-    type SimulationLinkDatum,
-} from "d3-force";
+import Graph from "graphology";
+import type Sigma from "sigma";
+import type { Simulation, SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
 import { List, type RowComponentProps } from "react-window";
-// @ts-expect-error fcose is an extension package without bundled TS types.
-import fcose from "cytoscape-fcose";
 import { cn } from "@/lib/utils";
 import { getFileColor } from "@/lib/file-icons";
-import { buildSymbolGraph, selectSymbolAnalysisFiles, isImportableCodeFile, extractFileToFileImports, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
+import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
@@ -51,10 +41,6 @@ const extToPrismLang: Record<string, string> = {
     xml: "markup", svg: "markup",
 };
 
-// Register the fcose layout extension
-if (typeof window !== "undefined") {
-    cytoscape.use(fcose);
-}
 
 interface FileTreeGraphProps {
     tree: TreeItem[];
@@ -105,14 +91,18 @@ interface SymbolDiagnostics {
     limit: number;
 }
 
-interface SimNode extends SimulationNodeDatum {
+interface SimNode {
     id: string;
     type: "root" | "folder" | "file" | "symbol";
     radius: number;
-}
-
-interface SimLink extends SimulationLinkDatum<SimNode> {
-    edgeType: string;
+    label: string;
+    ext?: string;
+    showLabel?: number;
+    symbolKind?: SymbolKind;
+    parentPath?: string;
+    path?: string;
+    rawSize?: number;
+    hubScore?: number;
 }
 
 const EXPLORER_ROW_HEIGHT = 30;
@@ -120,8 +110,6 @@ const EXPLORER_SCROLL_STORAGE_PREFIX = "gitviz_explorer_scroll";
 const EXPLORER_EXPANDED_STORAGE_PREFIX = "gitviz_explorer_expanded";
 const CODE_ROW_HEIGHT = 24;
 const FILTER_PANEL_WIDTH = 220;
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 5;
 
 const FOLDER_SORT_PRIORITY: Record<string, number> = {
     src: 0,
@@ -212,10 +200,192 @@ const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
     limit: 0,
 };
 
+function edgeTypeColor(type: string): string {
+    switch (type) {
+        case "fileImport":  return "rgba(251,191,36,0.45)";
+        case "defines":     return "rgba(34,211,238,0.55)";
+        case "imports":     return "rgba(59,130,246,0.55)";
+        case "calls":       return "rgba(139,92,246,0.55)";
+        case "extends":     return "rgba(249,115,22,0.6)";
+        case "implements":  return "rgba(236,72,153,0.6)";
+        case "contains":    return "rgba(52,211,153,0.45)";
+        default:            return "rgba(255,255,255,0.12)";
+    }
+}
+
+function edgeSizeFor(type: string): number {
+    return type === "fileImport" ? 1.6 : 1;
+}
+
+const DIM_COLOR = "#ffffff14";
+
+interface VisibilityState {
+    showRoot: boolean;
+    showFolders: boolean;
+    showFiles: boolean;
+    showSymbols: boolean;
+    showContainsEdges: boolean;
+    showDefinesEdges: boolean;
+    showImportsEdges: boolean;
+    showCallsEdges: boolean;
+    showExtendsEdges: boolean;
+    showImplementsEdges: boolean;
+    showFileImportEdges: boolean;
+    symbolKindVisibility: Record<SymbolKind, boolean>;
+}
+
+// Sigma reserves the `type` attribute for its renderer program name.
+// We store our semantic node kind as `nodeType` instead.
+type SigmaNodeAttrs = Omit<SimNode, "type"> & {
+    nodeType: SimNode["type"];
+    x: number;
+    y: number;
+    size: number;
+    color: string;
+    baseColor: string;
+    hidden: boolean;
+    highlighted: boolean;
+};
+
+interface D3Node extends SimulationNodeDatum {
+    id: string;
+    nodeType: SimNode["type"];
+    size: number;
+}
+interface D3Link extends SimulationLinkDatum<D3Node> {
+    edgeType: string;
+}
+
+// Incrementally sync node/edge data into an existing Graphology graph.
+// Existing nodes keep their current x/y so layout positions are preserved.
+// New nodes get seeded in concentric rings by type.
+function syncGraphData(
+    graph: Graph,
+    visNodes: Array<{ data: Record<string, unknown> }>,
+    visEdges: Array<{ data: Record<string, unknown> }>
+): { nodeList: SigmaNodeAttrs[]; pathToId: Map<string, string> } {
+    const incomingIds = new Set(visNodes.map((n) => n.data.id as string));
+
+    // 1. Drop stale nodes (also drops their edges automatically in graphology)
+    for (const id of graph.nodes()) {
+        if (!incomingIds.has(id)) graph.dropNode(id);
+    }
+
+    // 2. Compute seed positions for brand-new nodes only
+    type RingItem = { id: string; path: string };
+    const newNodes = visNodes.filter((n) => !graph.hasNode(n.data.id as string));
+    const byType: Record<string, RingItem[]> = { root: [], folder: [], file: [], symbol: [] };
+    newNodes.forEach((n) => {
+        const id = n.data.id as string;
+        const rawType = n.data.type as string;
+        const bucket = rawType === "folder" && id === "root" ? "root" : (rawType in byType ? rawType : "file");
+        byType[bucket].push({ id, path: (n.data.path as string) ?? "" });
+    });
+    for (const arr of Object.values(byType)) arr.sort((a, b) => a.path.localeCompare(b.path));
+    const seedPositions = new Map<string, { x: number; y: number }>();
+    if (byType.root[0]) seedPositions.set(byType.root[0].id, { x: 0, y: 0 });
+    const placeRing = (items: RingItem[], minRadius: number, minSpacing: number) => {
+        if (!items.length) return;
+        const radius = Math.max(minRadius, (items.length * minSpacing) / (Math.PI * 2));
+        items.forEach(({ id }, j) => {
+            const angle = (j / items.length) * Math.PI * 2;
+            seedPositions.set(id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+        });
+    };
+    placeRing(byType.folder, 200, 50);
+    placeRing(byType.file,   500, 30);
+    placeRing(byType.symbol, 850,  18);
+
+    // 3. Add or update every incoming node
+    const nodeList: SigmaNodeAttrs[] = [];
+    const pathToId = new Map<string, string>();
+
+    visNodes.forEach((n) => {
+        const id = n.data.id as string;
+        const type = n.data.type as SimNode["type"];
+        const size = type === "root" ? 18 : type === "folder" ? 12 : type === "file" ? 7 : 4.5;
+        const baseColor = (n.data.color as string) || "#94a3b8";
+        const kind = n.data.symbolKind as SymbolKind | undefined;
+        const label = ((n.data.displayLabel ?? n.data.label) as string) || "";
+        const path = n.data.path as string | undefined;
+
+        if (graph.hasNode(id)) {
+            // Keep current layout position — only update visual / metadata attrs
+            const ex = graph.getNodeAttributes(id);
+            graph.mergeNodeAttributes(id, {
+                nodeType: type, size, baseColor, color: ex.color ?? baseColor,
+                label, ext: n.data.extension, showLabel: n.data.showLabel,
+                symbolKind: kind, parentPath: n.data.parentPath, path,
+                rawSize: n.data.rawSize, hubScore: n.data.hubScore,
+                hidden: false, highlighted: false,
+            });
+        } else {
+            const seed = seedPositions.get(id) ?? { x: 0, y: 0 };
+            graph.addNode(id, {
+                id, nodeType: type, radius: size, label,
+                ext: n.data.extension, showLabel: n.data.showLabel,
+                symbolKind: kind, parentPath: n.data.parentPath, path,
+                rawSize: n.data.rawSize, hubScore: n.data.hubScore,
+                x: seed.x, y: seed.y, size,
+                color: baseColor, baseColor, hidden: false, highlighted: false,
+            } as SigmaNodeAttrs);
+        }
+        nodeList.push(graph.getNodeAttributes(id) as SigmaNodeAttrs);
+        if (path !== undefined && path !== null) pathToId.set(String(path), id);
+        if (id === "root") pathToId.set("", id);
+    });
+
+    // 4. Sync edges: drop stale, add new
+    const incomingEdgeKeys = new Set(
+        visEdges.map((e) => `${e.data.source as string}\0${e.data.target as string}`)
+    );
+    const edgesToDrop: string[] = [];
+    graph.forEachEdge((id, _a, src, tgt) => {
+        if (!incomingEdgeKeys.has(`${src}\0${tgt}`)) edgesToDrop.push(id);
+    });
+    edgesToDrop.forEach((id) => graph.dropEdge(id));
+
+    visEdges.forEach((e) => {
+        const src = e.data.source as string;
+        const tgt = e.data.target as string;
+        if (!graph.hasNode(src) || !graph.hasNode(tgt) || graph.hasEdge(src, tgt)) return;
+        const edgeType = e.data.type as string;
+        graph.addEdge(src, tgt, {
+            edgeType,
+            color: edgeTypeColor(edgeType),
+            baseColor: edgeTypeColor(edgeType),
+            size: edgeSizeFor(edgeType),
+            hidden: false,
+        });
+    });
+
+    return { nodeList, pathToId };
+}
+
+function d3ChargeFor(nodeType: SimNode["type"]): number {
+    switch (nodeType) {
+        case "root":   return -1200;
+        case "folder": return -600;
+        case "file":   return -250;
+        case "symbol": return -60;
+        default:       return -150;
+    }
+}
+
+function d3LinkDistance(edgeType: string): number {
+    switch (edgeType) {
+        case "defines":    return 40;
+        case "fileImport": return 100;
+        case "contains":   return 120;
+        default:           return 80;
+    }
+}
+
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
-    const cyRef = useRef<cytoscape.Core | null>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
+    const symbolWorkerRef = useRef<Worker | null>(null);
+    const importWorkerRef = useRef<Worker | null>(null);
     const codePanelRef = useRef<HTMLDivElement>(null);
     const codeListRef = useRef<{
         element: HTMLDivElement | null;
@@ -267,17 +437,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
-    const simRef = useRef<ReturnType<typeof forceSimulation<SimNode>> | null>(null);
-    const simLinksByTypeRef = useRef<Map<string, SimLink[]>>(new Map());
-    const simNodeMapRef = useRef<Map<string, SimNode>>(new Map());
-    const simNodesRef = useRef<SimNode[]>([]);
-    const boundsRRef = useRef(300);
-    const savedPositionsRef = useRef<{
-        zoom: number;
-        pan: { x: number; y: number };
-        nodes: Record<string, { x: number; y: number }>;
-    } | null>(null);
-    const prevLinkCountRef = useRef(0);
+    const sigmaRef = useRef<Sigma | null>(null);
+    const graphRef = useRef<Graph | null>(null);
+    const simRef = useRef<Simulation<D3Node, D3Link> | null>(null);
+    const simNodesRef = useRef<Map<string, D3Node>>(new Map());
+    const layoutStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const layoutSettledRef = useRef(false);
+    const savedCameraRef = useRef<{ x: number; y: number; ratio: number; angle: number } | null>(null);
+    const pathToIdRef = useRef<Map<string, string>>(new Map());
+    const visibleNodesRef = useRef<SigmaNodeAttrs[]>([]);
+    const lockedNodeIdRef = useRef<string | null>(null);
+    const animFrameRef = useRef<number | null>(null);
+    const draggedNodeRef = useRef<string | null>(null);
+    const dragMousePosRef = useRef<{ x: number; y: number } | null>(null);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
@@ -295,13 +467,13 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         element: HTMLDivElement | null;
         scrollToRow: (config: { index: number; align?: "auto" | "center" | "end" | "smart" | "start"; behavior?: "auto" | "instant" | "smooth" }) => void;
     } | null>(null);
-    const [symbolGraph, setSymbolGraph] = useState<ReturnType<typeof buildSymbolGraph>>({
+    const [symbolGraph, setSymbolGraph] = useState<import("@/lib/symbol-parser").SymbolGraphData>({
         symbols: [],
         references: [],
     });
     const [inspectorWidth, setInspectorWidth] = useState(440);
     const [filterPanelWidth, setFilterPanelWidth] = useState(FILTER_PANEL_WIDTH);
-    const visibilityRef = useRef({
+    const visibilityRef = useRef<VisibilityState>({
         showRoot: true,
         showFolders: true,
         showFiles: true,
@@ -320,7 +492,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             type: false,
             method: false,
             variable: false,
-        } as Record<SymbolKind, boolean>,
+        },
     });
 
     const explorerTree = useMemo<ExplorerNode>(() => {
@@ -494,22 +666,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         explorerWidthRef.current = explorerWidth;
     }, [explorerWidth]);
 
-    // Notify Cytoscape whenever the canvas container is resized (explorer drag,
-    // open/close, or window resize). ResizeObserver fires on actual DOM layout
-    // changes — unlike a state-based effect it also catches mid-drag updates
-    // where explorer width is written directly to the DOM without touching state.
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return;
-        const observer = new ResizeObserver(() => {
-            const cy = cyRef.current;
-            if (!cy) return;
-            cy.resize();
-            cy.fit(undefined, 50);
-        });
-        observer.observe(container);
-        return () => observer.disconnect();
-    }, []);
+    // cosmos.gl auto-handles canvas resize — this observer is no longer needed.
 
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
@@ -779,12 +936,32 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 return;
             }
 
-            const graph = buildSymbolGraph(filePayload, {
-                maxReferences: tree.length > 800 ? 400 : 420,
-            });
+            // Terminate any in-flight worker from a prior tree change before
+            // starting a new one so stale results are never applied.
+            symbolWorkerRef.current?.terminate();
+            symbolWorkerRef.current = null;
 
-            setSymbolGraph(graph);
-            setSymbolLoading(false);
+            const maxReferences = tree.length > 800 ? 400 : 420;
+
+            const worker = new Worker(
+                new URL("../../workers/symbol-analysis.worker.ts", import.meta.url)
+            );
+            symbolWorkerRef.current = worker;
+
+            worker.onmessage = (ev: MessageEvent<{ type: "symbolGraph"; data: import("@/lib/symbol-parser").SymbolGraphData }>) => {
+                if (cancelled) { worker.terminate(); symbolWorkerRef.current = null; return; }
+                setSymbolGraph(ev.data.data);
+                setSymbolLoading(false);
+                worker.terminate();
+                symbolWorkerRef.current = null;
+            };
+            worker.onerror = () => {
+                if (!cancelled) setSymbolLoading(false);
+                worker.terminate();
+                symbolWorkerRef.current = null;
+            };
+
+            worker.postMessage({ type: "buildSymbolGraph", fileContents: filePayload, maxReferences });
         };
 
         runSymbolAnalysis();
@@ -793,6 +970,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return () => {
             cancelled = true;
             cancelIdleCallback(idleId);
+            symbolWorkerRef.current?.terminate();
+            symbolWorkerRef.current = null;
         };
     }, [owner, repo, tree]);
 
@@ -852,10 +1031,30 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
             if (cancelled) return;
 
-            const fileSet = new Set(tree.map((i) => i.path));
-            const edges = extractFileToFileImports(filePayload, fileSet);
-            setFileImportEdges(edges);
-            setMultiLangLoading(false);
+            const fileSet = tree.map((i) => i.path);
+
+            importWorkerRef.current?.terminate();
+            importWorkerRef.current = null;
+
+            const worker = new Worker(
+                new URL("../../workers/symbol-analysis.worker.ts", import.meta.url)
+            );
+            importWorkerRef.current = worker;
+
+            worker.onmessage = (ev: MessageEvent<{ type: "importEdges"; data: FileImportEdge[] }>) => {
+                if (cancelled) { worker.terminate(); importWorkerRef.current = null; return; }
+                setFileImportEdges(ev.data.data);
+                setMultiLangLoading(false);
+                worker.terminate();
+                importWorkerRef.current = null;
+            };
+            worker.onerror = () => {
+                if (!cancelled) setMultiLangLoading(false);
+                worker.terminate();
+                importWorkerRef.current = null;
+            };
+
+            worker.postMessage({ type: "extractFileToFileImports", fileContents: filePayload, fileSet });
         };
 
         runMultiLangAnalysis();
@@ -864,13 +1063,15 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return () => {
             cancelled = true;
             cancelIdleCallback(idleId);
+            importWorkerRef.current?.terminate();
+            importWorkerRef.current = null;
         };
     }, [owner, repo, tree]);
 
     // Build graph elements — show all files
     const elements = useMemo(() => {
-        const nodes: cytoscape.NodeDefinition[] = [];
-        const edges: cytoscape.EdgeDefinition[] = [];
+        const nodes: Array<{ data: Record<string, unknown> }> = [];
+        const edges: Array<{ data: Record<string, unknown> }> = [];
         const addedFolders = new Set<string>();
 
         // Smart filtering for large repos: score and prioritise the most important files.
@@ -1184,9 +1385,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { nodes, edges };
     }, [tree, repo, symbolGraph, fileImportEdges]);
 
-    // Is this a large repo?
-    const isLargeRepo = elements.nodes.length > 80;
-
     // Compute cluster info from elements
     const clusterInfo = useMemo(() => {
         const folders = elements.nodes.filter((n) => n.data && (n.data as Record<string, unknown>).type === "folder").length;
@@ -1227,116 +1425,245 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
-    const applyVisibility = useCallback((targetCy?: cytoscape.Core | null) => {
-        const cy = targetCy ?? cyRef.current;
-        if (!cy) return;
+    // Stable fingerprint: only changes when the node/edge set actually changes.
+    const graphKey = useMemo(() => {
+        if (!elements.nodes.length) return "empty";
+        return [
+            elements.nodes.length,
+            (elements.nodes[0]?.data as Record<string, unknown>)?.id ?? "",
+            (elements.nodes[elements.nodes.length - 1]?.data as Record<string, unknown>)?.id ?? "",
+            elements.edges.length,
+        ].join("|");
+    }, [elements]);
+    // Keep a ref to the latest elements so Effect 1's async init can read current data.
+    const elementsRef = useRef(elements);
+    useEffect(() => { elementsRef.current = elements; }, [elements]);
 
-        const state = visibilityRef.current;
-        cy.batch(() => {
-            cy.getElementById("root").style("display", state.showRoot ? "element" : "none");
-            cy.nodes('node[type="folder"]').not('#root').style("display", state.showFolders ? "element" : "none");
-            cy.nodes('node[type="file"]').style("display", state.showFiles ? "element" : "none");
+    const restoreColors = useCallback(() => {
+        const graph = graphRef.current;
+        if (!graph) return;
+        graph.forEachNode((id, attrs) => {
+            if (attrs.color !== attrs.baseColor) graph.setNodeAttribute(id, "color", attrs.baseColor as string);
+        });
+        graph.forEachEdge((id, attrs) => {
+            if (attrs.color !== attrs.baseColor) graph.setEdgeAttribute(id, "color", attrs.baseColor as string);
+        });
+        sigmaRef.current?.refresh();
+    }, []);
 
-            const symbolsVisible = state.showSymbols && state.showFiles;
-            cy.nodes('node[type="symbol"]').forEach((node) => {
-                const kind = node.data("symbolKind") as SymbolKind | undefined;
-                const kindVisible = kind ? state.symbolKindVisibility[kind] : true;
-                node.style("display", symbolsVisible && kindVisible ? "element" : "none");
-            });
+    const applyHoverEffect = useCallback((hoveredId: string | null) => {
+        const graph = graphRef.current;
+        if (!graph) return;
+        if (!hoveredId || !graph.hasNode(hoveredId)) {
+            restoreColors();
+            return;
+        }
+        const neighbors = new Set<string>();
+        neighbors.add(hoveredId);
+        graph.forEachNeighbor(hoveredId, (nb) => neighbors.add(nb));
 
-            cy.edges('edge[type="contains"]').style(
-                "display",
-                state.showContainsEdges ? "element" : "none"
-            );
+        graph.forEachNode((id, attrs) => {
+            const next = neighbors.has(id) ? (attrs.baseColor as string) : DIM_COLOR;
+            if (attrs.color !== next) graph.setNodeAttribute(id, "color", next);
+        });
+        graph.forEachEdge((id, attrs, src, tgt) => {
+            const connected = src === hoveredId || tgt === hoveredId;
+            const next = connected ? (attrs.baseColor as string) : "rgba(255,255,255,0.025)";
+            if (attrs.color !== next) graph.setEdgeAttribute(id, "color", next);
+        });
+        sigmaRef.current?.refresh();
+    }, [restoreColors]);
 
-            cy.edges('edge[type="defines"]').style(
-                "display",
-                state.showDefinesEdges && symbolsVisible ? "element" : "none"
-            );
+    const applyVisibility = useCallback(() => {
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma) return;
+        const v = visibilityRef.current;
+        const symbolsVisible = v.showSymbols && v.showFiles;
 
-            cy.edges('edge[type="imports"]').style(
-                "display",
-                state.showImportsEdges && symbolsVisible ? "element" : "none"
-            );
+        graph.forEachNode((id, attrs) => {
+            const t = attrs.nodeType as SimNode["type"];
+            let hidden = false;
+            if (t === "folder" && id === "root") hidden = !v.showRoot;
+            else if (t === "folder") hidden = !v.showFolders;
+            else if (t === "file") hidden = !v.showFiles;
+            else if (t === "symbol") {
+                const k = attrs.symbolKind as SymbolKind | undefined;
+                hidden = !symbolsVisible || (k ? !v.symbolKindVisibility[k] : false);
+            }
+            if (attrs.hidden !== hidden) graph.setNodeAttribute(id, "hidden", hidden);
+        });
 
-            cy.edges('edge[type="calls"]').style(
-                "display",
-                state.showCallsEdges && symbolsVisible ? "element" : "none"
-            );
+        graph.forEachEdge((id, attrs) => {
+            const t = attrs.edgeType as string;
+            let hidden = false;
+            switch (t) {
+                case "contains":   hidden = !v.showContainsEdges; break;
+                case "defines":    hidden = !(v.showDefinesEdges && symbolsVisible); break;
+                case "imports":    hidden = !(v.showImportsEdges && symbolsVisible); break;
+                case "calls":      hidden = !(v.showCallsEdges && symbolsVisible); break;
+                case "extends":    hidden = !(v.showExtendsEdges && symbolsVisible); break;
+                case "implements": hidden = !(v.showImplementsEdges && symbolsVisible); break;
+                case "fileImport": hidden = !(v.showFileImportEdges && v.showFiles); break;
+                default: hidden = true;
+            }
+            if (attrs.hidden !== hidden) graph.setEdgeAttribute(id, "hidden", hidden);
+        });
 
-            cy.edges('edge[type="extends"]').style(
-                "display",
-                state.showExtendsEdges && symbolsVisible ? "element" : "none"
-            );
+        sigma.refresh();
+    }, []);
 
-            cy.edges('edge[type="implements"]').style(
-                "display",
-                state.showImplementsEdges && symbolsVisible ? "element" : "none"
-            );
+    const restartLayout = useCallback(() => {
+        if (animFrameRef.current !== null) {
+            cancelAnimationFrame(animFrameRef.current);
+            animFrameRef.current = null;
+        }
+        if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+        layoutStopTimerRef.current = null;
+        simRef.current?.stop();
+        simRef.current = null;
+        simNodesRef.current.clear();
+        layoutSettledRef.current = false;
 
-            cy.edges('edge[type="fileImport"]').style(
-                "display",
-                state.showFileImportEdges && state.showFiles ? "element" : "none"
-            );
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma || graph.order === 0) return;
+
+        // Build d3 node objects seeded from current Graphology positions (visible only)
+        const d3Nodes: D3Node[] = [];
+        const nodeMap = new Map<string, D3Node>();
+        graph.forEachNode((id, attrs) => {
+            if (attrs.hidden) return;
+            const node: D3Node = {
+                id,
+                nodeType: attrs.nodeType as SimNode["type"],
+                size: attrs.size as number,
+                x: attrs.x as number,
+                y: attrs.y as number,
+            };
+            d3Nodes.push(node);
+            nodeMap.set(id, node);
+        });
+
+        // Build d3 link objects (visible only)
+        const d3Links: D3Link[] = [];
+        graph.forEachEdge((_id, attrs, src, tgt) => {
+            if (attrs.hidden) return;
+            const source = nodeMap.get(src);
+            const target = nodeMap.get(tgt);
+            if (source && target) {
+                d3Links.push({ source, target, edgeType: attrs.edgeType as string });
+            }
+        });
+
+        simNodesRef.current = nodeMap;
+
+        import("d3-force").then((d3) => {
+            const g = graphRef.current;
+            const s = sigmaRef.current;
+            if (!g || !s) return;
+
+            const nodeCount = d3Nodes.length;
+            const linkForce = d3.forceLink<D3Node, D3Link>(d3Links)
+                .id((n) => n.id)
+                .distance((l) => d3LinkDistance((l as D3Link).edgeType))
+                .strength(0.4);
+
+            const sim = d3.forceSimulation<D3Node, D3Link>(d3Nodes)
+                .force("charge", d3.forceManyBody<D3Node>().strength((n) => d3ChargeFor(n.nodeType)))
+                .force("link", linkForce as unknown as d3.Force<D3Node, D3Link>)
+                .force("center", d3.forceCenter(0, 0).strength(0.05))
+                .force("collision", d3.forceCollide<D3Node>().radius((n) => n.size + 3).strength(0.7))
+                .alphaDecay(0.01)
+                .alphaTarget(0.003)
+                .stop();
+
+            simRef.current = sim;
+
+            // After settle time, lower alphaTarget for micro-motion only
+            const settleMs = nodeCount < 200 ? 3000 : nodeCount < 1000 ? 5000 : nodeCount < 3000 ? 7000 : 5000;
+            layoutStopTimerRef.current = setTimeout(() => {
+                sim.alphaTarget(0.001);
+                layoutSettledRef.current = true;
+            }, settleMs);
+
+            // RAF loop: tick d3, pin dragged node, write positions to Graphology, refresh Sigma
+            const tick = () => {
+                sim.tick();
+                const pinId = draggedNodeRef.current;
+                const pinPos = dragMousePosRef.current;
+                sim.nodes().forEach((n) => {
+                    if (!g.hasNode(n.id)) return;
+                    if (n.id === pinId && pinPos) {
+                        n.fx = pinPos.x;
+                        n.fy = pinPos.y;
+                    }
+                    g.setNodeAttribute(n.id, "x", n.x ?? 0);
+                    g.setNodeAttribute(n.id, "y", n.y ?? 0);
+                });
+                s.refresh();
+                animFrameRef.current = requestAnimationFrame(tick);
+            };
+            animFrameRef.current = requestAnimationFrame(tick);
         });
     }, []);
 
-    const clearNodeFocus = useCallback((cy: cytoscape.Core) => {
-        cy.nodes().forEach(node => {
-            node.style('opacity', 1);
-            node.removeData('keepLabel');
-            if (node.data('type') === 'folder') {
-                node.style('border-width', 2);
-                node.style('border-color', 'rgba(255,255,255,0.4)');
-            } else if (node.data('type') === 'symbol') {
-                node.style('border-width', 1);
-                node.style('border-color', 'rgba(255,255,255,0.35)');
-            } else {
-                node.style('border-width', 0);
-                node.style('border-color', 'transparent');
+    // Update d3 sim forces in-place with only currently visible nodes/edges, then bump alpha.
+    // Preserves current positions and velocities — no teardown, no camera reset.
+    const reheatSim = useCallback(() => {
+        const sim = simRef.current;
+        const graph = graphRef.current;
+        if (!sim || !graph) return;
+
+        const d3Nodes: D3Node[] = [];
+        const nodeMap = new Map<string, D3Node>();
+        graph.forEachNode((id, attrs) => {
+            if (attrs.hidden) return;
+            const existing = simNodesRef.current.get(id);
+            const node: D3Node = existing ?? {
+                id,
+                nodeType: attrs.nodeType as SimNode["type"],
+                size: attrs.size as number,
+                x: attrs.x as number,
+                y: attrs.y as number,
+            };
+            d3Nodes.push(node);
+            nodeMap.set(id, node);
+        });
+        const d3Links: D3Link[] = [];
+        graph.forEachEdge((_id, attrs, src, tgt) => {
+            if (attrs.hidden) return;
+            const source = nodeMap.get(src);
+            const target = nodeMap.get(tgt);
+            if (source && target) {
+                d3Links.push({ source, target, edgeType: attrs.edgeType as string });
             }
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('label', '');
-            }
         });
+        simNodesRef.current = nodeMap;
 
-        cy.edges().forEach(edge => {
-            edge.style('opacity', 0.6);
-            edge.style('width', 1);
-            edge.style('shadow-blur', 0);
-            edge.style('shadow-opacity', 0);
+        import("d3-force").then((d3) => {
+            const s = simRef.current;
+            if (!s) return;
+            const linkForce = d3.forceLink<D3Node, D3Link>(d3Links)
+                .id((n) => n.id)
+                .distance((l) => d3LinkDistance((l as D3Link).edgeType))
+                .strength(0.4);
+            s.nodes(d3Nodes);
+            s.force("charge", d3.forceManyBody<D3Node>().strength((n) => d3ChargeFor(n.nodeType)));
+            s.force("link", linkForce as unknown as d3.Force<D3Node, D3Link>);
+            s.force("collision", d3.forceCollide<D3Node>().radius((n) => n.size + 3).strength(0.7));
+            // Bump alpha so RAF tick produces movement; no restart of d3's internal timer
+            s.alpha(Math.max(s.alpha(), 0.2)).alphaTarget(0.003);
+            if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+            layoutSettledRef.current = false;
+            const nodeCount = d3Nodes.length;
+            const settleMs = nodeCount < 200 ? 2000 : nodeCount < 1000 ? 4000 : 5000;
+            layoutStopTimerRef.current = setTimeout(() => {
+                s.alphaTarget(0.001);
+                layoutSettledRef.current = true;
+            }, settleMs);
         });
-    }, [isLargeRepo]);
-
-    const focusNodeNeighborhood = useCallback((cy: cytoscape.Core, node: cytoscape.NodeSingular) => {
-        // Dim everything first, then re-highlight connected context.
-        cy.nodes().style('opacity', 0.12);
-        cy.edges().style('opacity', 0.06);
-        cy.nodes().removeData('keepLabel');
-
-        const neighborhood = node.closedNeighborhood();
-        neighborhood.nodes().style('opacity', 1);
-        neighborhood.edges().style('opacity', 0.92);
-        neighborhood.edges().style('width', 2);
-        neighborhood.edges().style('shadow-blur', 8);
-        neighborhood.edges().style('shadow-opacity', 0.6);
-        neighborhood.edges().style('shadow-color', '#93c5fd');
-
-        neighborhood.nodes().forEach(n => {
-            n.data('keepLabel', 1);
-        });
-
-        // Primary focus node gets strongest emphasis.
-        node.style('border-width', 3);
-        node.style('border-color', '#facc15');
-
-        // Improve readability in large repos by revealing labels for focused neighborhood.
-        if (isLargeRepo) {
-            neighborhood.nodes().forEach(n => {
-                n.style('label', n.data('compactLabel') || n.data('displayLabel') || n.data('label'));
-            });
-        }
-    }, [isLargeRepo]);
+    }, []);
 
     const expandParentFolders = useCallback((path: string) => {
         const parts = path.split("/");
@@ -1350,13 +1677,28 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         });
     }, []);
 
+    const focusNodeInGraph = useCallback((path: string) => {
+        const id = pathToIdRef.current.get(path);
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!id || !graph?.hasNode(id) || !sigma) return;
+        const attrs = graph.getNodeAttributes(id);
+        if (attrs.hidden) return;
+        lockedNodeIdRef.current = id;
+        applyHoverEffect(id);
+        const displayData = sigma.getNodeDisplayData(id);
+        if (!displayData) return;
+        sigma.getCamera().animate({ x: displayData.x, y: displayData.y, ratio: 0.35 }, { duration: 400 });
+    }, [applyHoverEffect]);
+
     const focusExplorerPath = useCallback((path: string) => {
         setTreeFocusPath(path);
         const nextIndex = explorerRowIndexByPath.get(path);
         if (nextIndex !== undefined) {
             explorerListRef.current?.scrollToRow({ index: nextIndex, align: "smart", behavior: "auto" });
         }
-    }, [explorerRowIndexByPath]);
+        focusNodeInGraph(path);
+    }, [explorerRowIndexByPath, focusNodeInGraph]);
 
     const handleExplorerFileSelect = useCallback((node: { name: string; path: string; extension?: string; size?: number }) => {
         expandParentFolders(node.path);
@@ -1370,18 +1712,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             size: node.size,
         });
 
-        const cy = cyRef.current;
-        if (!cy) return;
-        const cyNode = cy.getElementById(`file:${node.path}`);
-        if (cyNode && cyNode.nonempty()) {
-            focusNodeNeighborhood(cy, cyNode);
-            cy.animate({
-                center: { eles: cyNode },
-                duration: 300,
-                easing: "ease-out-quad",
-            });
-        }
-    }, [expandParentFolders, focusNodeNeighborhood]);
+        focusNodeInGraph(node.path);
+    }, [expandParentFolders, focusNodeInGraph]);
 
     const handleExplorerKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
         if (!showExplorer || explorerRows.length === 0) return;
@@ -1455,568 +1787,226 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         setTreeFocusPath(selectedFile.path);
     }, [selectedFile?.path, expandParentFolders]);
 
-    // Search handler
     const handleSearch = useCallback((query: string) => {
         setSearchQuery(query);
-        const cy = cyRef.current;
-        if (!cy) return;
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma) return;
 
-        // Reset any prior focus state before applying search highlight.
-        clearNodeFocus(cy);
-
-        if (!query.trim()) return;
+        if (!query.trim()) {
+            restoreColors();
+            return;
+        }
 
         const q = query.toLowerCase();
-        const matched = cy.nodes().filter(node => {
-            const label = (node.data('label') || '').toLowerCase();
-            const path = (node.data('path') || '').toLowerCase();
-            return label.includes(q) || path.includes(q);
+        graph.forEachNode((id, attrs) => {
+            const labelStr = String(attrs.label ?? "").toLowerCase();
+            const pathStr = String(attrs.path ?? "").toLowerCase();
+            const matches = labelStr.includes(q) || pathStr.includes(q);
+            const next = matches ? "#facc15" : DIM_COLOR;
+            if (attrs.color !== next) graph.setNodeAttribute(id, "color", next);
         });
+        sigma.refresh();
+    }, [restoreColors]);
 
-        if (matched.length > 0) {
-            // Dim non-matching
-            cy.nodes().style('opacity', 0.15);
-            cy.edges().style('opacity', 0.08);
-            // Highlight matched
-            matched.style('opacity', 1);
-            matched.style('border-width', 3);
-            matched.style('border-color', '#facc15');
-            // Show labels on matched nodes
-            matched.forEach(node => {
-                node.style('label', node.data('compactLabel') || node.data('displayLabel') || node.data('label'));
-            });
-            // Also highlight their edges
-            matched.connectedEdges().style('opacity', 0.8);
-        }
-    }, [clearNodeFocus]);
-
+    // Effect 1 — create Sigma instance once. Runs only on mount.
+    // Event handlers are wired here; restoreColors/applyHoverEffect are stable callbacks ([] deps).
     useEffect(() => {
-        if (!containerRef.current) return;
+        if (!containerRef.current || typeof window === "undefined") return;
+        let cancelled = false;
 
-        const savedPos = savedPositionsRef.current;
-        savedPositionsRef.current = null;
+        (async () => {
+            const { default: SigmaClass } = await import("sigma");
+            if (cancelled || !containerRef.current) return;
 
-        // Initialize cytoscape
-        const cy = cytoscape({
-            container: containerRef.current,
-            elements: elements,
-            style: [
-                {
-                    selector: 'node',
-                    style: {
-                        'background-color': 'data(color)',
-                        'width': 'data(size)',
-                        'height': 'data(size)',
-                        'label': isLargeRepo ? '' : 'data(displayLabel)',
-                        'color': '#ffffff',
-                        'text-valign': 'center',
-                        'text-halign': 'right',
-                        'text-margin-x': 8,
-                        'font-size': '11px',
-                        'font-family': 'monospace',
-                        'text-wrap': 'ellipsis',
-                        'text-max-width': '150px',
-                        'text-outline-width': 1.5,
-                        'text-outline-color': '#0f172a',
-                        'text-outline-opacity': 0.8,
-                    }
-                },
-                {
-                    selector: 'node[type="folder"]',
-                    style: {
-                        'border-width': 2,
-                        'border-color': 'rgba(255, 255, 255, 0.4)',
-                        'font-weight': 'bold',
-                        'font-size': '12px',
-                        'label': isLargeRepo ? '' : 'data(displayLabel)',
-                    }
-                },
-                {
-                    selector: 'node[type="folder"][showLabel = 1]',
-                    style: {
-                        'label': isLargeRepo ? 'data(compactLabel)' : 'data(displayLabel)',
-                    }
-                },
-                {
-                    selector: 'node[type="symbol"]',
-                    style: {
-                        'background-color': 'data(color)',
-                        'shape': 'ellipse',
-                        'width': 'data(size)',
-                        'height': 'data(size)',
-                        'label': isLargeRepo ? '' : 'data(compactLabel)',
-                        'font-size': '9px',
-                        'font-family': 'monospace',
-                        'text-halign': 'center',
-                        'text-valign': 'bottom',
-                        'text-margin-y': 8,
-                        'border-width': 1,
-                        'border-color': 'rgba(255,255,255,0.35)',
-                    }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="class"]',
-                    style: { 'shape': 'hexagon' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="interface"]',
-                    style: { 'shape': 'round-rectangle' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="type"]',
-                    style: { 'shape': 'diamond' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="method"]',
-                    style: { 'shape': 'triangle' }
-                },
-                {
-                    selector: 'node[type="symbol"][symbolKind="variable"]',
-                    style: { 'shape': 'pentagon' }
-                },
-                {
-                    selector: 'edge',
-                    style: {
-                        'width': 1,
-                        'line-color': '#334155',
-                        'opacity': 0.4,
-                        'curve-style': 'bezier',
-                        'control-point-step-size': 40,
-                        'target-arrow-shape': 'none'
-                    }
-                },
-                {
-                    selector: 'edge[type="contains"]',
-                    style: {
-                        'width': 1,
-                        'line-color': '#34d399',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier'
-                    }
-                },
-                {
-                    selector: 'edge[type="defines"]',
-                    style: {
-                        'width': 0.9,
-                        'line-color': '#22d3ee',
-                        'opacity': 0.7,
-                        'curve-style': 'unbundled-bezier',
-                        'control-point-distances': [25],
-                        'control-point-weights': [0.5],
-                    }
-                },
-                {
-                    selector: 'edge[type="imports"]',
-                    style: {
-                        'width': 1.1,
-                        'line-color': '#3b82f6',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="calls"]',
-                    style: {
-                        'width': 1.1,
-                        'line-color': '#8b5cf6',
-                        'opacity': 0.7,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="extends"]',
-                    style: {
-                        'width': 1.2,
-                        'line-color': '#f97316',
-                        'opacity': 0.75,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    selector: 'edge[type="implements"]',
-                    style: {
-                        'width': 1.2,
-                        'line-color': '#ec4899',
-                        'opacity': 0.75,
-                        'curve-style': 'bezier',
-                    }
-                },
-                {
-                    // File-to-file code dependency edge — visually distinct from tree edges
-                    selector: 'edge[type="fileImport"]',
-                    style: {
-                        'width': 1.5,
-                        'line-color': '#fbbf24',
-                        'opacity': 0.55,
-                        'curve-style': 'unbundled-bezier',
-                        'control-point-distances': [40],
-                        'control-point-weights': [0.5],
-                        'line-style': 'dashed',
-                        'line-dash-pattern': [6, 4],
-                        'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#fbbf24',
-                        'arrow-scale': 0.8,
-                    }
-                },
-                {
-                    selector: 'node:selected',
-                    style: {
-                        'border-width': 3,
-                        'border-color': '#ffffff'
-                    }
+            const graph = new Graph({ multi: false, type: "directed" });
+            graphRef.current = graph;
+
+            // Seed any elements already available by the time the import resolves.
+            // Sync ALL nodes/edges — applyVisibility (called below) sets hidden correctly.
+            const elems = elementsRef.current;
+            if (elems.nodes.length) {
+                const { nodeList, pathToId } = syncGraphData(
+                    graph,
+                    elems.nodes as Array<{ data: Record<string, unknown> }>,
+                    elems.edges as Array<{ data: Record<string, unknown> }>
+                );
+                visibleNodesRef.current = nodeList;
+                pathToIdRef.current = pathToId;
+            }
+
+            const nodeCount = graph.order;
+            const sigma = new SigmaClass(graph, containerRef.current!, {
+                allowInvalidContainer: true,
+                renderEdgeLabels: false,
+                defaultEdgeType: "line",
+                defaultNodeType: "circle",
+                hideEdgesOnMove: nodeCount > 800,
+                hideLabelsOnMove: true,
+                minCameraRatio: 0.05,
+                maxCameraRatio: 10,
+                labelSize: 11,
+                labelFont: "monospace",
+                labelColor: { color: "#94a3b8" },
+                labelRenderedSizeThreshold: nodeCount > 3000 ? 12 : nodeCount > 1000 ? 9 : 6,
+                zIndex: true,
+            });
+            sigmaRef.current = sigma;
+
+            if (savedCameraRef.current) {
+                sigma.getCamera().setState(savedCameraRef.current);
+            }
+
+            restartLayout();
+
+            // Hover (Obsidian dim)
+            sigma.on("enterNode", ({ node }) => {
+                if (lockedNodeIdRef.current !== null) return;
+                applyHoverEffect(node);
+            });
+            sigma.on("leaveNode", () => {
+                if (lockedNodeIdRef.current !== null) return;
+                restoreColors();
+            });
+
+            // Click — open inspector and lock focus
+            sigma.on("clickNode", ({ node }) => {
+                const attrs = graph.getNodeAttributes(node) as SigmaNodeAttrs;
+                lockedNodeIdRef.current = node;
+                applyHoverEffect(node);
+                if (attrs.nodeType === "file") {
+                    setSymbolFocus(null);
+                    setFocusLine(null);
+                    setShowExplorerInspector(true);
+                    setSelectedFile({
+                        label: attrs.label,
+                        path: attrs.path ?? "",
+                        type: "file",
+                        extension: attrs.ext,
+                        size: attrs.rawSize,
+                    });
+                } else if (attrs.nodeType === "symbol" && attrs.parentPath) {
+                    const fileLabel = attrs.parentPath.split("/").pop() || attrs.parentPath;
+                    const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                    setSymbolFocus(attrs.label);
+                    setFocusLine(null);
+                    setShowExplorerInspector(true);
+                    setSelectedFile({
+                        label: fileLabel,
+                        path: attrs.parentPath,
+                        type: "file",
+                        extension: ext,
+                    });
                 }
-            ],
-            userZoomingEnabled: false,
-            minZoom: MIN_ZOOM,
-            maxZoom: MAX_ZOOM,
-        });
+            });
+            sigma.on("clickStage", () => {
+                lockedNodeIdRef.current = null;
+                restoreColors();
+            });
 
-        // Build d3-force sim nodes from graph elements
-        const simNodes: SimNode[] = elements.nodes.map((n) => {
-            const d = n.data as Record<string, unknown>;
-            const id = d.id as string;
-            const sp = savedPos?.nodes[id];
-            return {
-                id,
-                type: ((d.type as string) ?? "file") as SimNode["type"],
-                radius: typeof d.size === "number" ? (d.size as number) / 2 : 8,
-                x: sp?.x ?? 0,
-                y: sp?.y ?? 0,
+            // Live physics drag using d3 fx/fy pinning — true Obsidian-style.
+            const camera = sigma.getCamera();
+            sigma.on("downNode", ({ node }) => {
+                draggedNodeRef.current = node;
+                const simNode = simNodesRef.current.get(node);
+                if (simNode) {
+                    dragMousePosRef.current = { x: simNode.x ?? 0, y: simNode.y ?? 0 };
+                }
+                graph.setNodeAttribute(node, "highlighted", true);
+                camera.disable();
+                // Reheat simulation so neighbours react visibly
+                const sim = simRef.current;
+                if (sim) sim.alpha(Math.max(sim.alpha(), 0.3)).alphaTarget(0.3);
+            });
+            const captor = sigma.getMouseCaptor();
+            const onBodyMove = (e: { x: number; y: number; preventSigmaDefault: () => void; original: Event }) => {
+                if (!draggedNodeRef.current) return;
+                dragMousePosRef.current = sigma.viewportToGraph({ x: e.x, y: e.y });
+                // RAF tick handles fx/fy pin + sigma.refresh() — no manual call needed
+                e.preventSigmaDefault();
+                e.original.preventDefault();
+                e.original.stopPropagation();
             };
-        });
-
-        // True when re-initializing after symbol analysis completes (positions already settled)
-        const hasSavedPos = savedPos !== null &&
-            simNodes.some(n => savedPos.nodes[n.id] !== undefined);
-
-        const simNodeById = new Map(simNodes.map((n) => [n.id, n]));
-
-        const allSimLinks = elements.edges
-            .map((e) => {
-                const d = e.data as Record<string, unknown>;
-                const src = simNodeById.get(d.source as string);
-                const tgt = simNodeById.get(d.target as string);
-                if (!src || !tgt) return null;
-                return { source: src, target: tgt, edgeType: (d.type as string) ?? "contains" } as unknown as SimLink;
-            })
-            .filter((l) => l !== null) as SimLink[];
-
-        // Categorize links by type so toggles can add/remove them from the sim
-        const simLinksByType = new Map<string, SimLink[]>();
-        for (const l of allSimLinks) {
-            const bucket = simLinksByType.get(l.edgeType) ?? [];
-            bucket.push(l);
-            simLinksByType.set(l.edgeType, bucket);
-        }
-        simLinksByTypeRef.current = simLinksByType;
-        simNodeMapRef.current = simNodeById;
-
-        // Initial sim uses only structural contains edges — code edges start off
-        const initialLinks = simLinksByType.get("contains") ?? [];
-
-        // Scatter simNode positions directly (not just Cytoscape positions)
-        // so d3-force starts from a spread state, not all at (0,0)
-        const nodeCount = simNodes.length;
-        const scatterR = Math.sqrt(nodeCount) * 20;
-
-        // Scatter non-symbol nodes first (skip if restoring saved positions)
-        if (!hasSavedPos) {
-            for (const n of simNodes) {
-                if (n.type !== "symbol") {
-                    n.x = (Math.random() - 0.5) * 2 * scatterR;
-                    n.y = (Math.random() - 0.5) * 2 * scatterR;
-                }
-            }
-        }
-        // Symbol nodes: init near their parent file (from defines links) so defines edges
-        // immediately pull in the right direction rather than dragging from across the canvas
-        for (const l of (simLinksByType.get("defines") ?? [])) {
-            const src = l.source as SimNode;
-            const tgt = l.target as SimNode;
-            if (src.type === "file" && tgt.type === "symbol" && tgt.x === 0 && tgt.y === 0) {
-                tgt.x = (src.x ?? 0) + (Math.random() - 0.5) * 40;
-                tgt.y = (src.y ?? 0) + (Math.random() - 0.5) * 40;
-            }
-        }
-        // Any symbol without a defines link: scatter normally
-        for (const n of simNodes) {
-            if (n.type === "symbol" && n.x === 0 && n.y === 0) {
-                n.x = (Math.random() - 0.5) * 2 * scatterR;
-                n.y = (Math.random() - 0.5) * 2 * scatterR;
-            }
-        }
-        // Sync Cytoscape positions from simNode positions
-        cy.nodes().forEach((node) => {
-            const sn = simNodeById.get(node.id());
-            if (sn?.x != null && sn.y != null) node.position({ x: sn.x, y: sn.y });
-        });
-        if (hasSavedPos && savedPos) {
-            cy.viewport({ zoom: savedPos.zoom, pan: savedPos.pan });
-        } else {
-            cy.zoom(0.6);
-            cy.center();
-        }
-
-        // Initialize dynamic-force refs
-        simNodesRef.current = simNodes;
-        boundsRRef.current = Math.sqrt(nodeCount) * 80;
-        prevLinkCountRef.current = initialLinks.length;
-
-        // Scale charge so total repulsion energy grows as √N instead of N
-        const chargeScale = Math.max(0.05, 1 / Math.sqrt(nodeCount / 10));
-        const centerStrength = nodeCount > 500 ? 0.15 : nodeCount > 100 ? 0.2 : 0.3;
-
-        // Precompute total connection count per node (all edge types) for connectivity-based charge
-        const connectionCounts = new Map<string, number>();
-        for (const l of allSimLinks) {
-            const srcId = (l.source as SimNode).id;
-            const tgtId = (l.target as SimNode).id;
-            connectionCounts.set(srcId, (connectionCounts.get(srcId) ?? 0) + 1);
-            connectionCounts.set(tgtId, (connectionCounts.get(tgtId) ?? 0) + 1);
-        }
-
-        const sim = forceSimulation<SimNode>(simNodes)
-            .force(
-                "charge",
-                forceManyBody<SimNode>().strength((n) => {
-                    const connections = connectionCounts.get(n.id) ?? 0;
-                    const base = connections === 0 ? -800
-                               : connections <= 2  ? -400
-                               : connections <= 5  ? -200
-                               :                     -100;
-                    return base * chargeScale;
-                })
-            )
-            .force(
-                "link",
-                forceLink<SimNode, SimLink>(initialLinks)
-                    .id((n) => n.id)
-                    .distance((l) => {
-                        if (l.edgeType === "defines")    return 40;
-                        if (l.edgeType === "fileImport") return 80;
-                        if (l.edgeType === "contains")   return 160;
-                        return 120;
-                    })
-                    .strength((l) => {
-                        if (l.edgeType === "defines")    return 0.9;
-                        if (l.edgeType === "fileImport") return 1.0;
-                        if (l.edgeType === "contains")   return 0.3;
-                        return 0.8;
-                    })
-            )
-            .force("center", forceCenter(0, 0).strength(centerStrength))
-            .force("collide", forceCollide<SimNode>()
-                .radius((n) => {
-                    if (n.type === "root")   return 60;
-                    if (n.type === "folder") return 40;
-                    if (n.type === "file")   return 20;
-                    return 12;
-                })
-                .strength(0.9)
-            )
-            .force("bounds", () => {
-                for (const n of simNodes) {
-                    if (n.x == null || n.y == null) continue;
-                    const dist = Math.sqrt(n.x * n.x + n.y * n.y);
-                    if (dist > boundsRRef.current) {
-                        const pull = ((dist - boundsRRef.current) / dist) * 0.05;
-                        n.vx = (n.vx ?? 0) - n.x * pull;
-                        n.vy = (n.vy ?? 0) - n.y * pull;
-                    }
-                }
-            })
-            .alphaDecay(isLargeRepo ? 0.04 : 0.023)
-            .velocityDecay(0.6)
-            .alphaTarget(0.005)
-            .stop();
-
-        simRef.current = sim;
-
-        // Pre-warm simulation so nodes start spread out rather than piled.
-        // Skip when restoring saved positions — nodes are already settled.
-        if (!hasSavedPos) {
-            const warmupTicks = nodeCount > 500 ? 20 : nodeCount > 100 ? 50 : 80;
-            for (let i = 0; i < warmupTicks; i++) sim.tick();
-            cy.batch(() => {
-                for (const n of simNodes) {
-                    if (n.x == null || n.y == null) continue;
-                    const cn = cy.getElementById(n.id);
-                    if (cn.nonempty()) cn.position({ x: n.x, y: n.y });
-                }
-            });
-        }
-
-        const grabbedNodeId = { current: null as string | null };
-        const lockedNodeId = { current: null as string | null };
-        // Skip auto-fit when re-initializing after symbol analysis (viewport already restored)
-        let settled = hasSavedPos;
-        let rafId = 0;
-
-        function loop() {
-            sim.tick();
-
-            let maxDelta = 0;
-            cy.batch(() => {
-                for (const n of simNodes) {
-                    if (n.id === grabbedNodeId.current) continue;
-                    if (n.x == null || n.y == null) continue;
-                    const cyNode = cy.getElementById(n.id);
-                    if (!cyNode.nonempty()) continue;
-                    const pos = cyNode.position();
-                    const dx = n.x - pos.x;
-                    const dy = n.y - pos.y;
-                    const delta = Math.abs(dx) + Math.abs(dy);
-                    if (delta > 0.4) {
-                        maxDelta = Math.max(maxDelta, delta);
-                        cyNode.position({ x: n.x, y: n.y });
-                    }
-                }
-            });
-
-            // Adaptive render threshold: skip full canvas redraw when nearly settled
-            const renderThreshold = sim.alpha() < 0.03 ? 2.0 : 0.4;
-            if (maxDelta > renderThreshold) {
-                cy.forceRender();
-            }
-
-            if (!settled && sim.alpha() < 0.04) {
-                settled = true;
-                cy.fit(cy.elements(), 50);
-            }
-
-            rafId = requestAnimationFrame(loop);
-        }
-
-        rafId = requestAnimationFrame(loop);
-
-        // Drag handlers: pin/unpin nodes in d3-force while Cytoscape handles visual drag
-        cy.on("grab", "node", (evt) => {
-            const pos = evt.target.position();
-            const simNode = simNodeById.get(evt.target.id());
-            if (simNode) { simNode.fx = pos.x; simNode.fy = pos.y; }
-            grabbedNodeId.current = evt.target.id();
-            sim.alpha(Math.max(sim.alpha(), 0.3));
-        });
-
-        cy.on("drag", "node", (evt) => {
-            const pos = evt.target.position();
-            const simNode = simNodeById.get(evt.target.id());
-            if (simNode) { simNode.fx = pos.x; simNode.fy = pos.y; }
-        });
-
-        cy.on("free", "node", (evt) => {
-            const simNode = simNodeById.get(evt.target.id());
-            if (simNode) { simNode.fx = null; simNode.fy = null; }
-            grabbedNodeId.current = null;
-            sim.alpha(Math.max(sim.alpha(), 0.25));
-        });
-
-        // Add event listeners
-        cy.on('tap', 'node', (evt) => {
-            const node = evt.target;
-            const data = node.data();
-
-            lockedNodeId.current = node.id();
-            focusNodeNeighborhood(cy, node);
-
-            if (data.type === "file") {
-                setSymbolFocus(null);
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: data.label,
-                    path: data.path,
-                    type: "file",
-                    extension: data.extension,
-                    size: data.rawSize
-                });
-            } else if (data.type === "symbol" && data.parentPath) {
-                const parentPath = String(data.parentPath);
-                const fileLabel = parentPath.split("/").pop() || parentPath;
-                const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
-                setSymbolFocus(String(data.label));
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: fileLabel,
-                    path: parentPath,
-                    type: "file",
-                    extension: ext,
-                });
-            }
-        });
-
-        // Tap on empty canvas resets node-focus context.
-        cy.on('tap', (evt) => {
-            if (evt.target === cy) {
-                lockedNodeId.current = null;
-                clearNodeFocus(cy);
-            }
-        });
-
-        // Hover: show this node's family, blur everything else.
-        cy.on('mouseover', 'node', (evt) => {
-            if (containerRef.current) containerRef.current.style.cursor = 'pointer';
-            const node = evt.target;
-            focusNodeNeighborhood(cy, node);
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('font-size', '11px');
-                node.style('z-index', 999);
-            }
-        });
-
-        cy.on('mouseout', 'node', (evt) => {
-            if (containerRef.current) containerRef.current.style.cursor = 'default';
-            const node = evt.target;
-            if (isLargeRepo && (node.data('type') === 'file' || node.data('type') === 'symbol')) {
-                node.style('z-index', 0);
-            }
-            // If a node was clicked (locked), restore its focus; otherwise clear.
-            if (lockedNodeId.current) {
-                const locked = cy.getElementById(lockedNodeId.current);
-                if (locked.nonempty()) {
-                    focusNodeNeighborhood(cy, locked);
-                    return;
-                }
-            }
-            clearNodeFocus(cy);
-        });
-
-        cyRef.current = cy;
-        applyVisibility(cy);
-
-        const wheelContainer = containerRef.current!;
-        const onWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            const cyInst = cyRef.current;
-            if (!cyInst) return;
-            const factor = e.deltaY < 0 ? 1.15 : 0.87;
-            const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cyInst.zoom() * factor));
-            const rect = wheelContainer.getBoundingClientRect();
-            cyInst.zoom({
-                level: newZoom,
-                renderedPosition: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-            });
-        };
-        wheelContainer.addEventListener('wheel', onWheel, { passive: false });
+            const endDrag = () => {
+                const node = draggedNodeRef.current;
+                if (!node) return;
+                // Release d3 pin
+                const simNode = simNodesRef.current.get(node);
+                if (simNode) { simNode.fx = undefined; simNode.fy = undefined; }
+                graph.removeNodeAttribute(node, "highlighted");
+                draggedNodeRef.current = null;
+                dragMousePosRef.current = null;
+                camera.enable();
+                // Cool down to micro-motion target
+                const sim = simRef.current;
+                if (sim) sim.alphaTarget(layoutSettledRef.current ? 0.001 : 0.003);
+            };
+            captor.on("mousemovebody", onBodyMove);
+            captor.on("mouseup", endDrag);
+            captor.on("mouseleave", endDrag);
+        })();
 
         return () => {
-            wheelContainer.removeEventListener('wheel', onWheel);
-            cancelAnimationFrame(rafId);
-            sim.stop();
+            cancelled = true;
+            savedCameraRef.current = sigmaRef.current?.getCamera().getState() ?? null;
+            draggedNodeRef.current = null;
+            dragMousePosRef.current = null;
+            if (animFrameRef.current !== null) {
+                cancelAnimationFrame(animFrameRef.current);
+                animFrameRef.current = null;
+            }
+            if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+            layoutStopTimerRef.current = null;
+            simRef.current?.stop();
             simRef.current = null;
-            simNodesRef.current = [];
-            // Save viewport + node positions so re-init (e.g. after symbol analysis) is seamless
-            const saved: { zoom: number; pan: { x: number; y: number }; nodes: Record<string, { x: number; y: number }> } = {
-                zoom: cy.zoom(),
-                pan: cy.pan(),
-                nodes: {},
-            };
-            cy.nodes().forEach(n => { saved.nodes[n.id()] = n.position(); });
-            savedPositionsRef.current = saved;
-            cy.destroy();
+            simNodesRef.current.clear();
+            try { sigmaRef.current?.kill(); } catch { /* noop */ }
+            sigmaRef.current = null;
+            graphRef.current = null;
+            pathToIdRef.current = new Map();
+            visibleNodesRef.current = [];
         };
-    }, [elements, isLargeRepo, clearNodeFocus, focusNodeNeighborhood, applyVisibility]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Effect 2 — incrementally sync graph data when elements change.
+    // Sigma instance is already live; we only add/remove/update nodes and edges.
+    useEffect(() => {
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma) return;
+
+        // Sync ALL elements — applyVisibility sets hidden attrs, restartLayout only picks up visible ones.
+        const { nodeList, pathToId } = syncGraphData(
+            graph,
+            elements.nodes as Array<{ data: Record<string, unknown> }>,
+            elements.edges as Array<{ data: Record<string, unknown> }>
+        );
+        visibleNodesRef.current = nodeList;
+        pathToIdRef.current = pathToId;
+        lockedNodeIdRef.current = null;
+
+        applyVisibility();
+        sigma.refresh();
+        restartLayout();
+    }, [graphKey, elements, applyVisibility, restartLayout]);
+
+    // Tab visibility: pause simulation when tab is hidden, resume if not yet settled.
+    useEffect(() => {
+        const handler = () => {
+            if (document.hidden) {
+                if (animFrameRef.current !== null) {
+                    cancelAnimationFrame(animFrameRef.current);
+                    animFrameRef.current = null;
+                }
+                simRef.current?.stop();
+            } else if (!layoutSettledRef.current) {
+                restartLayout();
+            }
+        };
+        document.addEventListener("visibilitychange", handler);
+        return () => document.removeEventListener("visibilitychange", handler);
+    }, [restartLayout]);
 
     useEffect(() => {
         visibilityRef.current = {
@@ -2034,79 +2024,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             symbolKindVisibility,
         };
         applyVisibility();
+        reheatSim();
+    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility, reheatSim]);
 
-        // Sync active simulation links with current visibility state
-        const sim = simRef.current;
-        const lf = sim?.force<ForceLink<SimNode, SimLink>>("link");
-        if (sim && lf) {
-            const linkMap = simLinksByTypeRef.current;
-            const s = visibilityRef.current;
-            const activeLinks: SimLink[] = [
-                ...(linkMap.get("contains") ?? []),
-                ...(s.showDefinesEdges    ? (linkMap.get("defines")     ?? []) : []),
-                ...(s.showImportsEdges    ? (linkMap.get("imports")     ?? []) : []),
-                ...(s.showCallsEdges      ? (linkMap.get("calls")       ?? []) : []),
-                ...(s.showExtendsEdges    ? (linkMap.get("extends")     ?? []) : []),
-                ...(s.showImplementsEdges ? (linkMap.get("implements")  ?? []) : []),
-                ...(s.showFileImportEdges ? (linkMap.get("fileImport")  ?? []) : []),
-            ];
-            lf.links(activeLinks);
+    const handleZoomIn = () => {
+        sigmaRef.current?.getCamera().animatedZoom({ duration: 200 });
+    };
+    const handleZoomOut = () => {
+        sigmaRef.current?.getCamera().animatedUnzoom({ duration: 200 });
+    };
+    const handleFit = () => {
+        sigmaRef.current?.getCamera().animatedReset({ duration: 300 });
+    };
 
-            // Recalculate forces based on current active graph density
-            const allSimNodes = simNodesRef.current;
-            const dynNodeCount = allSimNodes.length;
-            const avgDegree = dynNodeCount > 0 ? activeLinks.length / dynNodeCount : 0;
-            const edgeBoost = 1 + avgDegree * 0.3;
-            const newChargeScale = Math.max(0.05, 1 / Math.sqrt(Math.max(1, dynNodeCount) / 10)) * edgeBoost;
-
-            const dynConnectionCounts = new Map<string, number>();
-            for (const l of activeLinks) {
-                const srcId = (l.source as SimNode).id;
-                const tgtId = (l.target as SimNode).id;
-                dynConnectionCounts.set(srcId, (dynConnectionCounts.get(srcId) ?? 0) + 1);
-                dynConnectionCounts.set(tgtId, (dynConnectionCounts.get(tgtId) ?? 0) + 1);
-            }
-            sim.force("charge", forceManyBody<SimNode>().strength((n: SimNode) => {
-                const connections = dynConnectionCounts.get(n.id) ?? 0;
-                const base = connections === 0 ? -800
-                           : connections <= 2  ? -400
-                           : connections <= 5  ? -200
-                           :                     -100;
-                return base * newChargeScale;
-            }));
-
-            const distMult = 1 + Math.log2(Math.max(2, avgDegree + 1));
-            lf.distance((l: SimLink) => {
-                if (l.edgeType === "defines")    return 40;
-                if (l.edgeType === "fileImport") return 80 * distMult;
-                if (l.edgeType === "contains")   return 160;
-                return 120 * distMult;
-            });
-            lf.strength((l: SimLink) => {
-                if (l.edgeType === "defines")    return Math.max(0.15, 0.9  / edgeBoost);
-                if (l.edgeType === "fileImport") return Math.max(0.2,  1.0  / edgeBoost);
-                if (l.edgeType === "contains")   return 0.3;
-                return Math.max(0.08, 0.8 / edgeBoost);
-            });
-
-            const newCenterStr = activeLinks.length > 500 ? 0.05
-                               : activeLinks.length > 100 ? 0.12
-                               :                            0.2;
-            sim.force("center", forceCenter<SimNode>(0, 0).strength(newCenterStr));
-
-            boundsRRef.current = Math.sqrt(Math.max(1, dynNodeCount)) * 80
-                * Math.max(1, 1 + Math.log2(Math.max(1, avgDegree)));
-
-            const linkDelta = Math.abs(activeLinks.length - prevLinkCountRef.current);
-            prevLinkCountRef.current = activeLinks.length;
-            const reheatAlpha = Math.min(0.9, 0.3 + Math.sqrt(linkDelta) / 50);
-            sim.alpha(Math.max(sim.alpha(), reheatAlpha));
-        }
-    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility]);
-
-    const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.2);
-    const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.2);
-    const handleFit = () => cyRef.current?.fit(undefined, 50);
 
     const handlePreset = (preset: "overview" | "clusters" | "full") => {
         setActivePreset(preset);
@@ -2177,6 +2107,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                                 setTreeFocusPath(row.path);
                                                 if (isFolder) {
                                                     toggleFolder(row.path);
+                                                    focusNodeInGraph(row.path);
                                                 } else {
                                                     handleExplorerFileSelect({ name: row.name, path: row.path, extension: row.extension, size: row.size });
                                                 }
@@ -2506,7 +2437,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 )}
 
-                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl" />
+                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl bg-[#07050f]" />
 
                 <div className="absolute bottom-2 right-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1 flex flex-row items-center gap-1">

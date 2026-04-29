@@ -1,11 +1,6 @@
-// ============================================================================
-// GitViz — AI Credit Tracking (localStorage-based, per-user)
-// ============================================================================
-// Gemini 2.0 Flash free tier: 15 RPM, 1500 RPD, 1M TPM
-// We track daily usage and enforce a generous per-user daily cap.
 
 const STORAGE_KEY = "gitviz_ai_credits";
-const DAILY_LIMIT = 30; // generous daily cap per user (each repo = ~3 API calls)
+const DAILY_LIMIT = 30; 
 
 interface CreditState {
     date: string;       // ISO date string (YYYY-MM-DD)

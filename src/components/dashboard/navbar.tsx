@@ -7,7 +7,6 @@ import {
     Share2,
     Star,
     Sparkles,
-    MessageCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/ui/brand-logo";

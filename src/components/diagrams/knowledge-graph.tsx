@@ -44,8 +44,9 @@ export default function KnowledgeGraph({
         return buildGraphData(tree, analysis || undefined, owner, repo);
     }, [tree, analysis, owner, repo]);
 
-    // Positioned nodes — start with circular layout, settle via deferred simulation
+    // Positioned nodes — start with circular layout, settle via off-thread simulation
     const [positionedNodes, setPositionedNodes] = useState<GraphNode[]>([]);
+    const workerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
         // Shallow-copy nodes so mutation doesn't affect graphData
@@ -66,67 +67,41 @@ export default function KnowledgeGraph({
         });
         setPositionedNodes([...nodes]);
 
-        // Run the full force simulation in a deferred macrotask so it never blocks paint
+        // Terminate any in-flight worker from a previous graphData change
+        workerRef.current?.terminate();
+
         let cancelled = false;
-        const timer = setTimeout(() => {
-            if (cancelled) return;
-            const edges = graphData.edges;
-            const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-            for (let iter = 0; iter < 80; iter++) {
-                const temp = 1 - iter / 80;
+        if (typeof window !== "undefined") {
+            // Off-thread: post serialisable {id,x,y,cluster} slices to the worker
+            const worker = new Worker(
+                new URL("../../workers/knowledge-graph-sim.worker.ts", import.meta.url)
+            );
+            workerRef.current = worker;
 
-                for (let i = 0; i < nodes.length; i++) {
-                    for (let j = i + 1; j < nodes.length; j++) {
-                        const dx = (nodes[j].x || 0) - (nodes[i].x || 0);
-                        const dy = (nodes[j].y || 0) - (nodes[i].y || 0);
-                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                        const repForce = (150 * temp) / dist;
-                        const fx = (dx / dist) * repForce;
-                        const fy = (dy / dist) * repForce;
-                        nodes[i].x = (nodes[i].x || 0) - fx;
-                        nodes[i].y = (nodes[i].y || 0) - fy;
-                        nodes[j].x = (nodes[j].x || 0) + fx;
-                        nodes[j].y = (nodes[j].y || 0) + fy;
-                    }
-                }
+            worker.onmessage = (e: MessageEvent<{ nodes: { id: string; x: number; y: number }[] }>) => {
+                if (cancelled) { worker.terminate(); return; }
+                const posMap = new Map(e.data.nodes.map(n => [n.id, n]));
+                setPositionedNodes(prev =>
+                    prev.map(n => {
+                        const pos = posMap.get(n.id);
+                        return pos ? { ...n, x: pos.x, y: pos.y } : n;
+                    })
+                );
+                worker.terminate();
+                workerRef.current = null;
+            };
 
-                edges.forEach(edge => {
-                    const source = nodeMap.get(edge.source);
-                    const target = nodeMap.get(edge.target);
-                    if (!source || !target) return;
-                    const dx = (target.x || 0) - (source.x || 0);
-                    const dy = (target.y || 0) - (source.y || 0);
-                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                    const attForce = dist * 0.01 * temp;
-                    const fx = (dx / dist) * attForce;
-                    const fy = (dy / dist) * attForce;
-                    source.x = (source.x || 0) + fx;
-                    source.y = (source.y || 0) + fy;
-                    target.x = (target.x || 0) - fx;
-                    target.y = (target.y || 0) - fy;
-                });
-
-                nodes.forEach(n1 => {
-                    if (n1.cluster === undefined) return;
-                    nodes.forEach(n2 => {
-                        if (n1 === n2 || n2.cluster !== n1.cluster) return;
-                        const dx = (n2.x || 0) - (n1.x || 0);
-                        const dy = (n2.y || 0) - (n1.y || 0);
-                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                        const force = dist * 0.002 * temp;
-                        n1.x = (n1.x || 0) + (dx / dist) * force;
-                        n1.y = (n1.y || 0) + (dy / dist) * force;
-                    });
-                });
-            }
-
-            setPositionedNodes([...nodes]);
-        }, 0);
+            worker.postMessage({
+                nodes: nodes.map(n => ({ id: n.id, x: n.x ?? 0, y: n.y ?? 0, cluster: n.cluster })),
+                edges: graphData.edges.map(e => ({ source: e.source, target: e.target })),
+            });
+        }
 
         return () => {
             cancelled = true;
-            clearTimeout(timer);
+            workerRef.current?.terminate();
+            workerRef.current = null;
         };
     }, [graphData]);
 
@@ -145,6 +120,13 @@ export default function KnowledgeGraph({
     const highlightedIds = useMemo(() => {
         return new Set(filteredNodes.map(n => n.id));
     }, [filteredNodes]);
+
+    // O(1) node lookup for edge rendering — rebuilt only when positionedNodes changes
+    const positionedNodeMap = useMemo(() => {
+        const map = new Map<string, GraphNode>();
+        for (const n of positionedNodes) map.set(n.id, n);
+        return map;
+    }, [positionedNodes]);
 
     // Canvas rendering
     const renderCanvas = useCallback(() => {
@@ -187,8 +169,8 @@ export default function KnowledgeGraph({
 
         // Draw edges
         graphData.edges.forEach(edge => {
-            const sourceNode = positionedNodes.find(n => n.id === edge.source);
-            const targetNode = positionedNodes.find(n => n.id === edge.target);
+            const sourceNode = positionedNodeMap.get(edge.source);
+            const targetNode = positionedNodeMap.get(edge.target);
             if (!sourceNode || !targetNode) return;
 
             const sx = cx + (sourceNode.x || 0) * zoom;
@@ -274,7 +256,7 @@ export default function KnowledgeGraph({
             }
         });
 
-    }, [positionedNodes, graphData.edges, zoom, offset, hoveredNode, selectedNode, searchQuery, highlightedIds]);
+    }, [positionedNodes, positionedNodeMap, graphData.edges, zoom, offset, hoveredNode, selectedNode, searchQuery, highlightedIds]);
 
     // Render loop
     useEffect(() => {
