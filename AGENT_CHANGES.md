@@ -1,3 +1,41 @@
+## file-tree-graph: cosmos.gl → Sigma.js v3 + Graphology + ForceAtlas2 worker
+
+### Why
+cosmos.gl had recurring issues (drag/repulsion glitches, fitView timing, manual canvas label RAF loop, undocumented APIs). Migrated to Sigma.js v3 + Graphology + FA2 worker for a more mature, attribute-driven WebGL rendering stack with physics on a separate thread.
+
+### Files changed
+**`package.json`** — added `sigma`, `graphology`, `graphology-layout-forceatlas2`, devDep `graphology-types`. cosmos.gl entry left in place pending broader verification.
+
+**`src/components/diagrams/file-tree-graph.tsx`** (only file touched in `src/`)
+- Replaced cosmos.gl `Graph` import with `Sigma`, `Graph` (Graphology), and `FA2Layout` (worker).
+- Removed `hexToRgba01`, `symbolKindToShape`, `buildCosmosArrays`, the SimNode-typed-array path, and the `<canvas>` label overlay + RAF loop.
+- New `buildSigmaGraph()` — produces a Graphology graph with attrs `{x, y, size, color, baseColor, label, hidden, highlighted, type, symbolKind, path, ...}`. Concentric ring seed positions preserved.
+- New `fa2SettingsFor(nodeCount)` — size-tuned ForceAtlas2 settings (scalingRatio, slowDown, barnesHutOptimize) with a `settleMs` stop-timer per repo size.
+- `edgeTypeColor()` now returns rgba strings (Sigma reads CSS colors). All 7 edge types preserved (`contains`, `defines`, `imports`, `calls`, `extends`, `implements`, `fileImport`).
+- Symbol kinds now render as colored circles (no shape distinction, per scoped decision); color still distinguishes kind.
+- `applyVisibility` walks Graphology nodes/edges and sets `hidden` attributes; Sigma respects them natively. Filter panel, presets (Overview/Clusters/Full), and symbol-kind toggles wired through this.
+- `applyHoverEffect`/`restoreColors` rewrite node/edge `color` attrs (Obsidian-style dim using `graph.forEachNeighbor`). Click locks focus via `lockedNodeIdRef`; `clickStage` clears.
+- Node-click → existing inspector flow preserved (`setSelectedFile`, `setSymbolFocus`, `setShowExplorerInspector`).
+- Explorer file click → `pathToIdRef` map → `camera.animate({x, y, ratio})`.
+- Drag with FA2 reheat: `downNode` pins via `setNodeAttribute('highlighted', true)`, captures `mousemovebody` to write `x/y` (worker picks up next tick), `mouseup`/`mouseleave` unpin and re-stop.
+- Zoom buttons: `camera.animatedZoom`/`animatedUnzoom`/`animatedReset`.
+- Tab visibility: `layout.stop()` when hidden; `layout.start()` only if not yet settled.
+- Cleanup: clear stop-timer, `layout.stop()` + `layout.kill()`, `sigma.kill()`. Camera state persisted in `savedCameraRef` across re-renders.
+
+### Verification
+- `npm install sigma graphology graphology-layout-forceatlas2` + `graphology-types` (devDep) — clean.
+- `npm run build` — green (TypeScript + Next compile pass).
+- `npm run lint` — no new issues introduced (pre-existing errors in `src/lib/github.ts`, `knowledge-graph.tsx`, etc. unchanged).
+- Manual UI smoke-test: blocked by another `next dev` instance holding `.next/dev/lock`; needs to be terminated before re-running. Build + lint signals are clean — interactive verification (small repo render, large repo `facebook/react`, drag, presets, search, hover dim, explorer-click camera animation, tab-switch survival) recommended before removing cosmos.gl from `package.json`.
+
+### Known scope-limited gaps
+- Symbol-kind shape distinction (hexagon/square/diamond/triangle/pentagon) flattened to circles. Color still distinguishes kind.
+- FA2 reheat-during-drag is less crisp than cosmos.gl's `setPointPositions` push.
+- Sigma's built-in labels replace the canvas overlay; rendering is close but not pixel-identical.
+- cosmos.gl entry left in `package.json` for safe rollback; remove in a follow-up commit after interactive verification.
+
+---
+
 ## security
 
 ### Files changed

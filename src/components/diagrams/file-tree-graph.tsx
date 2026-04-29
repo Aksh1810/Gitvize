@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { motion } from "framer-motion";
-import { Graph } from "@cosmos.gl/graph";
+import Graph from "graphology";
+import type Sigma from "sigma";
+import type FA2Layout from "graphology-layout-forceatlas2/worker";
 import { List, type RowComponentProps } from "react-window";
 import { cn } from "@/lib/utils";
 import { getFileColor } from "@/lib/file-icons";
@@ -198,38 +200,24 @@ const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
     limit: 0,
 };
 
-function hexToRgba01(hex: string): [number, number, number, number] {
-    const h = hex.replace("#", "");
-    const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-    const r = parseInt(full.slice(0, 2), 16) / 255;
-    const g = parseInt(full.slice(2, 4), 16) / 255;
-    const b = parseInt(full.slice(4, 6), 16) / 255;
-    return [isNaN(r) ? 0.5 : r, isNaN(g) ? 0.5 : g, isNaN(b) ? 0.5 : b, 1];
-}
-
-function symbolKindToShape(kind: SymbolKind): number {
-    switch (kind) {
-        case "class":     return 5; // Hexagon
-        case "interface": return 1; // Square
-        case "type":      return 3; // Diamond
-        case "method":    return 2; // Triangle
-        case "variable":  return 4; // Pentagon
-        default:          return 0; // Circle (function)
-    }
-}
-
-function edgeTypeColor(type: string): [number, number, number, number] {
+function edgeTypeColor(type: string): string {
     switch (type) {
-        case "fileImport":  return [0.98, 0.75, 0.14, 0.40];
-        case "defines":     return [0.13, 0.83, 0.93, 0.70];
-        case "imports":     return [0.23, 0.51, 0.96, 0.70];
-        case "calls":       return [0.54, 0.36, 0.96, 0.70];
-        case "extends":     return [0.97, 0.45, 0.09, 0.75];
-        case "implements":  return [0.92, 0.28, 0.60, 0.75];
-        case "contains":    return [0.20, 0.83, 0.60, 0.70];
-        default:            return [1.00, 1.00, 1.00, 0.12];
+        case "fileImport":  return "rgba(251,191,36,0.45)";
+        case "defines":     return "rgba(34,211,238,0.55)";
+        case "imports":     return "rgba(59,130,246,0.55)";
+        case "calls":       return "rgba(139,92,246,0.55)";
+        case "extends":     return "rgba(249,115,22,0.6)";
+        case "implements":  return "rgba(236,72,153,0.6)";
+        case "contains":    return "rgba(52,211,153,0.45)";
+        default:            return "rgba(255,255,255,0.12)";
     }
 }
+
+function edgeSizeFor(type: string): number {
+    return type === "fileImport" ? 1.6 : 1;
+}
+
+const DIM_COLOR = "#ffffff14";
 
 interface VisibilityState {
     showRoot: boolean;
@@ -290,95 +278,122 @@ function filterByVisibility(
     return { visNodes, visEdges };
 }
 
-function buildCosmosArrays(
+// Sigma reserves the `type` attribute for its renderer program name.
+// We store our semantic node kind as `nodeType` instead.
+type SigmaNodeAttrs = Omit<SimNode, "type"> & {
+    nodeType: SimNode["type"];
+    x: number;
+    y: number;
+    size: number;
+    color: string;
+    baseColor: string;
+    hidden: boolean;
+    highlighted: boolean;
+};
+
+function buildSigmaGraph(
     visNodes: Array<{ data: Record<string, unknown> }>,
     visEdges: Array<{ data: Record<string, unknown> }>
-) {
-    const count = visNodes.length;
-    const eCount = visEdges.length;
-    const nodeIndexMap = new Map<string, number>();
-    visNodes.forEach((n, i) => nodeIndexMap.set(n.data.id as string, i));
+): { graph: Graph; nodeList: SigmaNodeAttrs[]; pathToId: Map<string, string> } {
+    const graph = new Graph({ multi: false, type: "directed" });
+    const nodeList: SigmaNodeAttrs[] = [];
+    const pathToId = new Map<string, string>();
 
-    const pointPositions = new Float32Array(count * 2);
-    const pointColors    = new Float32Array(count * 4);
-    const pointSizes     = new Float32Array(count);
-    const pointShapes    = new Float32Array(count);
-    const simNodeList: SimNode[] = [];
-
-    // Sorted concentric ring layout: root at center, folders ring 1, files ring 2, symbols ring 3.
-    // Nodes sorted by path within each ring so siblings (same folder / same file) are adjacent.
-    const SPACE_CENTER = 4096; // cosmos.gl simulation space 0-8192; gravity center at 4096,4096
-    type RingItem = { idx: number; path: string };
+    // Concentric seed layout: root center, folders ring 1, files ring 2, symbols ring 3.
+    type RingItem = { id: string; path: string };
     const byType: Record<string, RingItem[]> = { root: [], folder: [], file: [], symbol: [] };
-    visNodes.forEach((n, i) => {
-        const t = (n.data.type as string) in byType ? (n.data.type as string) : "file";
-        byType[t].push({ idx: i, path: (n.data.path as string) ?? "" });
+    visNodes.forEach((n) => {
+        const id = n.data.id as string;
+        const rawType = n.data.type as string;
+        const bucket = rawType === "folder" && id === "root" ? "root" : (rawType in byType ? rawType : "file");
+        byType[bucket].push({ id, path: (n.data.path as string) ?? "" });
     });
     for (const arr of Object.values(byType)) {
         arr.sort((a, b) => a.path.localeCompare(b.path));
     }
+    const seedPositions = new Map<string, { x: number; y: number }>();
+    if (byType.root[0]) seedPositions.set(byType.root[0].id, { x: 0, y: 0 });
     const placeRing = (items: RingItem[], minRadius: number, minSpacing: number) => {
         if (items.length === 0) return;
-        const radius = Math.min(3800, Math.max(minRadius, (items.length * minSpacing) / (Math.PI * 2)));
-        items.forEach(({ idx }, j) => {
+        const radius = Math.max(minRadius, (items.length * minSpacing) / (Math.PI * 2));
+        items.forEach(({ id }, j) => {
             const angle = (j / items.length) * Math.PI * 2;
-            pointPositions[idx * 2]     = SPACE_CENTER + Math.cos(angle) * radius;
-            pointPositions[idx * 2 + 1] = SPACE_CENTER + Math.sin(angle) * radius;
+            seedPositions.set(id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
         });
     };
-    if (byType.root[0]) {
-        pointPositions[byType.root[0].idx * 2]     = SPACE_CENTER;
-        pointPositions[byType.root[0].idx * 2 + 1] = SPACE_CENTER;
-    }
-    placeRing(byType.folder, 250, 50);
-    placeRing(byType.file,   700, 30);
-    placeRing(byType.symbol, 1100, 18);
+    placeRing(byType.folder, 200, 50);
+    placeRing(byType.file,   500, 30);
+    placeRing(byType.symbol, 850,  18);
 
-    visNodes.forEach((n, i) => {
-
+    visNodes.forEach((n) => {
+        const id = n.data.id as string;
         const type = n.data.type as SimNode["type"];
-        const cosmosSize = type === "root" ? 28 : type === "folder" ? 18 : type === "file" ? 10 : 6;
-        pointSizes[i] = cosmosSize;
-
-        const [r, g, b, a] = hexToRgba01((n.data.color as string) || "#888888");
-        pointColors[i * 4]     = r;
-        pointColors[i * 4 + 1] = g;
-        pointColors[i * 4 + 2] = b;
-        pointColors[i * 4 + 3] = a;
-
+        const size = type === "root" ? 18 : type === "folder" ? 12 : type === "file" ? 7 : 4.5;
+        const baseColor = (n.data.color as string) || "#94a3b8";
+        const seed = seedPositions.get(id) ?? { x: 0, y: 0 };
         const kind = n.data.symbolKind as SymbolKind | undefined;
-        pointShapes[i] = (type === "symbol" && kind) ? symbolKindToShape(kind) : 0;
+        const label = ((n.data.displayLabel ?? n.data.label) as string) || "";
+        const path = n.data.path as string | undefined;
+        const ext = n.data.extension as string | undefined;
+        const showLabel = n.data.showLabel as number | undefined;
+        const hubScore = n.data.hubScore as number | undefined;
+        const rawSize = n.data.rawSize as number | undefined;
+        const parentPath = n.data.parentPath as string | undefined;
 
-        simNodeList.push({
-            id: n.data.id as string,
-            type,
-            radius: cosmosSize / 2,
-            label: ((n.data.displayLabel ?? n.data.label) as string) || "",
-            ext: n.data.extension as string | undefined,
-            showLabel: n.data.showLabel as number | undefined,
+        const attrs: SigmaNodeAttrs = {
+            id,
+            nodeType: type,
+            radius: size,
+            label,
+            ext,
+            showLabel,
             symbolKind: kind,
-            parentPath: n.data.parentPath as string | undefined,
-            path: n.data.path as string | undefined,
-            rawSize: n.data.rawSize as number | undefined,
-            hubScore: n.data.hubScore as number | undefined,
+            parentPath,
+            path,
+            rawSize,
+            hubScore,
+            x: seed.x,
+            y: seed.y,
+            size,
+            color: baseColor,
+            baseColor,
+            hidden: false,
+            highlighted: false,
+        };
+        graph.addNode(id, attrs);
+        nodeList.push(attrs);
+        if (type === "file" && path) pathToId.set(path, id);
+    });
+
+    visEdges.forEach((e) => {
+        const source = e.data.source as string;
+        const target = e.data.target as string;
+        if (!graph.hasNode(source) || !graph.hasNode(target)) return;
+        if (graph.hasEdge(source, target)) return;
+        const edgeType = e.data.type as string;
+        graph.addEdge(source, target, {
+            edgeType,
+            color: edgeTypeColor(edgeType),
+            baseColor: edgeTypeColor(edgeType),
+            size: edgeSizeFor(edgeType),
+            hidden: false,
         });
     });
 
-    const linkArray = new Float32Array(eCount * 2);
-    const linkColors = new Float32Array(eCount * 4);
-    visEdges.forEach((e, i) => {
-        const srcIdx = nodeIndexMap.get(e.data.source as string) ?? 0;
-        const tgtIdx = nodeIndexMap.get(e.data.target as string) ?? 0;
-        linkArray[i * 2]     = srcIdx;
-        linkArray[i * 2 + 1] = tgtIdx;
-        const [r, g, b, a] = edgeTypeColor(e.data.type as string);
-        linkColors[i * 4]     = r;
-        linkColors[i * 4 + 1] = g;
-        linkColors[i * 4 + 2] = b;
-        linkColors[i * 4 + 3] = a;
-    });
+    return { graph, nodeList, pathToId };
+}
 
-    return { pointPositions, pointColors, pointSizes, pointShapes, linkArray, linkColors, nodeIndexMap, simNodeList };
+function fa2SettingsFor(nodeCount: number) {
+    if (nodeCount > 3000) {
+        return { settings: { gravity: 1, scalingRatio: 1, slowDown: 15, barnesHutOptimize: true, barnesHutTheta: 0.8, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 6000 };
+    }
+    if (nodeCount > 1000) {
+        return { settings: { gravity: 1, scalingRatio: 2, slowDown: 8, barnesHutOptimize: true, barnesHutTheta: 0.5, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 8000 };
+    }
+    if (nodeCount > 200) {
+        return { settings: { gravity: 1, scalingRatio: 5, slowDown: 3, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 5000 };
+    }
+    return { settings: { gravity: 1, scalingRatio: 10, slowDown: 1, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 3000 };
 }
 
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
@@ -437,15 +452,15 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
-    const graphRef = useRef<InstanceType<typeof Graph> | null>(null);
-    const savedZoomRef = useRef<number | null>(null);
-    const draggedNodeIdxRef = useRef<number>(-1);
-    const nodeIndexMapRef = useRef<Map<string, number>>(new Map());
-    const visibleNodesRef = useRef<SimNode[]>([]);
-    const baseColorsRef = useRef<Float32Array>(new Float32Array(0));
-    const labelRafRef = useRef<number>(0);
-    const labelCanvasRef = useRef<HTMLCanvasElement>(null);
-    const lockedNodeIdxRef = useRef<number | null>(null);
+    const sigmaRef = useRef<Sigma | null>(null);
+    const graphRef = useRef<Graph | null>(null);
+    const layoutRef = useRef<FA2Layout | null>(null);
+    const layoutStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const layoutSettledRef = useRef(false);
+    const savedCameraRef = useRef<{ x: number; y: number; ratio: number; angle: number } | null>(null);
+    const pathToIdRef = useRef<Map<string, string>>(new Map());
+    const visibleNodesRef = useRef<SigmaNodeAttrs[]>([]);
+    const lockedNodeIdRef = useRef<string | null>(null);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
@@ -1421,47 +1436,78 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
-    const applyVisibility = useCallback(() => {
+    const restoreColors = useCallback(() => {
         const graph = graphRef.current;
         if (!graph) return;
-        const { visNodes, visEdges } = filterByVisibility(elements, visibilityRef.current);
-        const { pointPositions, pointColors, pointSizes, pointShapes, linkArray, linkColors, nodeIndexMap, simNodeList } = buildCosmosArrays(visNodes, visEdges);
-        nodeIndexMapRef.current = nodeIndexMap;
-        visibleNodesRef.current = simNodeList;
-        baseColorsRef.current = pointColors.slice();
-        lockedNodeIdxRef.current = null;
-        const labelNodeIndices = simNodeList
-            .map((nd, i) => ({ nd, i }))
-            .filter(({ nd }) => nd.type === "root" || nd.type === "folder" || nd.showLabel === 1 || (nd.hubScore !== undefined && nd.hubScore > 0))
-            .map(({ i }) => i);
-        graph.setPointPositions(pointPositions);
-        graph.setPointColors(pointColors);
-        graph.setPointSizes(pointSizes);
-        graph.setPointShapes(pointShapes);
-        graph.setLinks(linkArray);
-        graph.setLinkColors(linkColors);
-        graph.trackPointPositionsByIndices(labelNodeIndices);
-        graph.start();
-        graph.render();
-    }, [elements]);
+        graph.forEachNode((id, attrs) => {
+            if (attrs.color !== attrs.baseColor) graph.setNodeAttribute(id, "color", attrs.baseColor as string);
+        });
+        graph.forEachEdge((id, attrs) => {
+            if (attrs.color !== attrs.baseColor) graph.setEdgeAttribute(id, "color", attrs.baseColor as string);
+        });
+        sigmaRef.current?.refresh();
+    }, []);
 
-    const applyHoverEffect = useCallback((hoveredIdx: number | undefined) => {
+    const applyHoverEffect = useCallback((hoveredId: string | null) => {
         const graph = graphRef.current;
         if (!graph) return;
-        if (hoveredIdx === undefined) {
-            graph.setPointColors(baseColorsRef.current.slice());
+        if (!hoveredId || !graph.hasNode(hoveredId)) {
+            restoreColors();
             return;
         }
-        const adjacent = graph.getAdjacentIndices(hoveredIdx) ?? [];
-        const adjacentSet = new Set(adjacent);
-        const newColors = baseColorsRef.current.slice();
-        const n = visibleNodesRef.current.length;
-        for (let i = 0; i < n; i++) {
-            if (i !== hoveredIdx && !adjacentSet.has(i)) {
-                newColors[i * 4 + 3] = 0.08;
+        const neighbors = new Set<string>();
+        neighbors.add(hoveredId);
+        graph.forEachNeighbor(hoveredId, (nb) => neighbors.add(nb));
+
+        graph.forEachNode((id, attrs) => {
+            const next = neighbors.has(id) ? (attrs.baseColor as string) : DIM_COLOR;
+            if (attrs.color !== next) graph.setNodeAttribute(id, "color", next);
+        });
+        graph.forEachEdge((id, attrs, src, tgt) => {
+            const connected = src === hoveredId || tgt === hoveredId;
+            const next = connected ? (attrs.baseColor as string) : "rgba(255,255,255,0.025)";
+            if (attrs.color !== next) graph.setEdgeAttribute(id, "color", next);
+        });
+        sigmaRef.current?.refresh();
+    }, [restoreColors]);
+
+    const applyVisibility = useCallback(() => {
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma) return;
+        const v = visibilityRef.current;
+        const symbolsVisible = v.showSymbols && v.showFiles;
+
+        graph.forEachNode((id, attrs) => {
+            const t = attrs.nodeType as SimNode["type"];
+            let hidden = false;
+            if (t === "folder" && id === "root") hidden = !v.showRoot;
+            else if (t === "folder") hidden = !v.showFolders;
+            else if (t === "file") hidden = !v.showFiles;
+            else if (t === "symbol") {
+                const k = attrs.symbolKind as SymbolKind | undefined;
+                hidden = !symbolsVisible || (k ? !v.symbolKindVisibility[k] : false);
             }
-        }
-        graph.setPointColors(newColors);
+            if (attrs.hidden !== hidden) graph.setNodeAttribute(id, "hidden", hidden);
+        });
+
+        graph.forEachEdge((id, attrs) => {
+            const t = attrs.edgeType as string;
+            let hidden = false;
+            switch (t) {
+                case "contains":   hidden = !v.showContainsEdges; break;
+                case "defines":    hidden = !(v.showDefinesEdges && symbolsVisible); break;
+                case "imports":    hidden = !(v.showImportsEdges && symbolsVisible); break;
+                case "calls":      hidden = !(v.showCallsEdges && symbolsVisible); break;
+                case "extends":    hidden = !(v.showExtendsEdges && symbolsVisible); break;
+                case "implements": hidden = !(v.showImplementsEdges && symbolsVisible); break;
+                case "fileImport": hidden = !(v.showFileImportEdges && v.showFiles); break;
+                default: hidden = true;
+            }
+            if (attrs.hidden !== hidden) graph.setEdgeAttribute(id, "hidden", hidden);
+        });
+
+        sigma.refresh();
     }, []);
 
     const expandParentFolders = useCallback((path: string) => {
@@ -1496,11 +1542,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             size: node.size,
         });
 
-        const idx = nodeIndexMapRef.current.get(`file:${node.path}`);
-        if (idx !== undefined) {
-            applyHoverEffect(idx);
-            lockedNodeIdxRef.current = idx;
-            graphRef.current?.zoomToPointByIndex(idx, 400, 3);
+        const id = pathToIdRef.current.get(node.path);
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (id && graph?.hasNode(id) && sigma) {
+            applyHoverEffect(id);
+            lockedNodeIdRef.current = id;
+            const { x, y } = graph.getNodeAttributes(id) as { x: number; y: number };
+            sigma.getCamera().animate({ x, y, ratio: 0.35 }, { duration: 500 });
         }
     }, [expandParentFolders, applyHoverEffect]);
 
@@ -1576,241 +1625,201 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         setTreeFocusPath(selectedFile.path);
     }, [selectedFile?.path, expandParentFolders]);
 
-    // Search handler
     const handleSearch = useCallback((query: string) => {
         setSearchQuery(query);
         const graph = graphRef.current;
-        if (!graph) return;
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma) return;
 
         if (!query.trim()) {
-            graph.setPointColors(baseColorsRef.current.slice());
+            restoreColors();
             return;
         }
 
         const q = query.toLowerCase();
-        const newColors = baseColorsRef.current.slice();
-        let anyMatch = false;
-        visibleNodesRef.current.forEach((node, i) => {
-            const labelStr = (node.label || "").toLowerCase();
-            const pathStr = (node.path || "").toLowerCase();
-            if (labelStr.includes(q) || pathStr.includes(q)) {
-                anyMatch = true;
-                newColors[i * 4]     = 0.98;
-                newColors[i * 4 + 1] = 0.90;
-                newColors[i * 4 + 2] = 0.00;
-                newColors[i * 4 + 3] = 1.0;
-            } else {
-                newColors[i * 4 + 3] = 0.08;
-            }
+        graph.forEachNode((id, attrs) => {
+            const labelStr = String(attrs.label ?? "").toLowerCase();
+            const pathStr = String(attrs.path ?? "").toLowerCase();
+            const matches = labelStr.includes(q) || pathStr.includes(q);
+            const next = matches ? "#facc15" : DIM_COLOR;
+            if (attrs.color !== next) graph.setNodeAttribute(id, "color", next);
         });
-        if (anyMatch) graph.setPointColors(newColors);
-    }, []);
+        sigma.refresh();
+    }, [restoreColors]);
 
     useEffect(() => {
         if (!containerRef.current) return;
+        if (typeof window === "undefined") return;
+
+        let cancelled = false;
+        let cleanupFn: (() => void) | undefined;
+
+        (async () => {
+        const [{ default: SigmaClass }, { default: FA2LayoutClass }] = await Promise.all([
+            import("sigma"),
+            import("graphology-layout-forceatlas2/worker"),
+        ]);
+        if (cancelled || !containerRef.current) return;
 
         const { visNodes, visEdges } = filterByVisibility(elements, visibilityRef.current);
-        const { pointPositions, pointColors, pointSizes, pointShapes, linkArray, linkColors, nodeIndexMap, simNodeList } = buildCosmosArrays(visNodes, visEdges);
-
-        nodeIndexMapRef.current = nodeIndexMap;
-        visibleNodesRef.current = simNodeList;
-        baseColorsRef.current = pointColors.slice();
-        lockedNodeIdxRef.current = null;
-
-        const nodeCount = simNodeList.length;
-        // Repulsion must be much higher than cosmos default (1.0) to prevent node collapse
-        const repulsion = nodeCount > 5000 ? 0.5  : nodeCount > 2000 ? 1.0  : nodeCount > 500 ? 2.0  : 3.0;
-        // Gravity must be very low or it overcomes repulsion and collapses all nodes
-        const gravity   = nodeCount > 5000 ? 0.05 : nodeCount > 2000 ? 0.03 : nodeCount > 500 ? 0.02 : 0.01;
-        // friction: 0→stops immediately, 1→never stops; cosmos default is 0.85
-        const friction  = nodeCount > 5000 ? 0.9  : nodeCount > 2000 ? 0.88 : nodeCount > 500 ? 0.86 : 0.85;
-        // decay: larger = more steps before alpha→0; cosmos default is 5000
-        const decay     = nodeCount > 5000 ? 2000 : nodeCount > 2000 ? 3000 : nodeCount > 500 ? 4000 : 5000;
-        // Link distance relative to 8192-unit space; 50-80 is too small and collapses nodes together
-        const linkDist  = nodeCount > 5000 ? 80   : nodeCount > 2000 ? 120  : nodeCount > 500 ? 200  : 300;
-
-        const isFirstRender = savedZoomRef.current === null;
-        const graph = new Graph(containerRef.current, {
-            backgroundColor: '#07050f',
-            fitViewOnInit: isFirstRender,
-            fitViewDelay: isFirstRender ? 600 : 0,
-            enableDrag: true,
-            curvedLinks: false,
-            renderLinks: true,
-            pointSizeScale: 1,
-            linkWidthScale: 1,
-            simulationRepulsion: repulsion,
-            simulationGravity: gravity,
-            simulationFriction: friction,
-            simulationLinkSpring: 0.15,
-            simulationLinkDistance: linkDist,
-            simulationDecay: decay,
-            simulationCenter: 0.1,
-            enableRightClickRepulsion: true,
-            simulationRepulsionFromMouse: 8,
-            renderHoveredPointRing: true,
-            hoveredPointRingColor: '#facc15',
-            hoveredPointCursor: 'pointer',
-            onClick: (pointIndex: number | undefined) => {
-                if (pointIndex === undefined) {
-                    lockedNodeIdxRef.current = null;
-                    graphRef.current?.setPointColors(baseColorsRef.current.slice());
-                    return;
-                }
-                const node = visibleNodesRef.current[pointIndex];
-                if (!node) return;
-                lockedNodeIdxRef.current = pointIndex;
-                applyHoverEffect(pointIndex);
-                if (node.type === "file") {
-                    setSymbolFocus(null);
-                    setFocusLine(null);
-                    setShowExplorerInspector(true);
-                    setSelectedFile({
-                        label: node.label,
-                        path: node.path ?? "",
-                        type: "file",
-                        extension: node.ext,
-                        size: node.rawSize,
-                    });
-                } else if (node.type === "symbol" && node.parentPath) {
-                    const fileLabel = node.parentPath.split("/").pop() || node.parentPath;
-                    const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
-                    setSymbolFocus(node.label);
-                    setFocusLine(null);
-                    setShowExplorerInspector(true);
-                    setSelectedFile({
-                        label: fileLabel,
-                        path: node.parentPath,
-                        type: "file",
-                        extension: ext,
-                    });
-                }
-            },
-            onMouseMove: (pointIndex: number | undefined) => {
-                // Track last hovered index for drag repulsion (before the locked guard)
-                if (pointIndex !== undefined) draggedNodeIdxRef.current = pointIndex;
-                if (lockedNodeIdxRef.current !== null) return;
-                if (pointIndex === undefined) {
-                    graphRef.current?.setPointColors(baseColorsRef.current.slice());
-                } else {
-                    applyHoverEffect(pointIndex);
-                }
-            },
-            onDragStart: () => {
-                graphRef.current?.start(0.8);
-            },
-            onDrag: (e) => {
-                // e.subject is {x,y} screen coords — NOT {index, position}.
-                // draggingPointIndex is set internally by cosmos.gl; we track it via onMouseMove.
-                const g = graphRef.current;
-                const dragIdx = draggedNodeIdxRef.current;
-                if (!g || !e.subject || dragIdx < 0) return;
-                const raw = g.getPointPositions();
-                const positions = new Float32Array(raw.length);
-                for (let k = 0; k < raw.length; k++) positions[k] = raw[k];
-                const dragX = positions[dragIdx * 2];
-                const dragY = positions[dragIdx * 2 + 1];
-                const RADIUS = 600;
-                const STRENGTH = 60;
-                let changed = false;
-                for (let i = 0; i < positions.length / 2; i++) {
-                    if (i === dragIdx) continue;
-                    const dx = positions[i * 2] - dragX;
-                    const dy = positions[i * 2 + 1] - dragY;
-                    const dist2 = dx * dx + dy * dy;
-                    if (dist2 > 0 && dist2 < RADIUS * RADIUS) {
-                        const dist = Math.sqrt(dist2);
-                        const force = ((RADIUS - dist) / RADIUS) * STRENGTH;
-                        positions[i * 2]     += (dx / dist) * force;
-                        positions[i * 2 + 1] += (dy / dist) * force;
-                        changed = true;
-                    }
-                }
-                if (changed) {
-                    g.setPointPositions(positions, true);
-                    g.start(0.4);
-                }
-            },
-            onDragEnd: () => {
-                draggedNodeIdxRef.current = -1;
-                graphRef.current?.start(0.2);
-            },
-        });
+        const { graph, nodeList, pathToId } = buildSigmaGraph(visNodes, visEdges);
 
         graphRef.current = graph;
+        visibleNodesRef.current = nodeList;
+        pathToIdRef.current = pathToId;
+        lockedNodeIdRef.current = null;
+        layoutSettledRef.current = false;
 
-        graph.setPointPositions(pointPositions);
-        graph.setPointColors(pointColors);
-        graph.setPointSizes(pointSizes);
-        graph.setPointShapes(pointShapes);
-        graph.setLinks(linkArray);
-        graph.setLinkColors(linkColors);
+        const nodeCount = nodeList.length;
+        const sigma = new SigmaClass(graph, containerRef.current, {
+            renderEdgeLabels: false,
+            defaultEdgeType: "line",
+            defaultNodeType: "circle",
+            hideEdgesOnMove: nodeCount > 800,
+            hideLabelsOnMove: true,
+            minCameraRatio: 0.05,
+            maxCameraRatio: 10,
+            labelSize: 11,
+            labelFont: "monospace",
+            labelColor: { color: "#94a3b8" },
+            labelRenderedSizeThreshold: nodeCount > 3000 ? 12 : nodeCount > 1000 ? 9 : 6,
+            zIndex: true,
+        });
+        sigmaRef.current = sigma;
 
-        const labelNodeIndices = simNodeList
-            .map((nd, i) => ({ nd, i }))
-            .filter(({ nd }) => nd.type === "root" || nd.type === "folder" || nd.showLabel === 1 || (nd.hubScore !== undefined && nd.hubScore > 0))
-            .map(({ i }) => i);
-        graph.trackPointPositionsByIndices(labelNodeIndices);
-        graph.start();
-        graph.render();
-
-        if (!isFirstRender && savedZoomRef.current !== null) {
-            graph.setZoomLevel(savedZoomRef.current, 0);
+        if (savedCameraRef.current) {
+            sigma.getCamera().setState(savedCameraRef.current);
         }
 
-        const labelCanvas = labelCanvasRef.current;
-        function drawLabels() {
-            if (!labelCanvas || !graphRef.current) {
-                labelRafRef.current = requestAnimationFrame(drawLabels);
-                return;
+        const { settings, settleMs } = fa2SettingsFor(nodeCount);
+        const layout = new FA2LayoutClass(graph, { settings });
+        layoutRef.current = layout;
+        layout.start();
+        layoutStopTimerRef.current = setTimeout(() => {
+            layout.stop();
+            layoutSettledRef.current = true;
+        }, settleMs);
+
+        // Hover (Obsidian dim)
+        sigma.on("enterNode", ({ node }) => {
+            if (lockedNodeIdRef.current !== null) return;
+            applyHoverEffect(node);
+        });
+        sigma.on("leaveNode", () => {
+            if (lockedNodeIdRef.current !== null) return;
+            restoreColors();
+        });
+
+        // Click — open inspector and lock focus
+        sigma.on("clickNode", ({ node }) => {
+            const attrs = graph.getNodeAttributes(node) as SigmaNodeAttrs;
+            lockedNodeIdRef.current = node;
+            applyHoverEffect(node);
+            if (attrs.nodeType === "file") {
+                setSymbolFocus(null);
+                setFocusLine(null);
+                setShowExplorerInspector(true);
+                setSelectedFile({
+                    label: attrs.label,
+                    path: attrs.path ?? "",
+                    type: "file",
+                    extension: attrs.ext,
+                    size: attrs.rawSize,
+                });
+            } else if (attrs.nodeType === "symbol" && attrs.parentPath) {
+                const fileLabel = attrs.parentPath.split("/").pop() || attrs.parentPath;
+                const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                setSymbolFocus(attrs.label);
+                setFocusLine(null);
+                setShowExplorerInspector(true);
+                setSelectedFile({
+                    label: fileLabel,
+                    path: attrs.parentPath,
+                    type: "file",
+                    extension: ext,
+                });
             }
-            const ctx = labelCanvas.getContext("2d");
-            if (!ctx) {
-                labelRafRef.current = requestAnimationFrame(drawLabels);
-                return;
+        });
+        sigma.on("clickStage", () => {
+            lockedNodeIdRef.current = null;
+            restoreColors();
+        });
+
+        // Drag with FA2 reheat — write x/y on the graph; the worker picks it up next tick.
+        let draggedNode: string | null = null;
+        const camera = sigma.getCamera();
+        sigma.on("downNode", ({ node }) => {
+            draggedNode = node;
+            graph.setNodeAttribute(node, "highlighted", true);
+            camera.disable();
+            layout.start();
+        });
+        const captor = sigma.getMouseCaptor();
+        const onBodyMove = (e: { x: number; y: number; preventSigmaDefault: () => void; original: Event }) => {
+            if (!draggedNode) return;
+            const pos = sigma.viewportToGraph({ x: e.x, y: e.y });
+            graph.setNodeAttribute(draggedNode, "x", pos.x);
+            graph.setNodeAttribute(draggedNode, "y", pos.y);
+            e.preventSigmaDefault();
+            e.original.preventDefault();
+            e.original.stopPropagation();
+        };
+        const endDrag = () => {
+            if (!draggedNode) return;
+            graph.removeNodeAttribute(draggedNode, "highlighted");
+            draggedNode = null;
+            camera.enable();
+            // Brief reheat then re-stop, unless layout was already settled.
+            if (!layoutSettledRef.current) {
+                if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+                layoutStopTimerRef.current = setTimeout(() => {
+                    layout.stop();
+                    layoutSettledRef.current = true;
+                }, 1500);
+            } else {
+                if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+                layoutStopTimerRef.current = setTimeout(() => layout.stop(), 1200);
             }
-            const dpr = window.devicePixelRatio || 1;
-            const w = labelCanvas.clientWidth;
-            const h = labelCanvas.clientHeight;
-            if (w > 0 && h > 0 && (labelCanvas.width !== Math.round(w * dpr) || labelCanvas.height !== Math.round(h * dpr))) {
-                labelCanvas.width = Math.round(w * dpr);
-                labelCanvas.height = Math.round(h * dpr);
-                ctx.scale(dpr, dpr);
-            }
-            ctx.clearRect(0, 0, w, h);
-            const posMap = graphRef.current.getTrackedPointPositionsMap();
-            ctx.font = "11px monospace";
-            ctx.fillStyle = "#94a3b8";
-            ctx.textBaseline = "middle";
-            posMap.forEach((spacePos, idx) => {
-                const nd = visibleNodesRef.current[idx];
-                if (!nd) return;
-                const screenPos = graphRef.current!.spaceToScreenPosition(spacePos);
-                if (!screenPos) return;
-                ctx.fillText(nd.label, screenPos[0] + nd.radius + 4, screenPos[1]);
-            });
-            labelRafRef.current = requestAnimationFrame(drawLabels);
-        }
-        labelRafRef.current = requestAnimationFrame(drawLabels);
+        };
+        captor.on("mousemovebody", onBodyMove);
+        captor.on("mouseup", endDrag);
+        captor.on("mouseleave", endDrag);
+
+        cleanupFn = () => {
+            savedCameraRef.current = sigma.getCamera().getState();
+            if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+            layoutStopTimerRef.current = null;
+            try { layout.stop(); } catch { /* noop */ }
+            try { layout.kill(); } catch { /* noop */ }
+            layoutRef.current = null;
+            try { sigma.kill(); } catch { /* noop */ }
+            sigmaRef.current = null;
+            graphRef.current = null;
+            pathToIdRef.current = new Map();
+            visibleNodesRef.current = [];
+        };
+        })(); // end async IIFE
 
         return () => {
-            savedZoomRef.current = graphRef.current?.getZoomLevel() ?? null;
-            cancelAnimationFrame(labelRafRef.current);
-            graph.destroy();
-            graphRef.current = null;
+            cancelled = true;
+            cleanupFn?.();
         };
-    }, [elements, applyHoverEffect]);
+    }, [elements, applyHoverEffect, restoreColors]);
 
-    // Tab visibility: pause simulation when tab is hidden
+    // Tab visibility: pause simulation when tab is hidden, resume if not yet settled.
     useEffect(() => {
         const handler = () => {
-            if (document.hidden) graphRef.current?.pause();
-            else graphRef.current?.unpause();
+            const layout = layoutRef.current;
+            if (!layout) return;
+            if (document.hidden) {
+                layout.stop();
+            } else if (!layoutSettledRef.current) {
+                layout.start();
+            }
         };
         document.addEventListener("visibilitychange", handler);
         return () => document.removeEventListener("visibilitychange", handler);
     }, []);
-
 
     useEffect(() => {
         visibilityRef.current = {
@@ -1831,14 +1840,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility]);
 
     const handleZoomIn = () => {
-        const g = graphRef.current;
-        if (g) g.zoom(g.getZoomLevel() * 1.4, 200);
+        sigmaRef.current?.getCamera().animatedZoom({ duration: 200 });
     };
     const handleZoomOut = () => {
-        const g = graphRef.current;
-        if (g) g.zoom(g.getZoomLevel() * 0.7, 200);
+        sigmaRef.current?.getCamera().animatedUnzoom({ duration: 200 });
     };
-    const handleFit = () => graphRef.current?.fitView(300);
+    const handleFit = () => {
+        sigmaRef.current?.getCamera().animatedReset({ duration: 300 });
+    };
 
 
     const handlePreset = (preset: "overview" | "clusters" | "full") => {
@@ -2239,8 +2248,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 )}
 
-                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl" />
-                <canvas ref={labelCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
+                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl bg-[#07050f]" />
 
                 <div className="absolute bottom-2 right-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1 flex flex-row items-center gap-1">
