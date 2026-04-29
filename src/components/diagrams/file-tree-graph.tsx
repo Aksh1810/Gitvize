@@ -331,7 +331,8 @@ function syncGraphData(
             } as SigmaNodeAttrs);
         }
         nodeList.push(graph.getNodeAttributes(id) as SigmaNodeAttrs);
-        if (type === "file" && path) pathToId.set(path, id);
+        if (path !== undefined && path !== null) pathToId.set(String(path), id);
+        if (id === "root") pathToId.set("", id);
     });
 
     // 4. Sync edges: drop stale, add new
@@ -1676,13 +1677,28 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         });
     }, []);
 
+    const focusNodeInGraph = useCallback((path: string) => {
+        const id = pathToIdRef.current.get(path);
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!id || !graph?.hasNode(id) || !sigma) return;
+        const attrs = graph.getNodeAttributes(id);
+        if (attrs.hidden) return;
+        lockedNodeIdRef.current = id;
+        applyHoverEffect(id);
+        const displayData = sigma.getNodeDisplayData(id);
+        if (!displayData) return;
+        sigma.getCamera().animate({ x: displayData.x, y: displayData.y, ratio: 0.35 }, { duration: 400 });
+    }, [applyHoverEffect]);
+
     const focusExplorerPath = useCallback((path: string) => {
         setTreeFocusPath(path);
         const nextIndex = explorerRowIndexByPath.get(path);
         if (nextIndex !== undefined) {
             explorerListRef.current?.scrollToRow({ index: nextIndex, align: "smart", behavior: "auto" });
         }
-    }, [explorerRowIndexByPath]);
+        focusNodeInGraph(path);
+    }, [explorerRowIndexByPath, focusNodeInGraph]);
 
     const handleExplorerFileSelect = useCallback((node: { name: string; path: string; extension?: string; size?: number }) => {
         expandParentFolders(node.path);
@@ -1696,16 +1712,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             size: node.size,
         });
 
-        const id = pathToIdRef.current.get(node.path);
-        const graph = graphRef.current;
-        const sigma = sigmaRef.current;
-        if (id && graph?.hasNode(id) && sigma) {
-            applyHoverEffect(id);
-            lockedNodeIdRef.current = id;
-            const { x, y } = graph.getNodeAttributes(id) as { x: number; y: number };
-            sigma.getCamera().animate({ x, y, ratio: 0.35 }, { duration: 500 });
-        }
-    }, [expandParentFolders, applyHoverEffect]);
+        focusNodeInGraph(node.path);
+    }, [expandParentFolders, focusNodeInGraph]);
 
     const handleExplorerKeyboard = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
         if (!showExplorer || explorerRows.length === 0) return;
@@ -2099,6 +2107,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                                 setTreeFocusPath(row.path);
                                                 if (isFolder) {
                                                     toggleFolder(row.path);
+                                                    focusNodeInGraph(row.path);
                                                 } else {
                                                     handleExplorerFileSelect({ name: row.name, path: row.path, extension: row.extension, size: row.size });
                                                 }
