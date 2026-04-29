@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent a
 import { motion } from "framer-motion";
 import Graph from "graphology";
 import type Sigma from "sigma";
-import type FA2Layout from "graphology-layout-forceatlas2/worker";
+import type { Simulation, SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
 import { List, type RowComponentProps } from "react-window";
 import { cn } from "@/lib/utils";
 import { getFileColor } from "@/lib/file-icons";
@@ -291,6 +291,15 @@ type SigmaNodeAttrs = Omit<SimNode, "type"> & {
     highlighted: boolean;
 };
 
+interface D3Node extends SimulationNodeDatum {
+    id: string;
+    nodeType: SimNode["type"];
+    size: number;
+}
+interface D3Link extends SimulationLinkDatum<D3Node> {
+    edgeType: string;
+}
+
 // Incrementally sync node/edge data into an existing Graphology graph.
 // Existing nodes keep their current x/y so layout positions are preserved.
 // New nodes get seeded in concentric rings by type.
@@ -396,17 +405,23 @@ function syncGraphData(
     return { nodeList, pathToId };
 }
 
-function fa2SettingsFor(nodeCount: number) {
-    if (nodeCount > 3000) {
-        return { settings: { gravity: 0.5, scalingRatio: 3, slowDown: 12, barnesHutOptimize: true, barnesHutTheta: 0.5, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 5000 };
+function d3ChargeFor(nodeType: SimNode["type"]): number {
+    switch (nodeType) {
+        case "root":   return -1200;
+        case "folder": return -600;
+        case "file":   return -250;
+        case "symbol": return -60;
+        default:       return -150;
     }
-    if (nodeCount > 1000) {
-        return { settings: { gravity: 0.5, scalingRatio: 5, slowDown: 8, barnesHutOptimize: true, barnesHutTheta: 0.5, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 7000 };
+}
+
+function d3LinkDistance(edgeType: string): number {
+    switch (edgeType) {
+        case "defines":    return 40;
+        case "fileImport": return 100;
+        case "contains":   return 120;
+        default:           return 80;
     }
-    if (nodeCount > 200) {
-        return { settings: { gravity: 0.5, scalingRatio: 8, slowDown: 5, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 5000 };
-    }
-    return { settings: { gravity: 0.5, scalingRatio: 15, slowDown: 2, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 3000 };
 }
 
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
@@ -467,7 +482,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
     const sigmaRef = useRef<Sigma | null>(null);
     const graphRef = useRef<Graph | null>(null);
-    const layoutRef = useRef<FA2Layout | null>(null);
+    const simRef = useRef<Simulation<D3Node, D3Link> | null>(null);
+    const simNodesRef = useRef<Map<string, D3Node>>(new Map());
     const layoutStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const layoutSettledRef = useRef(false);
     const savedCameraRef = useRef<{ x: number; y: number; ratio: number; angle: number } | null>(null);
@@ -1547,42 +1563,89 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         }
         if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
         layoutStopTimerRef.current = null;
-        try { layoutRef.current?.stop(); } catch { /* noop */ }
-        try { layoutRef.current?.kill(); } catch { /* noop */ }
-        layoutRef.current = null;
+        simRef.current?.stop();
+        simRef.current = null;
+        simNodesRef.current.clear();
         layoutSettledRef.current = false;
+
         const graph = graphRef.current;
-        if (!graph || graph.order === 0) return;
-        import("graphology-layout-forceatlas2/worker").then(({ default: FA2LayoutClass }) => {
-            const g = graphRef.current;
-            const sigma = sigmaRef.current;
-            if (!g || !sigma) return;
-            const nodeCount = g.order;
-            const { settings, settleMs } = fa2SettingsFor(nodeCount);
-            const layout = new FA2LayoutClass(g, { settings });
-            layoutRef.current = layout;
-            layout.start();
-            // RAF loop: pin dragged node each frame, then refresh Sigma so FA2 updates are visible
-            const animate = () => {
-                if (layoutRef.current?.isRunning()) {
-                    const pinId = draggedNodeRef.current;
-                    const pinPos = dragMousePosRef.current;
-                    if (pinId && pinPos && graphRef.current?.hasNode(pinId)) {
-                        graphRef.current.setNodeAttribute(pinId, "x", pinPos.x);
-                        graphRef.current.setNodeAttribute(pinId, "y", pinPos.y);
-                    }
-                    sigmaRef.current?.refresh();
-                    animFrameRef.current = requestAnimationFrame(animate);
-                } else {
-                    animFrameRef.current = null;
-                }
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma || graph.order === 0) return;
+
+        // Build d3 node objects seeded from current Graphology positions
+        const d3Nodes: D3Node[] = [];
+        const nodeMap = new Map<string, D3Node>();
+        graph.forEachNode((id, attrs) => {
+            const node: D3Node = {
+                id,
+                nodeType: attrs.nodeType as SimNode["type"],
+                size: attrs.size as number,
+                x: attrs.x as number,
+                y: attrs.y as number,
             };
-            animFrameRef.current = requestAnimationFrame(animate);
+            d3Nodes.push(node);
+            nodeMap.set(id, node);
+        });
+
+        // Build d3 link objects
+        const d3Links: D3Link[] = [];
+        graph.forEachEdge((_id, attrs, src, tgt) => {
+            const source = nodeMap.get(src);
+            const target = nodeMap.get(tgt);
+            if (source && target) {
+                d3Links.push({ source, target, edgeType: attrs.edgeType as string });
+            }
+        });
+
+        simNodesRef.current = nodeMap;
+
+        import("d3-force").then((d3) => {
+            const g = graphRef.current;
+            const s = sigmaRef.current;
+            if (!g || !s) return;
+
+            const nodeCount = d3Nodes.length;
+            const linkForce = d3.forceLink<D3Node, D3Link>(d3Links)
+                .id((n) => n.id)
+                .distance((l) => d3LinkDistance((l as D3Link).edgeType))
+                .strength(0.4);
+
+            const sim = d3.forceSimulation<D3Node, D3Link>(d3Nodes)
+                .force("charge", d3.forceManyBody<D3Node>().strength((n) => d3ChargeFor(n.nodeType)))
+                .force("link", linkForce as unknown as d3.Force<D3Node, D3Link>)
+                .force("center", d3.forceCenter(0, 0).strength(0.05))
+                .force("collision", d3.forceCollide<D3Node>().radius((n) => n.size + 3).strength(0.7))
+                .alphaDecay(0.01)
+                .alphaTarget(0.003)
+                .stop();
+
+            simRef.current = sim;
+
+            // After settle time, lower alphaTarget for micro-motion only
+            const settleMs = nodeCount < 200 ? 3000 : nodeCount < 1000 ? 5000 : nodeCount < 3000 ? 7000 : 5000;
             layoutStopTimerRef.current = setTimeout(() => {
-                layoutRef.current?.stop();
+                sim.alphaTarget(0.001);
                 layoutSettledRef.current = true;
-                // RAF self-cancels once isRunning() returns false
             }, settleMs);
+
+            // RAF loop: tick d3, pin dragged node, write positions to Graphology, refresh Sigma
+            const tick = () => {
+                sim.tick();
+                const pinId = draggedNodeRef.current;
+                const pinPos = dragMousePosRef.current;
+                sim.nodes().forEach((n) => {
+                    if (!g.hasNode(n.id)) return;
+                    if (n.id === pinId && pinPos) {
+                        n.fx = pinPos.x;
+                        n.fy = pinPos.y;
+                    }
+                    g.setNodeAttribute(n.id, "x", n.x ?? 0);
+                    g.setNodeAttribute(n.id, "y", n.y ?? 0);
+                });
+                s.refresh();
+                animFrameRef.current = requestAnimationFrame(tick);
+            };
+            animFrameRef.current = requestAnimationFrame(tick);
         });
     }, []);
 
@@ -1813,23 +1876,25 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 restoreColors();
             });
 
-            // Live physics drag: keep FA2 running; RAF pins the dragged node each frame
-            // so neighbours react in real-time without rigid block-move.
+            // Live physics drag using d3 fx/fy pinning — true Obsidian-style.
             const camera = sigma.getCamera();
             sigma.on("downNode", ({ node }) => {
-                const attrs = graph.getNodeAttributes(node) as { x: number; y: number };
                 draggedNodeRef.current = node;
-                dragMousePosRef.current = { x: attrs.x, y: attrs.y };
+                const simNode = simNodesRef.current.get(node);
+                if (simNode) {
+                    dragMousePosRef.current = { x: simNode.x ?? 0, y: simNode.y ?? 0 };
+                }
                 graph.setNodeAttribute(node, "highlighted", true);
                 camera.disable();
-                // Reheat layout so neighbours react immediately
-                restartLayout();
+                // Reheat simulation so neighbours react visibly
+                const sim = simRef.current;
+                if (sim) sim.alpha(Math.max(sim.alpha(), 0.3)).alphaTarget(0.3);
             });
             const captor = sigma.getMouseCaptor();
             const onBodyMove = (e: { x: number; y: number; preventSigmaDefault: () => void; original: Event }) => {
                 if (!draggedNodeRef.current) return;
                 dragMousePosRef.current = sigma.viewportToGraph({ x: e.x, y: e.y });
-                // RAF loop handles the actual position write + sigma.refresh()
+                // RAF tick handles fx/fy pin + sigma.refresh() — no manual call needed
                 e.preventSigmaDefault();
                 e.original.preventDefault();
                 e.original.stopPropagation();
@@ -1837,11 +1902,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             const endDrag = () => {
                 const node = draggedNodeRef.current;
                 if (!node) return;
+                // Release d3 pin
+                const simNode = simNodesRef.current.get(node);
+                if (simNode) { simNode.fx = undefined; simNode.fy = undefined; }
                 graph.removeNodeAttribute(node, "highlighted");
                 draggedNodeRef.current = null;
                 dragMousePosRef.current = null;
                 camera.enable();
-                // Physics continues naturally — no explicit restart needed
+                // Cool down to micro-motion target
+                const sim = simRef.current;
+                if (sim) sim.alphaTarget(layoutSettledRef.current ? 0.001 : 0.003);
             };
             captor.on("mousemovebody", onBodyMove);
             captor.on("mouseup", endDrag);
@@ -1859,9 +1929,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             }
             if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
             layoutStopTimerRef.current = null;
-            try { layoutRef.current?.stop(); } catch { /* noop */ }
-            try { layoutRef.current?.kill(); } catch { /* noop */ }
-            layoutRef.current = null;
+            simRef.current?.stop();
+            simRef.current = null;
+            simNodesRef.current.clear();
             try { sigmaRef.current?.kill(); } catch { /* noop */ }
             sigmaRef.current = null;
             graphRef.current = null;
@@ -1897,7 +1967,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     cancelAnimationFrame(animFrameRef.current);
                     animFrameRef.current = null;
                 }
-                layoutRef.current?.stop();
+                simRef.current?.stop();
             } else if (!layoutSettledRef.current) {
                 restartLayout();
             }

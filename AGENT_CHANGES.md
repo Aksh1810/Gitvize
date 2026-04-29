@@ -1,3 +1,24 @@
+## file-tree-graph: replace FA2 with d3-force for Obsidian-like physics
+
+### Why
+FA2 (ForceAtlas2) runs on a Web Worker — latency between ticks and rendering produces stiff, unresponsive physics. d3-force runs synchronously on the main thread, ticking each RAF frame before sigma.refresh(), giving instant force response and true Obsidian-style drag.
+
+### Changes (`src/components/diagrams/file-tree-graph.tsx` only)
+- **Imports** — removed `FA2Layout` import; added `Simulation`, `SimulationNodeDatum`, `SimulationLinkDatum` from `d3-force`.
+- **`D3Node` / `D3Link` interfaces** — typed d3 simulation node/link objects (extend d3 datum types).
+- **Refs** — replaced `layoutRef: FA2Layout` with `simRef: Simulation<D3Node,D3Link>` and `simNodesRef: Map<string,D3Node>` (needed for `fx/fy` access during drag).
+- **`d3ChargeFor`** — per-nodeType repulsion: root −1200, folder −600, file −250, symbol −60.
+- **`d3LinkDistance`** — per-edgeType spring distances: defines 40, fileImport 100, contains 120, others 80.
+- **`restartLayout`** — builds `D3Node[]`/`D3Link[]` from current Graphology positions, creates d3 simulation with manyBody + link + center + collision forces, `alphaDecay(0.01)` + `alphaTarget(0.003)` (never fully stops), `stop()` to prevent d3's internal timer. RAF loop: `sim.tick()` → pin dragged node via `fx/fy` → write `x/y` back to Graphology → `sigma.refresh()`. Settle timer lowers `alphaTarget(0.001)` after N ms.
+- **Drag** — on `downNode`: reheat sim to alpha 0.3; on `mousemovebody`: update `dragMousePosRef` only (RAF handles pin); on release: set `simNode.fx/fy = undefined` to unpin, cool `alphaTarget` back down.
+- **Cleanup** — `simRef.current?.stop()` + `simNodesRef.current.clear()`.
+- **Tab visibility** — on hidden: cancel RAF + `simRef.current?.stop()`; on visible: `restartLayout()`.
+
+### Verification
+- `npm run build` — clean.
+
+---
+
 ## file-tree-graph: fix FA2 physics not animating (nodes static)
 
 ### Why
