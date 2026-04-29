@@ -6,7 +6,6 @@ import Graph from "graphology";
 import type Sigma from "sigma";
 import type { Simulation, SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
 import { List, type RowComponentProps } from "react-window";
-import { cn } from "@/lib/utils";
 import { getFileColor } from "@/lib/file-icons";
 import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
@@ -403,7 +402,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols, setShowSymbols] = useState(true);
+    const [showSymbols] = useState(true);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(false);
     const [showImportsEdges, setShowImportsEdges] = useState(false);
@@ -411,7 +410,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showExtendsEdges, setShowExtendsEdges] = useState(false);
     const [showImplementsEdges, setShowImplementsEdges] = useState(false);
     const [showFileImportEdges, setShowFileImportEdges] = useState(false);
-    const [activePreset, setActivePreset] = useState<"overview" | "clusters" | "full">("full");
     const [fileImportEdges, setFileImportEdges] = useState<FileImportEdge[]>([]);
     const [multiLangLoading, setMultiLangLoading] = useState(false);
     const [symbolKindVisibility, setSymbolKindVisibility] = useState<Record<SymbolKind, boolean>>({
@@ -2038,22 +2036,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     };
 
 
-    const handlePreset = (preset: "overview" | "clusters" | "full") => {
-        setActivePreset(preset);
-        setShowRoot(true);
-        setShowFolders(true);
-        if (preset === "overview") {
-            setShowFiles(false);
-            setShowSymbols(false);
-        } else if (preset === "clusters") {
-            setShowFiles(true);
-            setShowSymbols(false);
-        } else {
-            setShowFiles(true);
-            setShowSymbols(true);
-        }
-    };
-
     return (
         <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
             <div
@@ -2440,33 +2422,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl bg-[#07050f]" />
 
                 <div className="absolute bottom-2 right-2 z-10 flex flex-row items-end gap-2">
-                    <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1 flex flex-row items-center gap-1">
-                        {(["overview", "clusters", "full"] as const).map((p) => (
-                            <button
-                                key={p}
-                                onClick={() => handlePreset(p)}
-                                className={cn(
-                                    "px-2.5 py-1 rounded text-xs font-medium transition-colors",
-                                    activePreset === p
-                                        ? "bg-indigo-600 text-white border border-indigo-500"
-                                        : "bg-slate-800/80 text-slate-300 border border-slate-600 hover:bg-slate-700"
-                                )}
-                            >
-                                {p.charAt(0).toUpperCase() + p.slice(1)}
-                            </button>
-                        ))}
-                        <div className="w-px h-4 bg-slate-700 mx-0.5" />
-                        <button
-                            onClick={handleFit}
-                            className="px-2.5 py-1 rounded text-xs font-medium bg-slate-800/80 text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors"
-                        >
-                            Fit
-                        </button>
-                    </div>
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
                         <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
                         <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
-                        <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleFit}><Maximize2 className="w-4 h-4" /></Button>
+                        <button
+                            onClick={handleFit}
+                            className="w-8 h-8 rounded-md text-xs font-medium bg-slate-800/80 text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors flex flex-col items-center justify-center gap-0.5"
+                        >
+                            <Maximize2 className="w-3 h-3" />
+                            
+                        </button>
                     </div>
                 </div>
             </div>
