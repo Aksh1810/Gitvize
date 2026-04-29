@@ -1,3 +1,25 @@
+## file-tree-graph: fix graph re-initializing multiple times on load
+
+### Why
+The Sigma init `useEffect` had `[elements, applyHoverEffect, restoreColors]` deps. `elements` changes 3× during streaming (tree → symbolGraph worker → fileImportEdges worker), causing 3 full Sigma+FA2 teardown/recreate cycles with visible flash.
+
+### Fix
+Split into two effects:
+- **Effect 1** (`[]` deps, runs once): creates the Graphology graph + Sigma instance, wires all event handlers. Seeds initial data from `elementsRef.current` if available when the dynamic import resolves.
+- **Effect 2** (`[graphKey, elements, applyVisibility, restartLayout]` deps): incrementally syncs nodes/edges using `syncGraphData()` (preserves existing x/y positions), calls `applyVisibility()`, `sigma.refresh()`, and `restartLayout()`.
+- **`graphKey`** useMemo: cheap fingerprint (`nodeCount|firstId|lastId|edgeCount`) that only changes when the node/edge set actually changes.
+- **`elementsRef`**: keeps latest elements available to Effect 1's async init without being in its dep array.
+- **`restartLayout`** useCallback (`[]` deps): kills old FA2 worker, creates new one from `graphRef.current`, starts it, sets stop timer. Used by both effects.
+- **`syncGraphData`** module-level helper: adds/updates/drops nodes and edges incrementally; existing nodes keep their current `x`/`y` so layout positions survive data updates.
+
+### Result
+Sigma instance created once. Subsequent data arrivals do an in-place graph update + brief layout reheat — no flash, no camera reset.
+
+### Verification
+- `npm run build` — clean.
+
+---
+
 ## file-tree-graph: cosmos.gl → Sigma.js v3 + Graphology + ForceAtlas2 worker
 
 ### Why

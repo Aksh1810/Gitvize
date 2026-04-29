@@ -291,30 +291,36 @@ type SigmaNodeAttrs = Omit<SimNode, "type"> & {
     highlighted: boolean;
 };
 
-function buildSigmaGraph(
+// Incrementally sync node/edge data into an existing Graphology graph.
+// Existing nodes keep their current x/y so layout positions are preserved.
+// New nodes get seeded in concentric rings by type.
+function syncGraphData(
+    graph: Graph,
     visNodes: Array<{ data: Record<string, unknown> }>,
     visEdges: Array<{ data: Record<string, unknown> }>
-): { graph: Graph; nodeList: SigmaNodeAttrs[]; pathToId: Map<string, string> } {
-    const graph = new Graph({ multi: false, type: "directed" });
-    const nodeList: SigmaNodeAttrs[] = [];
-    const pathToId = new Map<string, string>();
+): { nodeList: SigmaNodeAttrs[]; pathToId: Map<string, string> } {
+    const incomingIds = new Set(visNodes.map((n) => n.data.id as string));
 
-    // Concentric seed layout: root center, folders ring 1, files ring 2, symbols ring 3.
+    // 1. Drop stale nodes (also drops their edges automatically in graphology)
+    for (const id of graph.nodes()) {
+        if (!incomingIds.has(id)) graph.dropNode(id);
+    }
+
+    // 2. Compute seed positions for brand-new nodes only
     type RingItem = { id: string; path: string };
+    const newNodes = visNodes.filter((n) => !graph.hasNode(n.data.id as string));
     const byType: Record<string, RingItem[]> = { root: [], folder: [], file: [], symbol: [] };
-    visNodes.forEach((n) => {
+    newNodes.forEach((n) => {
         const id = n.data.id as string;
         const rawType = n.data.type as string;
         const bucket = rawType === "folder" && id === "root" ? "root" : (rawType in byType ? rawType : "file");
         byType[bucket].push({ id, path: (n.data.path as string) ?? "" });
     });
-    for (const arr of Object.values(byType)) {
-        arr.sort((a, b) => a.path.localeCompare(b.path));
-    }
+    for (const arr of Object.values(byType)) arr.sort((a, b) => a.path.localeCompare(b.path));
     const seedPositions = new Map<string, { x: number; y: number }>();
     if (byType.root[0]) seedPositions.set(byType.root[0].id, { x: 0, y: 0 });
     const placeRing = (items: RingItem[], minRadius: number, minSpacing: number) => {
-        if (items.length === 0) return;
+        if (!items.length) return;
         const radius = Math.max(minRadius, (items.length * minSpacing) / (Math.PI * 2));
         items.forEach(({ id }, j) => {
             const angle = (j / items.length) * Math.PI * 2;
@@ -325,53 +331,60 @@ function buildSigmaGraph(
     placeRing(byType.file,   500, 30);
     placeRing(byType.symbol, 850,  18);
 
+    // 3. Add or update every incoming node
+    const nodeList: SigmaNodeAttrs[] = [];
+    const pathToId = new Map<string, string>();
+
     visNodes.forEach((n) => {
         const id = n.data.id as string;
         const type = n.data.type as SimNode["type"];
         const size = type === "root" ? 18 : type === "folder" ? 12 : type === "file" ? 7 : 4.5;
         const baseColor = (n.data.color as string) || "#94a3b8";
-        const seed = seedPositions.get(id) ?? { x: 0, y: 0 };
         const kind = n.data.symbolKind as SymbolKind | undefined;
         const label = ((n.data.displayLabel ?? n.data.label) as string) || "";
         const path = n.data.path as string | undefined;
-        const ext = n.data.extension as string | undefined;
-        const showLabel = n.data.showLabel as number | undefined;
-        const hubScore = n.data.hubScore as number | undefined;
-        const rawSize = n.data.rawSize as number | undefined;
-        const parentPath = n.data.parentPath as string | undefined;
 
-        const attrs: SigmaNodeAttrs = {
-            id,
-            nodeType: type,
-            radius: size,
-            label,
-            ext,
-            showLabel,
-            symbolKind: kind,
-            parentPath,
-            path,
-            rawSize,
-            hubScore,
-            x: seed.x,
-            y: seed.y,
-            size,
-            color: baseColor,
-            baseColor,
-            hidden: false,
-            highlighted: false,
-        };
-        graph.addNode(id, attrs);
-        nodeList.push(attrs);
+        if (graph.hasNode(id)) {
+            // Keep current layout position — only update visual / metadata attrs
+            const ex = graph.getNodeAttributes(id);
+            graph.mergeNodeAttributes(id, {
+                nodeType: type, size, baseColor, color: ex.color ?? baseColor,
+                label, ext: n.data.extension, showLabel: n.data.showLabel,
+                symbolKind: kind, parentPath: n.data.parentPath, path,
+                rawSize: n.data.rawSize, hubScore: n.data.hubScore,
+                hidden: false, highlighted: false,
+            });
+        } else {
+            const seed = seedPositions.get(id) ?? { x: 0, y: 0 };
+            graph.addNode(id, {
+                id, nodeType: type, radius: size, label,
+                ext: n.data.extension, showLabel: n.data.showLabel,
+                symbolKind: kind, parentPath: n.data.parentPath, path,
+                rawSize: n.data.rawSize, hubScore: n.data.hubScore,
+                x: seed.x, y: seed.y, size,
+                color: baseColor, baseColor, hidden: false, highlighted: false,
+            } as SigmaNodeAttrs);
+        }
+        nodeList.push(graph.getNodeAttributes(id) as SigmaNodeAttrs);
         if (type === "file" && path) pathToId.set(path, id);
     });
 
+    // 4. Sync edges: drop stale, add new
+    const incomingEdgeKeys = new Set(
+        visEdges.map((e) => `${e.data.source as string}\0${e.data.target as string}`)
+    );
+    const edgesToDrop: string[] = [];
+    graph.forEachEdge((id, _a, src, tgt) => {
+        if (!incomingEdgeKeys.has(`${src}\0${tgt}`)) edgesToDrop.push(id);
+    });
+    edgesToDrop.forEach((id) => graph.dropEdge(id));
+
     visEdges.forEach((e) => {
-        const source = e.data.source as string;
-        const target = e.data.target as string;
-        if (!graph.hasNode(source) || !graph.hasNode(target)) return;
-        if (graph.hasEdge(source, target)) return;
+        const src = e.data.source as string;
+        const tgt = e.data.target as string;
+        if (!graph.hasNode(src) || !graph.hasNode(tgt) || graph.hasEdge(src, tgt)) return;
         const edgeType = e.data.type as string;
-        graph.addEdge(source, target, {
+        graph.addEdge(src, tgt, {
             edgeType,
             color: edgeTypeColor(edgeType),
             baseColor: edgeTypeColor(edgeType),
@@ -380,7 +393,7 @@ function buildSigmaGraph(
         });
     });
 
-    return { graph, nodeList, pathToId };
+    return { nodeList, pathToId };
 }
 
 function fa2SettingsFor(nodeCount: number) {
@@ -1436,6 +1449,20 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { folders, files, symbols, symbolRefs, topExtensions, symbolKinds, symbolTotals, edgeTypeCounts };
     }, [elements, symbolGraph.symbols]);
 
+    // Stable fingerprint: only changes when the node/edge set actually changes.
+    const graphKey = useMemo(() => {
+        if (!elements.nodes.length) return "empty";
+        return [
+            elements.nodes.length,
+            (elements.nodes[0]?.data as Record<string, unknown>)?.id ?? "",
+            (elements.nodes[elements.nodes.length - 1]?.data as Record<string, unknown>)?.id ?? "",
+            elements.edges.length,
+        ].join("|");
+    }, [elements]);
+    // Keep a ref to the latest elements so Effect 1's async init can read current data.
+    const elementsRef = useRef(elements);
+    useEffect(() => { elementsRef.current = elements; }, [elements]);
+
     const restoreColors = useCallback(() => {
         const graph = graphRef.current;
         if (!graph) return;
@@ -1508,6 +1535,30 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         });
 
         sigma.refresh();
+    }, []);
+
+    const restartLayout = useCallback(() => {
+        if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
+        layoutStopTimerRef.current = null;
+        try { layoutRef.current?.stop(); } catch { /* noop */ }
+        try { layoutRef.current?.kill(); } catch { /* noop */ }
+        layoutRef.current = null;
+        layoutSettledRef.current = false;
+        const graph = graphRef.current;
+        if (!graph || graph.order === 0) return;
+        import("graphology-layout-forceatlas2/worker").then(({ default: FA2LayoutClass }) => {
+            const g = graphRef.current;
+            if (!g) return;
+            const nodeCount = g.order;
+            const { settings, settleMs } = fa2SettingsFor(nodeCount);
+            const layout = new FA2LayoutClass(g, { settings });
+            layoutRef.current = layout;
+            layout.start();
+            layoutStopTimerRef.current = setTimeout(() => {
+                layout.stop();
+                layoutSettledRef.current = true;
+            }, settleMs);
+        });
     }, []);
 
     const expandParentFolders = useCallback((path: string) => {
@@ -1647,164 +1698,165 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         sigma.refresh();
     }, [restoreColors]);
 
+    // Effect 1 — create Sigma instance once. Runs only on mount.
+    // Event handlers are wired here; restoreColors/applyHoverEffect are stable callbacks ([] deps).
     useEffect(() => {
-        if (!containerRef.current) return;
-        if (typeof window === "undefined") return;
-
+        if (!containerRef.current || typeof window === "undefined") return;
         let cancelled = false;
-        let cleanupFn: (() => void) | undefined;
 
         (async () => {
-        const [{ default: SigmaClass }, { default: FA2LayoutClass }] = await Promise.all([
-            import("sigma"),
-            import("graphology-layout-forceatlas2/worker"),
-        ]);
-        if (cancelled || !containerRef.current) return;
+            const { default: SigmaClass } = await import("sigma");
+            if (cancelled || !containerRef.current) return;
 
-        const { visNodes, visEdges } = filterByVisibility(elements, visibilityRef.current);
-        const { graph, nodeList, pathToId } = buildSigmaGraph(visNodes, visEdges);
+            const graph = new Graph({ multi: false, type: "directed" });
+            graphRef.current = graph;
 
-        graphRef.current = graph;
-        visibleNodesRef.current = nodeList;
-        pathToIdRef.current = pathToId;
-        lockedNodeIdRef.current = null;
-        layoutSettledRef.current = false;
-
-        const nodeCount = nodeList.length;
-        const sigma = new SigmaClass(graph, containerRef.current, {
-            renderEdgeLabels: false,
-            defaultEdgeType: "line",
-            defaultNodeType: "circle",
-            hideEdgesOnMove: nodeCount > 800,
-            hideLabelsOnMove: true,
-            minCameraRatio: 0.05,
-            maxCameraRatio: 10,
-            labelSize: 11,
-            labelFont: "monospace",
-            labelColor: { color: "#94a3b8" },
-            labelRenderedSizeThreshold: nodeCount > 3000 ? 12 : nodeCount > 1000 ? 9 : 6,
-            zIndex: true,
-        });
-        sigmaRef.current = sigma;
-
-        if (savedCameraRef.current) {
-            sigma.getCamera().setState(savedCameraRef.current);
-        }
-
-        const { settings, settleMs } = fa2SettingsFor(nodeCount);
-        const layout = new FA2LayoutClass(graph, { settings });
-        layoutRef.current = layout;
-        layout.start();
-        layoutStopTimerRef.current = setTimeout(() => {
-            layout.stop();
-            layoutSettledRef.current = true;
-        }, settleMs);
-
-        // Hover (Obsidian dim)
-        sigma.on("enterNode", ({ node }) => {
-            if (lockedNodeIdRef.current !== null) return;
-            applyHoverEffect(node);
-        });
-        sigma.on("leaveNode", () => {
-            if (lockedNodeIdRef.current !== null) return;
-            restoreColors();
-        });
-
-        // Click — open inspector and lock focus
-        sigma.on("clickNode", ({ node }) => {
-            const attrs = graph.getNodeAttributes(node) as SigmaNodeAttrs;
-            lockedNodeIdRef.current = node;
-            applyHoverEffect(node);
-            if (attrs.nodeType === "file") {
-                setSymbolFocus(null);
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: attrs.label,
-                    path: attrs.path ?? "",
-                    type: "file",
-                    extension: attrs.ext,
-                    size: attrs.rawSize,
-                });
-            } else if (attrs.nodeType === "symbol" && attrs.parentPath) {
-                const fileLabel = attrs.parentPath.split("/").pop() || attrs.parentPath;
-                const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
-                setSymbolFocus(attrs.label);
-                setFocusLine(null);
-                setShowExplorerInspector(true);
-                setSelectedFile({
-                    label: fileLabel,
-                    path: attrs.parentPath,
-                    type: "file",
-                    extension: ext,
-                });
+            // Seed any elements already available by the time the import resolves.
+            const elems = elementsRef.current;
+            if (elems.nodes.length) {
+                const { visNodes, visEdges } = filterByVisibility(elems, visibilityRef.current);
+                const { nodeList, pathToId } = syncGraphData(graph, visNodes, visEdges);
+                visibleNodesRef.current = nodeList;
+                pathToIdRef.current = pathToId;
             }
-        });
-        sigma.on("clickStage", () => {
-            lockedNodeIdRef.current = null;
-            restoreColors();
-        });
 
-        // Drag with FA2 reheat — write x/y on the graph; the worker picks it up next tick.
-        let draggedNode: string | null = null;
-        const camera = sigma.getCamera();
-        sigma.on("downNode", ({ node }) => {
-            draggedNode = node;
-            graph.setNodeAttribute(node, "highlighted", true);
-            camera.disable();
-            layout.start();
-        });
-        const captor = sigma.getMouseCaptor();
-        const onBodyMove = (e: { x: number; y: number; preventSigmaDefault: () => void; original: Event }) => {
-            if (!draggedNode) return;
-            const pos = sigma.viewportToGraph({ x: e.x, y: e.y });
-            graph.setNodeAttribute(draggedNode, "x", pos.x);
-            graph.setNodeAttribute(draggedNode, "y", pos.y);
-            e.preventSigmaDefault();
-            e.original.preventDefault();
-            e.original.stopPropagation();
-        };
-        const endDrag = () => {
-            if (!draggedNode) return;
-            graph.removeNodeAttribute(draggedNode, "highlighted");
-            draggedNode = null;
-            camera.enable();
-            // Brief reheat then re-stop, unless layout was already settled.
-            if (!layoutSettledRef.current) {
+            const nodeCount = graph.order;
+            const sigma = new SigmaClass(graph, containerRef.current!, {
+                renderEdgeLabels: false,
+                defaultEdgeType: "line",
+                defaultNodeType: "circle",
+                hideEdgesOnMove: nodeCount > 800,
+                hideLabelsOnMove: true,
+                minCameraRatio: 0.05,
+                maxCameraRatio: 10,
+                labelSize: 11,
+                labelFont: "monospace",
+                labelColor: { color: "#94a3b8" },
+                labelRenderedSizeThreshold: nodeCount > 3000 ? 12 : nodeCount > 1000 ? 9 : 6,
+                zIndex: true,
+            });
+            sigmaRef.current = sigma;
+
+            if (savedCameraRef.current) {
+                sigma.getCamera().setState(savedCameraRef.current);
+            }
+
+            restartLayout();
+
+            // Hover (Obsidian dim)
+            sigma.on("enterNode", ({ node }) => {
+                if (lockedNodeIdRef.current !== null) return;
+                applyHoverEffect(node);
+            });
+            sigma.on("leaveNode", () => {
+                if (lockedNodeIdRef.current !== null) return;
+                restoreColors();
+            });
+
+            // Click — open inspector and lock focus
+            sigma.on("clickNode", ({ node }) => {
+                const attrs = graph.getNodeAttributes(node) as SigmaNodeAttrs;
+                lockedNodeIdRef.current = node;
+                applyHoverEffect(node);
+                if (attrs.nodeType === "file") {
+                    setSymbolFocus(null);
+                    setFocusLine(null);
+                    setShowExplorerInspector(true);
+                    setSelectedFile({
+                        label: attrs.label,
+                        path: attrs.path ?? "",
+                        type: "file",
+                        extension: attrs.ext,
+                        size: attrs.rawSize,
+                    });
+                } else if (attrs.nodeType === "symbol" && attrs.parentPath) {
+                    const fileLabel = attrs.parentPath.split("/").pop() || attrs.parentPath;
+                    const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
+                    setSymbolFocus(attrs.label);
+                    setFocusLine(null);
+                    setShowExplorerInspector(true);
+                    setSelectedFile({
+                        label: fileLabel,
+                        path: attrs.parentPath,
+                        type: "file",
+                        extension: ext,
+                    });
+                }
+            });
+            sigma.on("clickStage", () => {
+                lockedNodeIdRef.current = null;
+                restoreColors();
+            });
+
+            // Drag with FA2 reheat — write x/y on the graph; the worker picks it up next tick.
+            let draggedNode: string | null = null;
+            const camera = sigma.getCamera();
+            sigma.on("downNode", ({ node }) => {
+                draggedNode = node;
+                graph.setNodeAttribute(node, "highlighted", true);
+                camera.disable();
+                layoutRef.current?.start();
+            });
+            const captor = sigma.getMouseCaptor();
+            const onBodyMove = (e: { x: number; y: number; preventSigmaDefault: () => void; original: Event }) => {
+                if (!draggedNode) return;
+                const pos = sigma.viewportToGraph({ x: e.x, y: e.y });
+                graph.setNodeAttribute(draggedNode, "x", pos.x);
+                graph.setNodeAttribute(draggedNode, "y", pos.y);
+                e.preventSigmaDefault();
+                e.original.preventDefault();
+                e.original.stopPropagation();
+            };
+            const endDrag = () => {
+                if (!draggedNode) return;
+                graph.removeNodeAttribute(draggedNode, "highlighted");
+                draggedNode = null;
+                camera.enable();
                 if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
                 layoutStopTimerRef.current = setTimeout(() => {
-                    layout.stop();
+                    layoutRef.current?.stop();
                     layoutSettledRef.current = true;
-                }, 1500);
-            } else {
-                if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
-                layoutStopTimerRef.current = setTimeout(() => layout.stop(), 1200);
-            }
-        };
-        captor.on("mousemovebody", onBodyMove);
-        captor.on("mouseup", endDrag);
-        captor.on("mouseleave", endDrag);
+                }, layoutSettledRef.current ? 1200 : 1500);
+            };
+            captor.on("mousemovebody", onBodyMove);
+            captor.on("mouseup", endDrag);
+            captor.on("mouseleave", endDrag);
+        })();
 
-        cleanupFn = () => {
-            savedCameraRef.current = sigma.getCamera().getState();
+        return () => {
+            cancelled = true;
+            savedCameraRef.current = sigmaRef.current?.getCamera().getState() ?? null;
             if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
             layoutStopTimerRef.current = null;
-            try { layout.stop(); } catch { /* noop */ }
-            try { layout.kill(); } catch { /* noop */ }
+            try { layoutRef.current?.stop(); } catch { /* noop */ }
+            try { layoutRef.current?.kill(); } catch { /* noop */ }
             layoutRef.current = null;
-            try { sigma.kill(); } catch { /* noop */ }
+            try { sigmaRef.current?.kill(); } catch { /* noop */ }
             sigmaRef.current = null;
             graphRef.current = null;
             pathToIdRef.current = new Map();
             visibleNodesRef.current = [];
         };
-        })(); // end async IIFE
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-        return () => {
-            cancelled = true;
-            cleanupFn?.();
-        };
-    }, [elements, applyHoverEffect, restoreColors]);
+    // Effect 2 — incrementally sync graph data when elements change.
+    // Sigma instance is already live; we only add/remove/update nodes and edges.
+    useEffect(() => {
+        const graph = graphRef.current;
+        const sigma = sigmaRef.current;
+        if (!graph || !sigma) return;
+
+        const { visNodes, visEdges } = filterByVisibility(elements, visibilityRef.current);
+        const { nodeList, pathToId } = syncGraphData(graph, visNodes, visEdges);
+        visibleNodesRef.current = nodeList;
+        pathToIdRef.current = pathToId;
+        lockedNodeIdRef.current = null;
+
+        applyVisibility();
+        sigma.refresh();
+        restartLayout();
+    }, [graphKey, elements, applyVisibility, restartLayout]);
 
     // Tab visibility: pause simulation when tab is hidden, resume if not yet settled.
     useEffect(() => {
