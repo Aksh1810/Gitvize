@@ -398,15 +398,15 @@ function syncGraphData(
 
 function fa2SettingsFor(nodeCount: number) {
     if (nodeCount > 3000) {
-        return { settings: { gravity: 1, scalingRatio: 1, slowDown: 15, barnesHutOptimize: true, barnesHutTheta: 0.8, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 6000 };
+        return { settings: { gravity: 0.5, scalingRatio: 3, slowDown: 12, barnesHutOptimize: true, barnesHutTheta: 0.5, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 5000 };
     }
     if (nodeCount > 1000) {
-        return { settings: { gravity: 1, scalingRatio: 2, slowDown: 8, barnesHutOptimize: true, barnesHutTheta: 0.5, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 8000 };
+        return { settings: { gravity: 0.5, scalingRatio: 5, slowDown: 8, barnesHutOptimize: true, barnesHutTheta: 0.5, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 7000 };
     }
     if (nodeCount > 200) {
-        return { settings: { gravity: 1, scalingRatio: 5, slowDown: 3, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 5000 };
+        return { settings: { gravity: 0.5, scalingRatio: 8, slowDown: 5, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 5000 };
     }
-    return { settings: { gravity: 1, scalingRatio: 10, slowDown: 1, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true }, settleMs: 3000 };
+    return { settings: { gravity: 0.5, scalingRatio: 15, slowDown: 2, barnesHutOptimize: false, adjustSizes: true, outboundAttractionDistribution: true, linLogMode: false, strongGravityMode: false }, settleMs: 3000 };
 }
 
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
@@ -474,6 +474,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const pathToIdRef = useRef<Map<string, string>>(new Map());
     const visibleNodesRef = useRef<SigmaNodeAttrs[]>([]);
     const lockedNodeIdRef = useRef<string | null>(null);
+    const animFrameRef = useRef<number | null>(null);
+    const draggedNodeRef = useRef<string | null>(null);
+    const dragMousePosRef = useRef<{ x: number; y: number } | null>(null);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
@@ -1538,6 +1541,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     }, []);
 
     const restartLayout = useCallback(() => {
+        if (animFrameRef.current !== null) {
+            cancelAnimationFrame(animFrameRef.current);
+            animFrameRef.current = null;
+        }
         if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
         layoutStopTimerRef.current = null;
         try { layoutRef.current?.stop(); } catch { /* noop */ }
@@ -1548,15 +1555,33 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         if (!graph || graph.order === 0) return;
         import("graphology-layout-forceatlas2/worker").then(({ default: FA2LayoutClass }) => {
             const g = graphRef.current;
-            if (!g) return;
+            const sigma = sigmaRef.current;
+            if (!g || !sigma) return;
             const nodeCount = g.order;
             const { settings, settleMs } = fa2SettingsFor(nodeCount);
             const layout = new FA2LayoutClass(g, { settings });
             layoutRef.current = layout;
             layout.start();
+            // RAF loop: pin dragged node each frame, then refresh Sigma so FA2 updates are visible
+            const animate = () => {
+                if (layoutRef.current?.isRunning()) {
+                    const pinId = draggedNodeRef.current;
+                    const pinPos = dragMousePosRef.current;
+                    if (pinId && pinPos && graphRef.current?.hasNode(pinId)) {
+                        graphRef.current.setNodeAttribute(pinId, "x", pinPos.x);
+                        graphRef.current.setNodeAttribute(pinId, "y", pinPos.y);
+                    }
+                    sigmaRef.current?.refresh();
+                    animFrameRef.current = requestAnimationFrame(animate);
+                } else {
+                    animFrameRef.current = null;
+                }
+            };
+            animFrameRef.current = requestAnimationFrame(animate);
             layoutStopTimerRef.current = setTimeout(() => {
-                layout.stop();
+                layoutRef.current?.stop();
                 layoutSettledRef.current = true;
+                // RAF self-cancels once isRunning() returns false
             }, settleMs);
         });
     }, []);
@@ -1788,35 +1813,35 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 restoreColors();
             });
 
-            // Drag with FA2 reheat — write x/y on the graph; the worker picks it up next tick.
-            let draggedNode: string | null = null;
+            // Live physics drag: keep FA2 running; RAF pins the dragged node each frame
+            // so neighbours react in real-time without rigid block-move.
             const camera = sigma.getCamera();
             sigma.on("downNode", ({ node }) => {
-                draggedNode = node;
+                const attrs = graph.getNodeAttributes(node) as { x: number; y: number };
+                draggedNodeRef.current = node;
+                dragMousePosRef.current = { x: attrs.x, y: attrs.y };
                 graph.setNodeAttribute(node, "highlighted", true);
                 camera.disable();
-                layoutRef.current?.start();
+                // Reheat layout so neighbours react immediately
+                restartLayout();
             });
             const captor = sigma.getMouseCaptor();
             const onBodyMove = (e: { x: number; y: number; preventSigmaDefault: () => void; original: Event }) => {
-                if (!draggedNode) return;
-                const pos = sigma.viewportToGraph({ x: e.x, y: e.y });
-                graph.setNodeAttribute(draggedNode, "x", pos.x);
-                graph.setNodeAttribute(draggedNode, "y", pos.y);
+                if (!draggedNodeRef.current) return;
+                dragMousePosRef.current = sigma.viewportToGraph({ x: e.x, y: e.y });
+                // RAF loop handles the actual position write + sigma.refresh()
                 e.preventSigmaDefault();
                 e.original.preventDefault();
                 e.original.stopPropagation();
             };
             const endDrag = () => {
-                if (!draggedNode) return;
-                graph.removeNodeAttribute(draggedNode, "highlighted");
-                draggedNode = null;
+                const node = draggedNodeRef.current;
+                if (!node) return;
+                graph.removeNodeAttribute(node, "highlighted");
+                draggedNodeRef.current = null;
+                dragMousePosRef.current = null;
                 camera.enable();
-                if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
-                layoutStopTimerRef.current = setTimeout(() => {
-                    layoutRef.current?.stop();
-                    layoutSettledRef.current = true;
-                }, layoutSettledRef.current ? 1200 : 1500);
+                // Physics continues naturally — no explicit restart needed
             };
             captor.on("mousemovebody", onBodyMove);
             captor.on("mouseup", endDrag);
@@ -1826,6 +1851,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return () => {
             cancelled = true;
             savedCameraRef.current = sigmaRef.current?.getCamera().getState() ?? null;
+            draggedNodeRef.current = null;
+            dragMousePosRef.current = null;
+            if (animFrameRef.current !== null) {
+                cancelAnimationFrame(animFrameRef.current);
+                animFrameRef.current = null;
+            }
             if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
             layoutStopTimerRef.current = null;
             try { layoutRef.current?.stop(); } catch { /* noop */ }
@@ -1861,17 +1892,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     // Tab visibility: pause simulation when tab is hidden, resume if not yet settled.
     useEffect(() => {
         const handler = () => {
-            const layout = layoutRef.current;
-            if (!layout) return;
             if (document.hidden) {
-                layout.stop();
+                if (animFrameRef.current !== null) {
+                    cancelAnimationFrame(animFrameRef.current);
+                    animFrameRef.current = null;
+                }
+                layoutRef.current?.stop();
             } else if (!layoutSettledRef.current) {
-                layout.start();
+                restartLayout();
             }
         };
         document.addEventListener("visibilitychange", handler);
         return () => document.removeEventListener("visibilitychange", handler);
-    }, []);
+    }, [restartLayout]);
 
     useEffect(() => {
         visibilityRef.current = {

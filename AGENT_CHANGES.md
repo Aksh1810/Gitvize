@@ -1,3 +1,21 @@
+## file-tree-graph: fix FA2 physics not animating (nodes static)
+
+### Why
+FA2Layout (Web Worker) writes updated positions to the Graphology graph, but Sigma does not automatically re-render when positions change — it requires explicit `sigma.refresh()` calls. Without a RAF loop, nodes appeared frozen even though FA2 was running.
+
+### Changes (`src/components/diagrams/file-tree-graph.tsx` only)
+- **`animFrameRef`** — new ref to track the active `requestAnimationFrame` ID for cleanup.
+- **`restartLayout`** — added a RAF loop after `layout.start()`. The loop calls `sigmaRef.current?.refresh()` every frame while `layout.isRunning()`, then self-cancels when the layout stops. Also cancels existing RAF on entry to prevent double-loops.
+- **`fa2SettingsFor`** — retuned for file trees: `gravity 0.5` (avoids collapsing), higher `scalingRatio` (more spread), lower `slowDown` for small graphs (visible movement sooner), added `linLogMode: false` and `strongGravityMode: false` explicitly.
+- **Drag** — stop layout (+ cancel RAF) on `downNode` so FA2 doesn't fight the cursor. On `mousemovebody`, write `x/y` directly + manual `sigma.refresh()`. For folder nodes, move all neighbors by the same delta. On release (`mouseup`/`mouseleave`), call `restartLayout()` to reheat and re-settle.
+- **Effect 1 cleanup** — added `cancelAnimationFrame(animFrameRef.current)` before killing sigma.
+- **Tab visibility effect** — on hidden: cancel RAF + stop layout. On visible: call `restartLayout()` (kills old worker, creates new, starts RAF). Dep array updated to `[restartLayout]`.
+
+### Verification
+- `npm run build` — clean.
+
+---
+
 ## file-tree-graph: fix graph re-initializing multiple times on load
 
 ### Why
