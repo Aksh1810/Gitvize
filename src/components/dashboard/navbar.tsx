@@ -81,7 +81,7 @@ export default function Navbar({
                 {/* Actions */}
                 <div className="flex items-center gap-2">
                     <a
-                        href={`https://github.com/${owner}/${repo}`}
+                        href={`https://github.com/Aksh1810/gitvize`}
                         target="_blank"
                         rel="noopener noreferrer"
                         title="Star this repo on GitHub"
