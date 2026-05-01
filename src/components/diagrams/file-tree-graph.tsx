@@ -402,7 +402,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols, setShowSymbols] = useState(false);
+    const showSymbols = true;
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(false);
     const [showImportsEdges, setShowImportsEdges] = useState(false);
@@ -475,7 +475,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         showRoot: true,
         showFolders: true,
         showFiles: true,
-        showSymbols: false,
+        showSymbols: true,
         showContainsEdges: true,
         showDefinesEdges: false,
         showImportsEdges: false,
@@ -2046,7 +2046,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         };
         applyVisibility();
         reheatSim();
-    }, [showRoot, showFolders, showFiles, showSymbols, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility, reheatSim]);
+    }, [showRoot, showFolders, showFiles, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility, reheatSim]);
 
     const handleZoomIn = () => {
         sigmaRef.current?.getCamera().animatedZoom({ duration: 200 });
@@ -2285,8 +2285,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`} aria-label="Toggle filters"><Filter className="w-4 h-4" /></button>
                     <button
                         type="button"
-                        onClick={() => setShowSymbols((prev) => !prev)}
-                        className={`flex items-center gap-1 px-2.5 h-8 rounded-md border text-xs transition-colors ${showSymbols ? "bg-cyan-900/50 border-cyan-700 text-cyan-300" : "bg-slate-900/90 border-slate-700 text-slate-400"} hover:text-white`}
+                        onClick={() => {
+                            const anyActive = Object.values(symbolKindVisibility).some((v) => v);
+                            const allKinds: SymbolKind[] = ["class", "function", "interface", "type", "method", "variable"];
+                            setSymbolKindVisibility(Object.fromEntries(allKinds.map((k) => [k, !anyActive])) as Record<SymbolKind, boolean>);
+                        }}
+                        className={`flex items-center gap-1 px-2.5 h-8 rounded-md border text-xs transition-colors ${Object.values(symbolKindVisibility).some((v) => v) ? "bg-cyan-900/50 border-cyan-700 text-cyan-300" : "bg-slate-900/90 border-slate-700 text-slate-400"} hover:text-white`}
                         title="Toggle symbol overlay (classes, functions, interfaces)"
                     >
                         <Braces className="w-3.5 h-3.5" />
