@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, startTransition, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { motion } from "framer-motion";
 import Graph from "graphology";
 import type Sigma from "sigma";
@@ -643,11 +643,15 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
     useEffect(() => {
         if (!showExplorer || !explorerBodyRef.current) return;
+        let lastHeight = 0;
         const observer = new ResizeObserver((entries) => {
             const [entry] = entries;
             if (!entry) return;
             const nextHeight = Math.max(180, Math.floor(entry.contentRect.height));
-            setExplorerViewportHeight(nextHeight);
+            if (nextHeight !== lastHeight) {
+                lastHeight = nextHeight;
+                setExplorerViewportHeight(nextHeight);
+            }
         });
         observer.observe(explorerBodyRef.current);
         return () => observer.disconnect();
@@ -672,8 +676,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 explorerWidthRef.current = nextWidth;
                 const el = document.getElementById("file-explorer-panel");
                 if (el) { el.style.transition = "none"; el.style.width = `${nextWidth}px`; }
-                const inner = document.getElementById("file-explorer-inner");
-                if (inner) inner.style.width = `${nextWidth}px`;
             } else if (inspectorResizingRef.current) {
                 const delta = event.clientX - inspectorDragStartXRef.current;
                 const nextWidth = Math.min(700, Math.max(280, inspectorDragStartWidthRef.current + delta));
@@ -2063,10 +2065,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
             <div
                 id="file-explorer-panel"
-                className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200"
-                style={{ width: showExplorer ? explorerWidth : 0 }}
+                className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200 ease-in-out"
+                style={{ width: showExplorer ? explorerWidth : 0, willChange: 'width' }}
             >
-                <div id="file-explorer-inner" className="h-full w-full rounded-2xl border border-slate-700/80 bg-slate-950/95 backdrop-blur flex flex-col overflow-hidden" style={{ width: showExplorer ? explorerWidth : 0 }}>
+                <div id="file-explorer-inner" className="h-full w-full rounded-2xl border border-slate-700/80 bg-slate-950/95 backdrop-blur flex flex-col overflow-hidden">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                         <span className="ui-eyebrow text-slate-400">Explorer</span>
                         <div className="flex items-center gap-1">
@@ -2082,7 +2084,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => setShowExplorer(false)}
+                                onClick={() => startTransition(() => setShowExplorer(false))}
                                 className="h-7 w-7 text-slate-400 hover:text-slate-200"
                                 aria-label="Collapse explorer"
                             >
@@ -2236,17 +2238,17 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             </div>
 
             <div className="relative flex-1 h-full">
-                {!showExplorer && (
-                    <button
-                        onClick={() => setShowExplorer(true)}
-                        className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur text-slate-300 hover:text-white hover:border-slate-500 text-xs"
-                        aria-label="Show explorer"
-                    >
-                        <ChevronRight className="w-3.5 h-3.5" />
-                        Explorer
-                    </button>
-                )}
-                <div className={`absolute top-3 z-10 flex items-center gap-2 ${showExplorer ? "left-3" : "left-[100px]"}`}>
+                <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
+                    {!showExplorer && (
+                        <button
+                            onClick={() => startTransition(() => setShowExplorer(true))}
+                            className="flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur text-slate-300 hover:text-white hover:border-slate-500 text-xs"
+                            aria-label="Show explorer"
+                        >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                            Explorer
+                        </button>
+                    )}
                     <div className="flex items-center gap-1 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
                         <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>
                         <span className="text-slate-600">|</span>
