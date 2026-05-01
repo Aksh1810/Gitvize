@@ -41,7 +41,7 @@ export default function TabNav({ activeTab, onTabChange, rightAction }: TabNavPr
                             className={`relative flex items-center gap-2 px-4 py-2 ui-body font-medium rounded-lg pro-focus-ring transition-colors ${
                                 isActive
                                     ? "text-white"
-                                    : "text-white/58 hover:text-white"
+                                    : "text-white/70 hover:text-white hover:bg-white/5"
                             }`}
                         >
                             {isActive && (

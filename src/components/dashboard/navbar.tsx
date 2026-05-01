@@ -37,7 +37,7 @@ export default function Navbar({
 
     return (
         <motion.nav
-            className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-xl bg-[#0a0e1a]/80 border-b border-white/[0.06]"
+            className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-xl bg-[#0a0e1a]/80 border-b border-white/[0.10]"
             initial={{ y: -18, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={transitions.soft}
@@ -69,7 +69,7 @@ export default function Navbar({
                         href={`https://github.com/${owner}/${repo}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-3 py-1 rounded-full border border-white/14 bg-white/[0.03] text-muted-foreground hover:text-foreground transition-colors"
+                        className="px-3 py-1 rounded-full border border-indigo-400/30 bg-indigo-500/10 text-white font-semibold tracking-tight hover:bg-indigo-500/20 transition-colors"
                     >
                         {repo}
                     </a>
