@@ -2302,7 +2302,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
                 <motion.div
                     id="filter-panel-motion"
-                    className="absolute top-0 right-0 bottom-0 z-20 overflow-hidden"
+                    className="absolute top-0 right-0 bottom-0 z-30 overflow-hidden"
                     initial={false}
                     animate={{
                         width: showRightFilters ? filterPanelWidth : 0,
