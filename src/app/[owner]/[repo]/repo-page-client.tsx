@@ -18,7 +18,7 @@ import { getFileColor } from "@/lib/file-icons";
 import { consumeOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import CloneProgressScreen, { type CloneStep } from "@/components/dashboard/clone-progress-screen";
 import { toast } from "sonner";
-import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
+import { getCachedDiagram, cacheDiagram, hashToken } from "@/lib/diagram-cache";
 import type {
     DiagramTab,
     RepoMetadata,
@@ -215,7 +215,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const runAnalysis = useCallback(async (mode: "smart" | "premium" = "smart") => {
         if (!repoData?.fileTree) return;
 
-        const cached = getCachedDiagram(owner, repo);
+        const cacheOpts = { tokenHash: hashToken(getToken()), mode };
+        const cached = getCachedDiagram(owner, repo, cacheOpts);
 
         setIsAnalyzing(true);
         let toastId: string | number | undefined;
@@ -353,7 +354,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 if (analysisResult) {
                     const source = analysisResult.source ?? "ai";
                     if (source === "ai") {
-                        cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "ai");
+                        cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "ai", cacheOpts);
                         toast.success("Premium AI diagram generated", {
                             id: toastId,
                             description: "Generated a fresh diagram for this repository",
@@ -366,7 +367,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 description: "Showing cached diagram",
                             });
                         } else {
-                            cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback");
+                            cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback", cacheOpts);
                             toast.warning("Premium AI unavailable", {
                                 id: toastId,
                                 description: analysisResult.fallbackReason
@@ -414,7 +415,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 if (data.mode === "smart") {
                     // Keep smart-mode generation silent on first load to avoid noisy UI.
                 } else {
-                    cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai");
+                    cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai", cacheOpts);
                     if (!data.mock) {
                         toast.success("Premium AI diagram generated", {
                             id: toastId,

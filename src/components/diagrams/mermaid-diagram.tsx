@@ -266,6 +266,10 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     useEffect(() => {
         return () => {
             clearPendingFitFrames();
+            if (wheelRafRef.current !== null) {
+                cancelAnimationFrame(wheelRafRef.current);
+                wheelRafRef.current = null;
+            }
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -321,11 +325,20 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
         });
     }, []);
 
-    // Zoom handlers
+    // Zoom handlers — accumulate wheel deltas in a ref and flush once per frame.
+    const wheelAccumRef = useRef(0);
+    const wheelRafRef = useRef<number | null>(null);
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
-        const delta = e.deltaY > 0 ? -0.01 : 0.01;
-        applyCenteredZoom(viewTransformRef.current.scale + delta);
+        wheelAccumRef.current += e.deltaY > 0 ? -0.01 : 0.01;
+        if (wheelRafRef.current !== null) return;
+        wheelRafRef.current = requestAnimationFrame(() => {
+            wheelRafRef.current = null;
+            const delta = wheelAccumRef.current;
+            wheelAccumRef.current = 0;
+            if (delta === 0) return;
+            applyCenteredZoom(viewTransformRef.current.scale + delta);
+        });
     }, [applyCenteredZoom]);
 
     const zoomIn = () => {

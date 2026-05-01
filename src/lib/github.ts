@@ -485,12 +485,50 @@ export async function fetchCommitsPage(
 
 // --- Individual file content via GitHub contents API ---
 
+// In-memory LRU for per-file content. Tab switches and file revisits hit the same
+// path repeatedly; the underlying ghFetch uses noStore so without this each visit
+// re-downloads the blob.
+const FILE_CONTENT_TTL_MS = 5 * 60 * 1000;
+const FILE_CONTENT_MAX_ENTRIES = 100;
+const fileContentCache = new Map<string, { ts: number; content: string }>();
+
+function fileCacheKey(owner: string, repo: string, filePath: string, token?: string | null): string {
+    // Token bucket prevents one user's private content from leaking to another in dev.
+    const tokenBucket = token ? token.slice(0, 8) : "anon";
+    return `${tokenBucket}:${owner}/${repo}:${filePath}`;
+}
+
+function fileCacheGet(key: string): string | null {
+    const hit = fileContentCache.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.ts > FILE_CONTENT_TTL_MS) {
+        fileContentCache.delete(key);
+        return null;
+    }
+    // LRU touch.
+    fileContentCache.delete(key);
+    fileContentCache.set(key, hit);
+    return hit.content;
+}
+
+function fileCacheSet(key: string, content: string): void {
+    if (fileContentCache.size >= FILE_CONTENT_MAX_ENTRIES) {
+        const oldest = fileContentCache.keys().next().value;
+        if (oldest !== undefined) fileContentCache.delete(oldest);
+    }
+    fileContentCache.set(key, { ts: Date.now(), content });
+}
+
 export async function fetchFileContent(
     owner: string,
     repo: string,
     filePath: string,
     token?: string | null,
 ): Promise<string> {
+    const cacheKey = fileCacheKey(owner, repo, filePath, token);
+    const cached = fileCacheGet(cacheKey);
+    if (cached !== null) return cached;
+
     const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any;
@@ -507,20 +545,26 @@ export async function fetchFileContent(
             token ? { headers: { Authorization: `token ${token}` } } : {},
         );
         if (!rawRes.ok) throw new Error(`File not found: ${filePath}`);
-        return rawRes.text();
+        const text = await rawRes.text();
+        fileCacheSet(cacheKey, text);
+        return text;
     }
 
     if (data.type !== "file") throw new Error("Not a file");
 
     if (data.encoding === "base64" && typeof data.content === "string") {
-        return Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf-8");
+        const decoded = Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf-8");
+        fileCacheSet(cacheKey, decoded);
+        return decoded;
     }
 
     // GitHub provides download_url for files it can't inline (e.g. large blobs).
     if (typeof data.download_url === "string") {
         const rawRes = await fetch(data.download_url);
         if (!rawRes.ok) throw new Error("Failed to download file");
-        return rawRes.text();
+        const text = await rawRes.text();
+        fileCacheSet(cacheKey, text);
+        return text;
     }
 
     throw new Error("File content not available");
@@ -549,16 +593,21 @@ export async function fetchAllRepoData(
     const contributors = contributorsResult.data;
     const contributorsTruncated = contributorsResult.truncated;
 
-    // Fetch branches first so their HEAD SHAs can seed the multi-branch commit fetch
-    const branches = await fetchBranches(owner, repo, metadata.defaultBranch, token).catch(() => []);
+    // Branches feed fetchCommitsForDAG; let it overlap with the other independent fetches.
+    const branchesP = fetchBranches(owner, repo, metadata.defaultBranch, token).catch(
+        () => [] as Branch[],
+    );
 
-    const [fileTree, commits, readme, dependencyFiles, mergedPRs] =
+    const [fileTree, branches, commits, readme, dependencyFiles, mergedPRs] =
         await Promise.all([
             fetchFileTree(owner, repo, metadata.defaultBranch, token).catch(
                 () => null
             ),
-            fetchCommitsForDAG(owner, repo, metadata.defaultBranch, branches, token).catch(
-                () => []
+            branchesP,
+            branchesP.then((b) =>
+                fetchCommitsForDAG(owner, repo, metadata.defaultBranch, b, token).catch(
+                    () => []
+                ),
             ),
             fetchReadme(owner, repo, token).catch(() => ""),
             fetchDependencyFiles(owner, repo, token).catch(() => []),

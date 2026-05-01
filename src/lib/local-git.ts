@@ -339,15 +339,18 @@ async function readContributors(git: SimpleGit): Promise<Contributor[]> {
     let id = 1;
     const contributors: Contributor[] = [];
     for (const entry of byEmail.values()) {
-        const emailHash = crypto
-            .createHash("md5")
-            .update(entry.email.toLowerCase().trim())
-            .digest("hex");
         // Extract GitHub username from noreply emails:
         //   {id}+{username}@users.noreply.github.com  (modern)
         //   {username}@users.noreply.github.com        (legacy)
         const noreply = entry.email.match(/^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i);
         const githubLogin = noreply ? noreply[1] : null;
+        // MD5 only feeds the gravatar URL — skip when we'll use a github.com avatar.
+        const emailHash = githubLogin
+            ? ""
+            : crypto
+                  .createHash("md5")
+                  .update(entry.email.toLowerCase().trim())
+                  .digest("hex");
 
         contributors.push({
             login: githubLogin ?? entry.name,
@@ -367,9 +370,19 @@ async function readContributors(git: SimpleGit): Promise<Contributor[]> {
 // ── README ───────────────────────────────────────────────────────────────────
 
 async function readReadme(repoDir: string): Promise<string> {
-    for (const name of ["README.md", "readme.md", "Readme.md", "README", "README.txt", "README.rst"]) {
+    const candidates = ["README.md", "README", "README.txt", "README.rst"];
+    let entries: string[];
+    try {
+        entries = await fs.readdir(repoDir);
+    } catch {
+        return "";
+    }
+    const lower = new Map(entries.map((e) => [e.toLowerCase(), e]));
+    for (const name of candidates) {
+        const actual = lower.get(name.toLowerCase());
+        if (!actual) continue;
         try {
-            return await fs.readFile(path.join(repoDir, name), "utf-8");
+            return await fs.readFile(path.join(repoDir, actual), "utf-8");
         } catch { /* try next */ }
     }
     return "";

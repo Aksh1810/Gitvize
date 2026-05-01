@@ -402,7 +402,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const [showSymbols] = useState(true);
+    const showSymbols = true;
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(false);
     const [showImportsEdges, setShowImportsEdges] = useState(false);
@@ -777,7 +777,14 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         const lang = extToPrismLang[ext];
         const grammar = lang ? Prism.languages[lang] : null;
         const rawLines = fileContent.split("\n");
-        const highlighted = grammar ? Prism.highlight(fileContent, grammar, lang).split("\n") : [];
+        // Skip whole-file Prism on very large files — synchronous highlight on
+        // tens of thousands of lines blocks the main thread for hundreds of ms.
+        // Threshold mirrors typical viewport content (~50 lines × 30 viewport heights).
+        const HIGHLIGHT_LINE_LIMIT = 1500;
+        const tooLarge = rawLines.length > HIGHLIGHT_LINE_LIMIT;
+        const highlighted = grammar && !tooLarge
+            ? Prism.highlight(fileContent, grammar, lang).split("\n")
+            : [];
 
         return rawLines.map((raw, index) => {
             const leadingWhitespace = raw.match(/^[\t ]+/)?.[0] ?? "";
@@ -785,7 +792,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             return {
                 lineNumber: index + 1,
                 raw,
-                html: grammar ? (highlighted[index] ?? "") : null,
+                html: grammar && !tooLarge ? (highlighted[index] ?? "") : null,
                 indentLevel: Math.min(10, Math.floor(spaces / 4)),
             };
         });

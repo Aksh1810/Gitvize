@@ -440,7 +440,7 @@ export default function CommitHistoryRail({
                                 // Same lane: clean vertical spine
                                 return (
                                     <line
-                                        key={`e${i}`}
+                                        key={`${edge.fromRow}-${edge.fromLane}->${edge.toRow}-${edge.toLane}`}
                                         x1={childX}  y1={childY}
                                         x2={parentX} y2={parentY}
                                         stroke={color}
@@ -460,7 +460,7 @@ export default function CommitHistoryRail({
 
                             return (
                                 <path
-                                    key={`e${i}`}
+                                    key={`${edge.fromRow}-${edge.fromLane}->${edge.toRow}-${edge.toLane}`}
                                     d={d}
                                     fill="none"
                                     stroke={color}

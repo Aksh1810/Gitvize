@@ -37,6 +37,9 @@ interface ParseContext {
     symbols: ExtractedSymbol[];
     symbolsByName: Map<string, ExtractedSymbol[]>;
     fileSet: Set<string>;
+    /** Comment/string-stripped file content, keyed by path. Computed once and reused
+     *  across extractDeclarations / parseClassRelations / token counting. */
+    strippedByPath: Map<string, string>;
 }
 
 const JS_TS_EXTENSIONS = new Set(["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"]);
@@ -174,10 +177,13 @@ function buildParseContext(fileContents: Array<{ path: string; content: string }
     const symbols: ExtractedSymbol[] = [];
     const symbolsByName = new Map<string, ExtractedSymbol[]>();
     const fileSet = new Set<string>();
+    const strippedByPath = new Map<string, string>();
 
     for (const file of fileContents) {
         fileSet.add(file.path);
-        const declarations = extractDeclarations(file.path, file.content);
+        const stripped = stripCommentsAndStrings(file.content);
+        strippedByPath.set(file.path, stripped);
+        const declarations = extractDeclarations(file.path, stripped);
         declarations.forEach((symbol) => {
             symbols.push(symbol);
             const existing = symbolsByName.get(symbol.name) ?? [];
@@ -186,13 +192,12 @@ function buildParseContext(fileContents: Array<{ path: string; content: string }
         });
     }
 
-    return { symbols, symbolsByName, fileSet };
+    return { symbols, symbolsByName, fileSet, strippedByPath };
 }
 
-function extractDeclarations(filePath: string, content: string): ExtractedSymbol[] {
+function extractDeclarations(filePath: string, stripped: string): ExtractedSymbol[] {
     const symbols: ExtractedSymbol[] = [];
     const seen = new Set<string>();
-    const stripped = stripCommentsAndStrings(content);
 
     const add = (kind: SymbolKind, name: string) => {
         if (!name || name.length < 2) return;
@@ -232,7 +237,8 @@ function extractReferences(
     for (const file of fileContents) {
         if (references.length >= maxReferences) break;
 
-        const classRelations = parseClassRelations(file.path, file.content, context.symbolsByName);
+        const stripped = context.strippedByPath.get(file.path) ?? stripCommentsAndStrings(file.content);
+        const classRelations = parseClassRelations(file.path, stripped, context.symbolsByName);
         for (const rel of classRelations) {
             if (references.length >= maxReferences) break;
             const key = `${rel.fromFilePath}->${rel.toFilePath}:${rel.relation}:${rel.symbolName}`;
@@ -270,7 +276,6 @@ function extractReferences(
                 .map((s) => s.name)
         );
 
-        const stripped = stripCommentsAndStrings(file.content);
         const tokenCounts = countIdentifiers(stripped);
         for (const [token, count] of tokenCounts) {
             if (references.length >= maxReferences) break;
@@ -303,11 +308,10 @@ function extractReferences(
 
 function parseClassRelations(
     filePath: string,
-    content: string,
+    stripped: string,
     symbolMap: Map<string, ExtractedSymbol[]>
 ): SymbolReference[] {
     const refs: SymbolReference[] = [];
-    const stripped = stripCommentsAndStrings(content);
     const classRegex = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:extends\s+([A-Za-z_][A-Za-z0-9_]*))?\s*(?:implements\s+([A-Za-z0-9_,\s]+))?/g;
 
     let match: RegExpExecArray | null;

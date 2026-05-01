@@ -17,8 +17,18 @@ interface CachedDiagram {
     source: "ai" | "fallback";
 }
 
-function cacheKey(owner: string, repo: string): string {
-    return `${CACHE_KEY_PREFIX}${owner}/${repo}`;
+export interface DiagramCacheOpts {
+    /** Short, stable identifier for the GitHub token in use. Cached entries written with
+     *  one token are not returned for another (prevents cross-account stale reads). */
+    tokenHash?: string | null;
+    /** AI analysis mode. "smart" and "premium" produce different output and must not share. */
+    mode?: "smart" | "premium";
+}
+
+function cacheKey(owner: string, repo: string, opts?: DiagramCacheOpts): string {
+    const tokenPart = opts?.tokenHash ? opts.tokenHash : "anon";
+    const modePart = opts?.mode ?? "smart";
+    return `${CACHE_KEY_PREFIX}${owner}/${repo}|${tokenPart}|${modePart}`;
 }
 
 /** Store an AI-generated diagram in cache */
@@ -26,7 +36,8 @@ export function cacheDiagram(
     owner: string,
     repo: string,
     data: { architecture: ArchitectureAnalysis; annotations: FileAnnotation[] },
-    source: "ai" | "fallback" = "ai"
+    source: "ai" | "fallback" = "ai",
+    opts?: DiagramCacheOpts,
 ): void {
     if (typeof window === "undefined") return;
     try {
@@ -35,7 +46,7 @@ export function cacheDiagram(
             cachedAt: new Date().toISOString(),
             source,
         };
-        localStorage.setItem(cacheKey(owner, repo), JSON.stringify(entry));
+        localStorage.setItem(cacheKey(owner, repo, opts), JSON.stringify(entry));
         evictOldEntries();
     } catch {
         // localStorage full or unavailable — silently skip
@@ -45,16 +56,28 @@ export function cacheDiagram(
 /** Retrieve a cached diagram, or null if none exists */
 export function getCachedDiagram(
     owner: string,
-    repo: string
+    repo: string,
+    opts?: DiagramCacheOpts,
 ): CachedDiagram | null {
     if (typeof window === "undefined") return null;
     try {
-        const raw = localStorage.getItem(cacheKey(owner, repo));
+        const raw = localStorage.getItem(cacheKey(owner, repo, opts));
         if (!raw) return null;
         return JSON.parse(raw) as CachedDiagram;
     } catch {
         return null;
     }
+}
+
+/** Tiny synchronous string hash — good enough to bucket cache by token without
+ *  exposing the token itself. Not cryptographic. */
+export function hashToken(token: string | null | undefined): string {
+    if (!token) return "anon";
+    let h = 5381;
+    for (let i = 0; i < token.length; i++) {
+        h = ((h << 5) + h + token.charCodeAt(i)) | 0;
+    }
+    return (h >>> 0).toString(36);
 }
 
 /** Evict oldest cached entries when over limit */
