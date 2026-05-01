@@ -2230,7 +2230,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         Explorer
                     </button>
                 )}
-                <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                <div className={`absolute top-3 z-10 flex items-center gap-2 ${showExplorer ? "left-3" : "left-[100px]"}`}>
                     <div className="flex items-center gap-1 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
                         <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>
                         <span className="text-slate-600">|</span>
@@ -2405,7 +2405,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </motion.div>
 
                 {fileTypeLegend.length > 0 && (
-                    <div className="absolute bottom-2 left-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/55 backdrop-blur p-2">
+                    <div className="absolute bottom-2 right-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/55 backdrop-blur p-2">
                         <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1.5">File Types</div>
                         <div className="space-y-1">
                             {fileTypeLegend.map(({ ext, count, color }) => (
@@ -2428,7 +2428,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
                 <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl bg-[#07050f]" />
 
-                <div className="absolute bottom-2 right-2 z-10 flex flex-row items-end gap-2">
+                <div className="absolute bottom-2 left-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
                         <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
                         <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
