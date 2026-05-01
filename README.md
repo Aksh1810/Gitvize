@@ -8,7 +8,7 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 
 ### File Tree Graph
 
-- Live **force-directed physics simulation** (d3-force + Cytoscape.js) — nodes spread organically, drag to reheat
+- Live **force-directed physics simulation** (Graphology + Sigma.js + d3-force) — nodes spread organically, drag to reheat
 - Symbol indexing: extracts **classes, functions, interfaces, types, methods, variables** from source files across TypeScript, JavaScript, Python, Go, Rust, Java, C/C++/C#
 - **Code relationship edges**: Defines, Imports, Calls, Extends, Implements, File Imports — all toggleable independently
 - Smart large-repo filtering: scores and ranks files by relevance when repos exceed 2,000 nodes; truncation banner shown
@@ -58,9 +58,8 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 | Styling | Tailwind CSS v4 |
 | UI Components | Radix UI / shadcn/ui |
 | Animations | Framer Motion |
-| File Tree Graph | Cytoscape.js + d3-force (RAF loop) |
+| File Tree Graph | Graphology + Sigma.js + d3-force (RAF loop) |
 | Architecture Diagrams | Mermaid.js |
-| Dependency / Architecture | React Flow (@xyflow/react) + Dagre |
 | Charts | Recharts |
 | Syntax Highlighting | Prism.js |
 | Icons | Lucide React |
