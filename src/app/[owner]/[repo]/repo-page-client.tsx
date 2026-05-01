@@ -15,8 +15,9 @@ import BranchGraph from "@/components/diagrams/branch-graph";
 import DependencyGraph from "@/components/diagrams/dependency-graph";
 import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
 import { getFileColor } from "@/lib/file-icons";
-import { consumeOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
+import GitHubTokenModal, { consumeOneTimeGitHubToken, setOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import CloneProgressScreen, { type CloneStep } from "@/components/dashboard/clone-progress-screen";
+import BrandLogo from "@/components/ui/brand-logo";
 import { toast } from "sonner";
 import { getCachedDiagram, cacheDiagram, hashToken } from "@/lib/diagram-cache";
 import type {
@@ -82,6 +83,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const [aiSettingsOpen, setAISettingsOpen] = useState(false);
     const [hasUserAIKey, setHasUserAIKey] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
+    const [tokenModalOpen, setTokenModalOpen] = useState(false);
+    const dashboardTokenRef = useRef<string | null>(null);
     const [sessionToken] = useState<string | null>(() => {
         const token = consumeOneTimeGitHubToken();
         return token || null;
@@ -96,9 +99,9 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // fetchData starts so a full page reload picks up fresh data.
     const analyzeAttemptedRef = useRef(false);
 
-    // One-time PAT token passed from the landing flow.
+    // One-time PAT token passed from the landing flow, or a token added via the dashboard Token button.
     const getToken = useCallback((): string | null => {
-        return sessionToken;
+        return dashboardTokenRef.current ?? sessionToken;
     }, [sessionToken]);
 
     // Fetch all repo data via SSE stream
@@ -648,9 +651,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         // of the full clone screen so the user isn't shown clone messaging on refresh.
         if (cachedLoad) {
             return (
-                <div className="h-screen w-full bg-[#0a0e1a] flex flex-col">
-                    <div className="h-0.5 w-full bg-white/5 overflow-hidden">
-                        <div className="h-full bg-indigo-500/70 animate-[loading-bar_1.4s_ease-in-out_infinite]" style={{ width: "100%" }} />
+                <div className="h-screen w-full bg-[#0a0e1a] flex flex-col items-center justify-center gap-4">
+                    <BrandLogo size={40} />
+                    <p className="text-sm text-muted-foreground">{owner}/{repo}</p>
+                    <div className="w-48 h-0.5 bg-white/5 overflow-hidden rounded-full">
+                        <div className="h-full w-3/5 bg-indigo-500/70 animate-[loading-bar_1.4s_ease-in-out_infinite]" />
                     </div>
                 </div>
             );
@@ -687,13 +692,14 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 owner={owner}
                 repo={repo}
                 onAISettings={() => setAISettingsOpen(true)}
+                onGithubToken={() => setTokenModalOpen(true)}
                 onExport={() => {
                     const dataStr = JSON.stringify(repoData, null, 2);
                     const blob = new Blob([dataStr], { type: "application/json" });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = `${owner}-${repo}-gitviz.json`;
+                    a.download = `${owner}-${repo}-gitvize.json`;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -803,6 +809,19 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     setHasUserAIKey(true);
                     toast.success("AI key saved", {
                         description: "You can now generate premium architecture diagrams",
+                    });
+                }}
+            />
+
+            <GitHubTokenModal
+                open={tokenModalOpen}
+                onOpenChange={setTokenModalOpen}
+                onSave={(token) => {
+                    dashboardTokenRef.current = token;
+                    setOneTimeGitHubToken(token);
+                    toast.success("Token saved", {
+                        description: "Rate limits increased.",
+                        action: { label: "Reload", onClick: () => fetchData() },
                     });
                 }}
             />

@@ -51,11 +51,11 @@
   --radius-4xl: calc(var(--radius) + 16px);
 
   /* Deep Space Custom Colors — Neon Palette */
-  --color-indigo: #64748b;
-  --color-violet: #64748b;
-  --color-cyan: #94a3b8;
-  --color-pink: #94a3b8;
-  --color-amber: #cbd5e1;
+  --color-indigo: #6366f1;
+  --color-violet: #7c3aed;
+  --color-cyan: #06b6d4;
+  --color-pink: #ec4899;
+  --color-amber: #f59e0b;
   --color-space: #05070d;
   --color-space-light: #0a0f19;
   --color-space-lighter: #111827;
@@ -72,7 +72,7 @@
   --motion-duration-slow: 480ms;
   --motion-ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
-  --background: #05070d;
+  --background: #0a0e1a;
   --foreground: #e5e7eb;
   --card: rgba(8, 12, 20, 0.72);
   --card-foreground: #f1f5f9;
@@ -103,10 +103,10 @@
   --sidebar-accent-foreground: #f1f5f9;
   --sidebar-border: rgba(226, 232, 240, 0.16);
   --sidebar-ring: #94a3b8;
-  --glow-indigo: 148, 163, 184;
-  --glow-cyan: 148, 163, 184;
-  --glow-pink: 148, 163, 184;
-  --glow-amber: 203, 213, 225;
+  --glow-indigo: 99, 102, 241;
+  --glow-cyan: 6, 182, 212;
+  --glow-pink: 236, 72, 153;
+  --glow-amber: 245, 158, 11;
   --grid-line: rgba(255, 255, 255, 0.06);
 }
 
@@ -403,7 +403,7 @@
   position: absolute;
   inset: -18% -10% auto;
   height: 280px;
-  background: radial-gradient(circle, rgba(226, 232, 240, 0.08), transparent 66%);
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.06) 50%, transparent 70%);
   filter: blur(28px);
   pointer-events: none;
   z-index: -1;
@@ -533,7 +533,7 @@
 .diagram-dot-field {
   background-color: rgba(8, 11, 18, 0.978);
   background-image:
-    radial-gradient(circle, rgba(226, 232, 240, 0) 2px, transparent 2.6px);
+    radial-gradient(circle, rgba(226, 232, 240, 0.07) 1px, transparent 1.5px);
   background-size: 56px 56px;
   background-position: 0 0;
 }
@@ -557,8 +557,8 @@
 }
 
 .node-glow-purple:hover {
-  box-shadow: 0 0 30px rgba(148, 163, 184, 0.2), 0 0 60px rgba(148, 163, 184, 0.06);
-  border-color: rgba(226, 232, 240, 0.45);
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.35), 0 0 60px rgba(139, 92, 246, 0.1);
+  border-color: rgba(139, 92, 246, 0.6);
 }
 
 /* ============================================================================
@@ -703,7 +703,7 @@
 }
 
 .gradient-text {
-  background: linear-gradient(to right, #ffffff 0%, #ffffff 50%, #c4b5fd 100%);
+  background: linear-gradient(135deg, #a5b4fc 0%, #818cf8 40%, #c084fc 70%, #e879f9 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

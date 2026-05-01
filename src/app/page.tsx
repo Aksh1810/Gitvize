@@ -14,6 +14,7 @@ import {
   GitPullRequest,
   Search,
   Network,
+  Loader2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import BrandLogo from "@/components/ui/brand-logo";
@@ -197,7 +198,7 @@ export default function LandingPage() {
               className="h-14 px-8 text-lg rounded-xl border border-white/30 bg-white/[0.92] text-slate-950 hover:bg-white hover:border-white shadow-lg shadow-black/30 transition-all"
             >
               {isNavigating ? (
-                <span className="animate-spin mr-2">⟳</span>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
               ) : (
                 <ArrowRight className="w-5 h-5 mr-2" />
               )}
@@ -326,6 +327,16 @@ export default function LandingPage() {
 
         {/* Footer */}
         <footer className="border-t border-border/30 py-8 text-center text-sm text-muted-foreground w-full">
+          <span>© 2026 Gitvize</span>
+          <span className="mx-3 text-border">·</span>
+          <a
+            href="https://github.com/Aksh1810/Gitvize"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-foreground transition-colors"
+          >
+            Open Source
+          </a>
         </footer>
       </main>
 

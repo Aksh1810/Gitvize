@@ -7,6 +7,7 @@ import {
     Share2,
     Star,
     Sparkles,
+    KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/ui/brand-logo";
@@ -18,6 +19,7 @@ interface NavbarProps {
     repo: string;
     onExport?: () => void;
     onAISettings?: () => void;
+    onGithubToken?: () => void;
 }
 
 export default function Navbar({
@@ -25,9 +27,10 @@ export default function Navbar({
     repo,
     onExport,
     onAISettings,
+    onGithubToken,
 }: NavbarProps) {
     const handleShare = () => {
-        const url = `${window.location.origin}/${owner}/${repo}`;
+        const url = window.location.href;
         navigator.clipboard.writeText(url).then(() => {
             toast.success("Link copied to clipboard!", {
                 description: url,
@@ -78,9 +81,10 @@ export default function Navbar({
                 {/* Actions */}
                 <div className="flex items-center gap-2">
                     <a
-                        href="https://github.com/Aksh1810/Gitviz"
+                        href={`https://github.com/${owner}/${repo}`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        title="Star this repo on GitHub"
                     >
                         <Button
                             variant="ghost"
@@ -91,6 +95,16 @@ export default function Navbar({
                             <span className="hidden sm:inline">Star</span>
                         </Button>
                     </a>
+
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onGithubToken}
+                        className="pro-control pro-focus-ring ui-micro"
+                    >
+                        <KeyRound className="w-4 h-4 mr-1.5 text-emerald-300" />
+                        <span className="hidden sm:inline">Token</span>
+                    </Button>
 
                     <Button
                         variant="ghost"

@@ -402,7 +402,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRoot, setShowRoot] = useState(true);
     const [showFolders, setShowFolders] = useState(true);
     const [showFiles, setShowFiles] = useState(true);
-    const showSymbols = true;
+    const [showSymbols, setShowSymbols] = useState(false);
     const [showContainsEdges, setShowContainsEdges] = useState(true);
     const [showDefinesEdges, setShowDefinesEdges] = useState(false);
     const [showImportsEdges, setShowImportsEdges] = useState(false);
@@ -475,7 +475,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         showRoot: true,
         showFolders: true,
         showFiles: true,
-        showSymbols: true,
+        showSymbols: false,
         showContainsEdges: true,
         showDefinesEdges: false,
         showImportsEdges: false,
@@ -664,8 +664,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         explorerWidthRef.current = explorerWidth;
     }, [explorerWidth]);
 
-    // cosmos.gl auto-handles canvas resize — this observer is no longer needed.
-
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
             if (resizingRef.current) {
@@ -844,7 +842,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         let cancelled = false;
         let idleId = 0;
 
-        idleId = requestIdleCallback(() => {
+        const rIC: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number =
+            "requestIdleCallback" in window
+                ? window.requestIdleCallback.bind(window)
+                : (cb) => window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline), 0) as unknown as number;
+        const cIC: (id: number) => void =
+            "cancelIdleCallback" in window
+                ? window.cancelIdleCallback.bind(window)
+                : (id) => window.clearTimeout(id);
+
+        idleId = rIC(() => {
         const runSymbolAnalysis = async () => {
             const selection = selectSymbolAnalysisFiles(tree, {
                 maxFileBytes: MAX_SYMBOL_FILE_BYTES,
@@ -970,11 +977,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         };
 
         runSymbolAnalysis();
-        }); // end requestIdleCallback
+        }); // end rIC
 
         return () => {
             cancelled = true;
-            cancelIdleCallback(idleId);
+            cIC(idleId);
             symbolWorkerRef.current?.terminate();
             symbolWorkerRef.current = null;
         };
@@ -986,7 +993,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         let cancelled = false;
         let idleId = 0;
 
-        idleId = requestIdleCallback(() => {
+        const rIC: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number =
+            "requestIdleCallback" in window
+                ? window.requestIdleCallback.bind(window)
+                : (cb) => window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline), 0) as unknown as number;
+        const cIC: (id: number) => void =
+            "cancelIdleCallback" in window
+                ? window.cancelIdleCallback.bind(window)
+                : (id) => window.clearTimeout(id);
+
+        idleId = rIC(() => {
         const runMultiLangAnalysis = async () => {
             const jstsExts = new Set(["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"]);
             const nonJsTsFiles = tree.filter((item) => {
@@ -1063,11 +1079,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         };
 
         runMultiLangAnalysis();
-        }); // end requestIdleCallback
+        }); // end rIC
 
         return () => {
             cancelled = true;
-            cancelIdleCallback(idleId);
+            cIC(idleId);
             importWorkerRef.current?.terminate();
             importWorkerRef.current = null;
         };
@@ -2254,17 +2270,28 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                     className="pl-3 pr-7 h-8 w-[180px] text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40"
                                 />
                                 {searchQuery && (
-                                    <Button
+                                    <button
+                                        type="button"
                                         onClick={() => handleSearch("")}
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0"
+                                        aria-label="Clear search"
                                     >
                                         <X className="w-3 h-3" />
-                                    </Button>
+                                    </button>
                                 )}
                             </div>
                         </div>
                     </div>
                     <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`} aria-label="Toggle filters"><Filter className="w-4 h-4" /></button>
+                    <button
+                        type="button"
+                        onClick={() => setShowSymbols((prev) => !prev)}
+                        className={`flex items-center gap-1 px-2.5 h-8 rounded-md border text-xs transition-colors ${showSymbols ? "bg-cyan-900/50 border-cyan-700 text-cyan-300" : "bg-slate-900/90 border-slate-700 text-slate-400"} hover:text-white`}
+                        title="Toggle symbol overlay (classes, functions, interfaces)"
+                    >
+                        <Braces className="w-3.5 h-3.5" />
+                        <span>Symbols</span>
+                    </button>
                 </div>
 
                 <motion.div
