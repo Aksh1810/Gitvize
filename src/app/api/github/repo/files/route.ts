@@ -4,7 +4,7 @@ import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
-const MAX_PATHS = 200;
+const MAX_PATHS = 50;
 
 /**
  * POST /api/github/repo/files
@@ -17,8 +17,11 @@ const MAX_PATHS = 200;
  */
 export async function POST(request: NextRequest) {
     const ip = getClientIp(request);
-    const rl = checkRateLimit(`files:${ip}`, 30, 60_000);
+    const rl = checkRateLimit(`files:${ip}`, 10, 60_000);
     if (!rl.ok) return rateLimitResponse(rl.resetAt);
+    // Global cross-IP cap: prevents coordinated abuse from many IPs
+    const globalRl = checkRateLimit("files:global", 200, 60_000);
+    if (!globalRl.ok) return rateLimitResponse(globalRl.resetAt);
 
     let body: { owner?: unknown; repo?: unknown; paths?: unknown };
     try {

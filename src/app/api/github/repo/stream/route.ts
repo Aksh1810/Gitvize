@@ -6,6 +6,12 @@ import type { Contributor } from "@/types";
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
 
+// Per-instance SSE concurrency cap — prevents a single Lambda from firing too
+// many concurrent GitHub API fan-outs. Combined with the 5-min data cache most
+// connections complete in milliseconds, so this cap is rarely reached.
+let activeSSEConnections = 0;
+const MAX_SSE_CONNECTIONS = 50;
+
 function deduplicateContributors(contributors: Contributor[]): Contributor[] {
     const merged = new Map<string, Contributor>();
     for (const c of contributors) {
@@ -72,6 +78,14 @@ export async function GET(request: NextRequest) {
         );
     }
 
+    if (activeSSEConnections >= MAX_SSE_CONNECTIONS) {
+        return new Response(
+            sseEvent({ type: "error", message: "Server busy. Please try again in a moment." }),
+            { status: 503, headers: { "Content-Type": "text/event-stream", "Retry-After": "5" } },
+        );
+    }
+
+    activeSSEConnections++;
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
@@ -112,6 +126,7 @@ export async function GET(request: NextRequest) {
                                 : msg;
                 emit({ type: "error", message: friendly });
             } finally {
+                activeSSEConnections--;
                 controller.close();
             }
         },

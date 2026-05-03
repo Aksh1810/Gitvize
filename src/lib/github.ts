@@ -2,6 +2,7 @@
 // GitViz — GitHub API Service
 // ============================================================================
 
+import { unstable_cache } from "next/cache";
 import type {
     RepoMetadata,
     FileTreeResponse,
@@ -15,6 +16,19 @@ import type {
 
 const GITHUB_API = "https://api.github.com";
 
+// Token pool — supports GITHUB_TOKENS (comma-separated) for higher throughput
+let tokenPoolCursor = 0;
+function getNextServerToken(): string | undefined {
+    const pool = [
+        ...(process.env.GITHUB_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean),
+        ...(process.env.GITHUB_TOKEN ? [process.env.GITHUB_TOKEN.trim()] : []),
+    ];
+    if (pool.length === 0) return undefined;
+    const tok = pool[tokenPoolCursor % pool.length];
+    tokenPoolCursor = (tokenPoolCursor + 1) % pool.length;
+    return tok;
+}
+
 type FetchCacheMode =
     | { revalidate: number }
     | { noStore: true };
@@ -23,11 +37,8 @@ function headers(token?: string | null): HeadersInit {
     const h: HeadersInit = {
         Accept: "application/vnd.github.v3+json",
     };
-    // Fall back to the server-side env token so every ghFetch call is
-    // authenticated even when no user token was explicitly threaded through.
-    const normalizedToken = (token ?? process.env.GITHUB_TOKEN)?.trim();
+    const normalizedToken = (token ?? getNextServerToken())?.trim();
     if (normalizedToken) {
-        // GitHub PAT auth is most broadly compatible with the `token` scheme.
         h.Authorization = `token ${normalizedToken}`;
     }
     return h;
@@ -73,6 +84,12 @@ async function ghFetch<T>(
         throw new Error(`GitHub API error ${res.status} for ${path}: ${body}`);
     }
 
+    const remaining = parseInt(res.headers.get("x-ratelimit-remaining") ?? "9999", 10);
+    const limit = parseInt(res.headers.get("x-ratelimit-limit") ?? "5000", 10);
+    if (remaining < limit * 0.2) {
+        console.warn(`[github] Rate limit low: ${remaining}/${limit} remaining for ${path}`);
+    }
+
     return res.json();
 }
 
@@ -116,7 +133,7 @@ export async function fetchFileTree(
     const data = await ghFetch<any>(
         `/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`,
         token,
-        { noStore: true }
+        { revalidate: 120 }
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allItems: TreeItem[] = data.tree.map((item: any) => ({
@@ -253,7 +270,7 @@ export async function fetchCommits(
             ghFetch<any[]>(
                 `/repos/${owner}/${repo}/commits${base}&page=${page}`,
                 token,
-                { noStore: true }
+                { revalidate: 120 }
             )
         )
     );
@@ -296,7 +313,7 @@ async function fetchCommitsForDAG(
             ghFetch<any[]>(
                 `/repos/${owner}/${repo}/commits${base}&page=${page}`,
                 token,
-                { noStore: true }
+                { revalidate: 120 }
             )
         )
     );
@@ -478,7 +495,7 @@ export async function fetchCommitsPage(
     const data = await ghFetch<any[]>(
         `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(sha)}&per_page=${perPage}&page=${page}`,
         token,
-        { noStore: true },
+        { revalidate: 60 },
     );
     return data.map(mapApiCommit);
 }
@@ -572,7 +589,7 @@ export async function fetchFileContent(
 
 // --- Fetch all repo data in parallel ---
 
-export async function fetchAllRepoData(
+async function _fetchAllRepoDataImpl(
     owner: string,
     repo: string,
     token?: string | null
@@ -627,4 +644,39 @@ export async function fetchAllRepoData(
         dependencyFiles,
         mergedPRs,
     };
+}
+
+// In-flight deduplication: collapses concurrent cold-cache bursts for the same
+// repo onto a single Promise so only one GitHub API fan-out runs at a time.
+const inflight = new Map<string, ReturnType<typeof _fetchAllRepoDataImpl>>();
+
+function deduplicatedFetch(owner: string, repo: string) {
+    const key = `${owner}/${repo}`;
+    const existing = inflight.get(key);
+    if (existing) return existing;
+    const p = _fetchAllRepoDataImpl(owner, repo, null).finally(() => inflight.delete(key));
+    inflight.set(key, p);
+    return p;
+}
+
+// Server-side 5-minute cache backed by Vercel Data Cache (or Next.js in-process
+// cache in dev). Each unique (owner, repo) pair gets its own cache entry.
+const cachedFetchAllRepoData = unstable_cache(
+    deduplicatedFetch,
+    ["repo-data-v1"],
+    { revalidate: 300 }
+);
+
+export async function fetchAllRepoData(
+    owner: string,
+    repo: string,
+    token?: string | null
+) {
+    const serverToken = process.env.GITHUB_TOKEN?.trim();
+    const isUserToken = !!token?.trim() && token.trim() !== serverToken;
+    if (isUserToken) {
+        // User's own PAT (private repo) — never serve cached content
+        return _fetchAllRepoDataImpl(owner, repo, token);
+    }
+    return cachedFetchAllRepoData(owner, repo);
 }

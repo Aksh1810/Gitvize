@@ -39,7 +39,10 @@ export async function GET(request: NextRequest) {
     try {
         const content = await fetchFileContent(owner, repo, filePath, token);
         return new NextResponse(content, {
-            headers: { "Content-Type": "text/plain; charset=utf-8" },
+            headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Cache-Control": "public, max-age=300, stale-while-revalidate=600",
+            },
         });
     } catch (error) {
         const message = scrubSecrets(error instanceof Error ? error.message : "Failed to read file");

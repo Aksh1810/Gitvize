@@ -10,9 +10,24 @@ const ALLOWED_PROVIDERS = new Set(["gemini", "anthropic", "openai"]);
 const MAX_README_LEN = 50_000;
 const MAX_TREE_ITEMS = 5_000;
 
+// Server-side daily AI premium usage counter (per-instance; resets at midnight).
+// This supplements the client-side localStorage cap and prevents bypass via curl.
+const dailyAIPremium = new Map<string, { date: string; count: number }>();
+const DAILY_PREMIUM_LIMIT = 10;
+
+function checkDailyPremium(ip: string): boolean {
+    const today = new Date().toISOString().slice(0, 10);
+    const e = dailyAIPremium.get(ip);
+    if (!e || e.date !== today) { dailyAIPremium.set(ip, { date: today, count: 1 }); return true; }
+    if (e.count >= DAILY_PREMIUM_LIMIT) return false;
+    e.count++;
+    return true;
+}
+
 export async function POST(request: NextRequest) {
     const ip = getClientIp(request);
-    const rl = checkRateLimit(`analyze:${ip}`, 60, 60_000);
+    // Shared rate limit for all analyze calls
+    const rl = checkRateLimit(`analyze:${ip}`, 20, 60_000);
     if (!rl.ok) return rateLimitResponse(rl.resetAt);
 
     try {
@@ -29,6 +44,14 @@ export async function POST(request: NextRequest) {
 
         const forceFallback = Boolean((body as { forceFallback?: boolean }).forceFallback);
         const requestedMode = mode ?? "smart";
+
+        // Server-side daily cap for premium AI calls (supplements client-side localStorage)
+        if (requestedMode === "premium" && !checkDailyPremium(ip)) {
+            return NextResponse.json(
+                { error: "Daily AI analysis limit reached. Try again tomorrow." },
+                { status: 429 }
+            );
+        }
 
         if (!owner || !repo || !tree) {
             return NextResponse.json(
