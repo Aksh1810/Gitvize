@@ -330,7 +330,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     const wheelRafRef = useRef<number | null>(null);
     const handleWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
-        wheelAccumRef.current += e.deltaY > 0 ? -0.01 : 0.01;
+        wheelAccumRef.current += e.deltaY > 0 ? -0.07 : 0.07;
         if (wheelRafRef.current !== null) return;
         wheelRafRef.current = requestAnimationFrame(() => {
             wheelRafRef.current = null;

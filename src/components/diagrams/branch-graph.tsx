@@ -21,10 +21,7 @@ import { Button } from "@/components/ui/button";
 import CommitHistoryRail from "./commit-history-rail";
 import type { Branch, Commit } from "@/types";
 
-const branchColors = [
-    "#22d3ee", "#10b981", "#14b8a6", "#f59e0b",
-    "#ef4444", "#ec4899", "#f97316", "#84cc16",
-];
+const BRANCH_COLOR = "#6366f1";
 
 interface BranchGraphProps {
     branches: Branch[];
@@ -76,6 +73,10 @@ export default function BranchGraph({
     const [selectedCommit, setSelectedCommit] = useState<Commit | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"newest" | "oldest" | "author">("newest");
+
+    const [selectedBranch, setSelectedBranch] = useState<string>(defaultBranch);
+    const [branchCommits, setBranchCommits] = useState<Commit[]>([]);
+    const [isBranchLoading, setIsBranchLoading] = useState(false);
 
     // Pagination state
     const [allCommits, setAllCommits] = useState<Commit[]>(initialCommits);
@@ -148,6 +149,27 @@ export default function BranchGraph({
         }
     }, [currentPage, defaultBranch, owner, repo]);
 
+    const fetchBranchCommits = useCallback(async (branch: string) => {
+        setSelectedBranch(branch);
+        if (branch === defaultBranch) {
+            setBranchCommits([]);
+            return;
+        }
+        setIsBranchLoading(true);
+        try {
+            const params = new URLSearchParams({ owner, repo, sha: branch, per_page: "100", page: "1" });
+            const res = await fetch(`/api/github/repo/commits?${params}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const commits: Commit[] = await res.json();
+            setBranchCommits(commits);
+        } catch (err) {
+            console.error("Failed to fetch branch commits:", err);
+            setBranchCommits([]);
+        } finally {
+            setIsBranchLoading(false);
+        }
+    }, [defaultBranch, owner, repo]);
+
     const filteredCommits = useMemo(() => {
         let result = [...allCommits];
 
@@ -173,9 +195,11 @@ export default function BranchGraph({
         return result;
     }, [allCommits, searchQuery, sortBy]);
 
+    const displayCommits = selectedBranch === defaultBranch ? filteredCommits : branchCommits;
+
     const groupedCommits = useMemo(
-        () => groupCommitsByDate(filteredCommits),
-        [filteredCommits]
+        () => groupCommitsByDate(displayCommits),
+        [displayCommits]
     );
 
     return (
@@ -237,26 +261,25 @@ export default function BranchGraph({
                                         onClick={() => setGraphBranch(graphBranch === defaultBranch ? null : defaultBranch)}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
                                         style={{
-                                            borderColor: branchColors[0],
-                                            background: graphBranch === defaultBranch ? `${branchColors[0]}25` : `${branchColors[0]}15`,
-                                            color: branchColors[0],
+                                            borderColor: graphBranch === defaultBranch ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
+                                            background: graphBranch === defaultBranch ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
+                                            color: graphBranch === defaultBranch ? BRANCH_COLOR : "#94a3b8",
                                         }}
                                     >
                                         <GitBranch className="w-3 h-3" />
                                         {defaultBranch}
                                         <Badge variant="outline" className="text-[9px] ml-1 border-current px-1 py-0">default</Badge>
                                     </button>
-                                    {(showAllGraphBranches ? nonDefaultBranches : nonDefaultBranches.slice(0, 6)).map((b, i) => {
-                                        const color = branchColors[(i + 1) % branchColors.length];
+                                    {(showAllGraphBranches ? nonDefaultBranches : nonDefaultBranches.slice(0, 6)).map((b) => {
                                         const isSelected = graphBranch === b.name;
                                         return (
                                             <button key={b.name}
                                                 onClick={() => setGraphBranch(isSelected ? null : b.name)}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
                                                 style={{
-                                                    borderColor: isSelected ? color : `${color}40`,
-                                                    background: isSelected ? `${color}20` : `${color}10`,
-                                                    color,
+                                                    borderColor: isSelected ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
+                                                    background: isSelected ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
+                                                    color: isSelected ? BRANCH_COLOR : "#94a3b8",
                                                 }}
                                             >
                                                 <GitBranch className="w-3 h-3" />
@@ -352,11 +375,13 @@ export default function BranchGraph({
                                 </div>
 
                                 <div className="flex flex-wrap gap-2">
-                                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium"
+                                    <button
+                                        onClick={() => fetchBranchCommits(defaultBranch)}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
                                         style={{
-                                            borderColor: branchColors[0],
-                                            background: `${branchColors[0]}15`,
-                                            color: branchColors[0],
+                                            borderColor: selectedBranch === defaultBranch ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
+                                            background: selectedBranch === defaultBranch ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
+                                            color: selectedBranch === defaultBranch ? BRANCH_COLOR : "#94a3b8",
                                         }}
                                     >
                                         <GitBranch className="w-3 h-3" />
@@ -364,23 +389,24 @@ export default function BranchGraph({
                                         <Badge variant="outline" className="text-[9px] ml-1 border-current px-1 py-0">
                                             default
                                         </Badge>
-                                    </div>
+                                    </button>
 
-                                    {visibleBranches.map((branch, i) => {
-                                        const color = branchColors[(i + 1) % branchColors.length];
+                                    {visibleBranches.map((branch) => {
+                                        const isSelected = selectedBranch === branch.name;
                                         return (
-                                            <div
+                                            <button
                                                 key={branch.name}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs"
+                                                onClick={() => fetchBranchCommits(branch.name)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
                                                 style={{
-                                                    borderColor: `${color}40`,
-                                                    background: `${color}10`,
-                                                    color: color,
+                                                    borderColor: isSelected ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
+                                                    background: isSelected ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
+                                                    color: isSelected ? BRANCH_COLOR : "#94a3b8",
                                                 }}
                                             >
                                                 <GitBranch className="w-3 h-3" />
                                                 {branch.name}
-                                            </div>
+                                            </button>
                                         );
                                     })}
                                 </div>
@@ -391,9 +417,16 @@ export default function BranchGraph({
                                 <div className="flex items-center gap-2">
                                     <GitCommit className="w-4 h-4 text-muted-foreground" />
                                     <h3 className="text-sm font-semibold">Commits</h3>
-                                    <Badge variant="secondary" className="text-[10px]">
-                                        {allCommits.length}{hasMore ? "+" : ""}
-                                    </Badge>
+                                    {isBranchLoading ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                                    ) : (
+                                        <Badge variant="secondary" className="text-[10px]">
+                                            {selectedBranch === defaultBranch ? `${allCommits.length}${hasMore ? "+" : ""}` : branchCommits.length}
+                                        </Badge>
+                                    )}
+                                    {selectedBranch !== defaultBranch && (
+                                        <span className="text-[10px] text-muted-foreground">on <span className="text-slate-300">{selectedBranch}</span></span>
+                                    )}
                                 </div>
 
                                 <div className="flex items-center gap-2">
@@ -435,7 +468,12 @@ export default function BranchGraph({
                             <div className="relative">
                                 <div className="absolute left-[19px] top-0 bottom-0 w-px bg-border/40" />
 
-                                {filteredCommits.length === 0 ? (
+                                {isBranchLoading ? (
+                                    <div className="flex items-center justify-center py-16 gap-2 text-sm text-muted-foreground">
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Loading commits for {selectedBranch}…
+                                    </div>
+                                ) : displayCommits.length === 0 ? (
                                     <div className="text-center py-12 text-sm text-muted-foreground">
                                         No commits match your search.
                                     </div>
@@ -469,8 +507,8 @@ export default function BranchGraph({
                                                         <div
                                                             className="absolute -left-[34px] top-[12px] w-[8px] h-[8px] rounded-full border-2 z-10"
                                                             style={{
-                                                                borderColor: branchColors[0],
-                                                                background: selectedCommit?.sha === commit.sha ? branchColors[0] : "#0a0e1a",
+                                                                borderColor: BRANCH_COLOR,
+                                                                background: selectedCommit?.sha === commit.sha ? BRANCH_COLOR : "#0a0e1a",
                                                             }}
                                                         />
 
