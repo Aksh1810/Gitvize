@@ -2062,7 +2062,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
 
     return (
-        <div className="relative w-full h-full min-h-[800px] flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
+        <div className="relative w-full h-full flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
             <div
                 id="file-explorer-panel"
                 className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200 ease-in-out"
@@ -2459,7 +2459,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 )}
 
-                <div ref={containerRef} className="w-full h-full min-h-[800px] rounded-xl bg-[#07050f]" />
+                <div ref={containerRef} className="w-full h-full rounded-xl bg-[#07050f]" />
 
                 <div className="absolute bottom-2 left-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
