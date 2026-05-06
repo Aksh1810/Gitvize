@@ -1,3 +1,37 @@
+## Critical Files hub score feature
+
+### What was built (`src/components/diagrams/file-tree-graph.tsx` only)
+
+**Hub score normalization & tier tagging**
+- After each `syncGraphData` call, iterates all file nodes to find max raw `hubScore`, normalizes each to 0–100, and writes `normalizedHubScore` + `hubTier` (`critical` / `high` / `medium` / `normal`) back to Graphology node attributes.
+
+**`extColor` attribute**
+- `syncGraphData` now stores `extColor: baseColor` on every node (both `addNode` and `mergeNodeAttributes` paths). This preserves the original file-extension color so hub coloring can be toggled without re-running the full build.
+
+**`applyHubColors(enabled)` callback**
+- When `enabled`: colors file nodes red (`#ef4444`) for critical tier, amber (`#f59e0b`) for high, extension color otherwise. Updates both `color` and `baseColor` so the hover-dim system uses hub colors.
+- When `disabled`: restores `color` and `baseColor` to `extColor`.
+
+**`showCriticalFiles` toggle** (default OFF)
+- A `useEffect` watches `[showCriticalFiles, applyHubColors, graphKey]` and calls `applyHubColors` whenever the toggle changes or the graph rebuilds. `graphKey` in the deps ensures hub colors are re-applied after a full graph refresh.
+
+**Blast radius BFS**
+- `getBlastRadius(nodeId, maxDepth=5)` — BFS on Graphology `forEachInEdge`, following `fileImport` edges upstream to find all files that (transitively) import the target.
+- `applyBlastRadius(nodeId)` — sets `color` (not `baseColor`) on all nodes: red for the target, amber for affected, near-invisible for everything else. Edges connecting affected nodes turn amber.
+- `clearBlastRadius()` — resets state and restores `color` from `baseColor` (which already reflects hub mode state).
+- `clearBlastRadiusRef` — a ref updated each render so the Sigma `clickStage` handler (set up once in Effect 1) can always call the latest `clearBlastRadius`.
+
+**Critical Files panel** (in right filter sidebar)
+- Collapsible section above "Node Types" — toggle "Color by impact" + ranked list of top 10 hub files by raw inbound import count.
+- Each row shows rank, filename, and score colored by tier (red/amber/slate). Clicking a row calls `focusNodeInGraph` to pan the camera to that node.
+
+**Blast radius button** (in Code Inspector)
+- When an open file has `hubTier !== "normal"`, a bar appears below the inspector header showing the tier label.
+- "💥 Blast radius" button triggers `applyBlastRadius`; replaced by "Clear" + affected-file count once active.
+- Clicking background (Sigma `clickStage`) also clears blast radius.
+
+---
+
 ## file-tree-graph: replace FA2 with d3-force for Obsidian-like physics
 
 ### Why

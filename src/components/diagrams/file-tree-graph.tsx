@@ -4,9 +4,15 @@ import { useEffect, useRef, useState, useCallback, useMemo, startTransition, typ
 import { motion } from "framer-motion";
 import Graph from "graphology";
 import type Sigma from "sigma";
-import type { Simulation, SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
 import { List, type RowComponentProps } from "react-window";
 import { getFileColor } from "@/lib/file-icons";
+import {
+    settleMsForCount,
+    reheatSettleMsForCount,
+    type SimMessageLink,
+    type SimMessageNode,
+    type SimNodeType,
+} from "@/lib/file-tree-physics";
 import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -246,22 +252,14 @@ type SigmaNodeAttrs = Omit<SimNode, "type"> & {
     highlighted: boolean;
 };
 
-interface D3Node extends SimulationNodeDatum {
-    id: string;
-    nodeType: SimNode["type"];
-    size: number;
-}
-interface D3Link extends SimulationLinkDatum<D3Node> {
-    edgeType: string;
-}
-
 // Incrementally sync node/edge data into an existing Graphology graph.
 // Existing nodes keep their current x/y so layout positions are preserved.
 // New nodes get seeded in concentric rings by type.
 function syncGraphData(
     graph: Graph,
     visNodes: Array<{ data: Record<string, unknown> }>,
-    visEdges: Array<{ data: Record<string, unknown> }>
+    visEdges: Array<{ data: Record<string, unknown> }>,
+    serverSeed?: Map<string, [number, number]> | null,
 ): { nodeList: SigmaNodeAttrs[]; pathToId: Map<string, string> } {
     const incomingIds = new Set(visNodes.map((n) => n.data.id as string));
 
@@ -313,20 +311,24 @@ function syncGraphData(
             const ex = graph.getNodeAttributes(id);
             graph.mergeNodeAttributes(id, {
                 nodeType: type, size, baseColor, color: ex.color ?? baseColor,
+                extColor: baseColor,
                 label, ext: n.data.extension, showLabel: n.data.showLabel,
                 symbolKind: kind, parentPath: n.data.parentPath, path,
                 rawSize: n.data.rawSize, hubScore: n.data.hubScore,
                 hidden: false, highlighted: false,
             });
         } else {
-            const seed = seedPositions.get(id) ?? { x: 0, y: 0 };
+            const fromServer = serverSeed?.get(id);
+            const seed = fromServer
+                ? { x: fromServer[0], y: fromServer[1] }
+                : seedPositions.get(id) ?? { x: 0, y: 0 };
             graph.addNode(id, {
                 id, nodeType: type, radius: size, label,
                 ext: n.data.extension, showLabel: n.data.showLabel,
                 symbolKind: kind, parentPath: n.data.parentPath, path,
                 rawSize: n.data.rawSize, hubScore: n.data.hubScore,
                 x: seed.x, y: seed.y, size,
-                color: baseColor, baseColor, hidden: false, highlighted: false,
+                color: baseColor, baseColor, extColor: baseColor, hidden: false, highlighted: false,
             } as SigmaNodeAttrs);
         }
         nodeList.push(graph.getNodeAttributes(id) as SigmaNodeAttrs);
@@ -359,25 +361,6 @@ function syncGraphData(
     });
 
     return { nodeList, pathToId };
-}
-
-function d3ChargeFor(nodeType: SimNode["type"]): number {
-    switch (nodeType) {
-        case "root":   return -1200;
-        case "folder": return -600;
-        case "file":   return -250;
-        case "symbol": return -60;
-        default:       return -150;
-    }
-}
-
-function d3LinkDistance(edgeType: string): number {
-    switch (edgeType) {
-        case "defines":    return 40;
-        case "fileImport": return 100;
-        case "contains":   return 120;
-        default:           return 80;
-    }
 }
 
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
@@ -435,19 +418,26 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
+    const [showCriticalFiles, setShowCriticalFiles] = useState(false);
+    const [showCriticalFilesPanel, setShowCriticalFilesPanel] = useState(false);
+    const [topHubNodes, setTopHubNodes] = useState<Array<{ id: string; path: string; label: string; rawScore: number; normalizedScore: number; hubTier: string }>>([]);
+    const [blastRadiusActive, setBlastRadiusActive] = useState(false);
+    const [blastRadiusAffected, setBlastRadiusAffected] = useState<Set<string>>(new Set());
+    const [blastRadiusCount, setBlastRadiusCount] = useState(0);
     const sigmaRef = useRef<Sigma | null>(null);
     const graphRef = useRef<Graph | null>(null);
-    const simRef = useRef<Simulation<D3Node, D3Link> | null>(null);
-    const simNodesRef = useRef<Map<string, D3Node>>(new Map());
-    const layoutStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const simWorkerRef = useRef<Worker | null>(null);
+    const simEpochRef = useRef(0);
+    const simIdsByEpochRef = useRef<Map<number, string[]>>(new Map());
     const layoutSettledRef = useRef(false);
+    const refreshFrameRef = useRef<number | null>(null);
+    const pendingTickRef = useRef<{ epoch: number; positions: Float32Array } | null>(null);
+    const seedPositionsRef = useRef<Map<string, [number, number]> | null>(null);
     const savedCameraRef = useRef<{ x: number; y: number; ratio: number; angle: number } | null>(null);
     const pathToIdRef = useRef<Map<string, string>>(new Map());
     const visibleNodesRef = useRef<SigmaNodeAttrs[]>([]);
     const lockedNodeIdRef = useRef<string | null>(null);
-    const animFrameRef = useRef<number | null>(null);
     const draggedNodeRef = useRef<string | null>(null);
-    const dragMousePosRef = useRef<{ x: number; y: number } | null>(null);
     const resizingRef = useRef(false);
     const explorerWidthRef = useRef(220);
     const dragStartXRef = useRef(0);
@@ -1408,6 +1398,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         return { nodes, edges };
     }, [tree, repo, symbolGraph, fileImportEdges]);
 
+    // Total blob count across the entire tree (pre-truncation) — feeds the truncation banner.
+    const totalFileCount = useMemo(
+        () => tree.reduce((n, item) => (item.type === "blob" ? n + 1 : n), 0),
+        [tree],
+    );
+
     // Compute cluster info from elements
     const clusterInfo = useMemo(() => {
         const folders = elements.nodes.filter((n) => n.data && (n.data as Record<string, unknown>).type === "folder").length;
@@ -1497,6 +1493,84 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         sigmaRef.current?.refresh();
     }, [restoreColors]);
 
+    const applyHubColors = useCallback((enabled: boolean) => {
+        const graph = graphRef.current;
+        if (!graph) return;
+        graph.forEachNode((id, attrs) => {
+            if (attrs.nodeType !== "file") return;
+            const extColor = (attrs.extColor as string) || (attrs.baseColor as string);
+            const targetColor = enabled
+                ? attrs.hubTier === "critical" ? "#ef4444"
+                : attrs.hubTier === "high" ? "#f59e0b"
+                : extColor
+                : extColor;
+            graph.setNodeAttribute(id, "color", targetColor);
+            graph.setNodeAttribute(id, "baseColor", targetColor);
+        });
+        sigmaRef.current?.refresh();
+    }, []);
+
+    const getBlastRadius = useCallback((nodeId: string, maxDepth = 5): Set<string> => {
+        const graph = graphRef.current;
+        if (!graph) return new Set();
+        const affected = new Set<string>();
+        const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
+        while (queue.length > 0) {
+            const item = queue.shift();
+            if (!item) break;
+            const { id, depth } = item;
+            if (depth >= maxDepth) continue;
+            graph.forEachInEdge(id, (_ek, attrs, source) => {
+                if (attrs.edgeType === "fileImport" && !affected.has(source)) {
+                    affected.add(source);
+                    queue.push({ id: source, depth: depth + 1 });
+                }
+            });
+        }
+        return affected;
+    }, []);
+
+    const applyBlastRadius = useCallback((nodeId: string) => {
+        const graph = graphRef.current;
+        if (!graph) return;
+        const affected = getBlastRadius(nodeId);
+        setBlastRadiusAffected(affected);
+        setBlastRadiusCount(affected.size);
+        setBlastRadiusActive(true);
+        graph.forEachNode((id) => {
+            if (id === nodeId) {
+                graph.setNodeAttribute(id, "color", "#ef4444");
+            } else if (affected.has(id)) {
+                graph.setNodeAttribute(id, "color", "#f59e0b");
+            } else {
+                graph.setNodeAttribute(id, "color", DIM_COLOR);
+            }
+        });
+        graph.forEachEdge((_ek, _ea, src, tgt) => {
+            const active = (src === nodeId && affected.has(tgt)) || (tgt === nodeId && affected.has(src)) || (affected.has(src) && affected.has(tgt));
+            graph.setEdgeAttribute(_ek, "color", active ? "rgba(251,191,36,0.35)" : "rgba(255,255,255,0.02)");
+        });
+        sigmaRef.current?.refresh();
+    }, [getBlastRadius]);
+
+    const clearBlastRadius = useCallback(() => {
+        setBlastRadiusActive(false);
+        setBlastRadiusAffected(new Set());
+        setBlastRadiusCount(0);
+        const graph = graphRef.current;
+        if (!graph) return;
+        graph.forEachNode((id, attrs) => {
+            if (attrs.color !== attrs.baseColor) graph.setNodeAttribute(id, "color", attrs.baseColor as string);
+        });
+        graph.forEachEdge((id, attrs) => {
+            if (attrs.color !== attrs.baseColor) graph.setEdgeAttribute(id, "color", attrs.baseColor as string);
+        });
+        sigmaRef.current?.refresh();
+    }, []);
+
+    const clearBlastRadiusRef = useRef(clearBlastRadius);
+    clearBlastRadiusRef.current = clearBlastRadius;
+
     const applyVisibility = useCallback(() => {
         const graph = graphRef.current;
         const sigma = sigmaRef.current;
@@ -1536,157 +1610,67 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         sigma.refresh();
     }, []);
 
+    // Build the SimMessage payload from currently visible Graphology nodes/edges.
+    const buildSimPayload = useCallback((): { nodes: SimMessageNode[]; links: SimMessageLink[] } | null => {
+        const graph = graphRef.current;
+        if (!graph || graph.order === 0) return null;
+
+        const nodes: SimMessageNode[] = [];
+        graph.forEachNode((id, attrs) => {
+            if (attrs.hidden) return;
+            nodes.push({
+                id,
+                nodeType: attrs.nodeType as SimNodeType,
+                size: attrs.size as number,
+                x: attrs.x as number,
+                y: attrs.y as number,
+            });
+        });
+
+        const visibleIds = new Set(nodes.map((n) => n.id));
+        const links: SimMessageLink[] = [];
+        graph.forEachEdge((_id, attrs, src, tgt) => {
+            if (attrs.hidden) return;
+            if (!visibleIds.has(src) || !visibleIds.has(tgt)) return;
+            links.push({ source: src, target: tgt, edgeType: attrs.edgeType as string });
+        });
+
+        return { nodes, links };
+    }, []);
+
     const restartLayout = useCallback(() => {
-        if (animFrameRef.current !== null) {
-            cancelAnimationFrame(animFrameRef.current);
-            animFrameRef.current = null;
-        }
-        if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
-        layoutStopTimerRef.current = null;
-        simRef.current?.stop();
-        simRef.current = null;
-        simNodesRef.current.clear();
-        layoutSettledRef.current = false;
+        const worker = simWorkerRef.current;
+        if (!worker) return;
+        const payload = buildSimPayload();
+        if (!payload) return;
 
-        const graph = graphRef.current;
-        const sigma = sigmaRef.current;
-        if (!graph || !sigma || graph.order === 0) return;
-
-        // Build d3 node objects seeded from current Graphology positions (visible only)
-        const d3Nodes: D3Node[] = [];
-        const nodeMap = new Map<string, D3Node>();
-        graph.forEachNode((id, attrs) => {
-            if (attrs.hidden) return;
-            const node: D3Node = {
-                id,
-                nodeType: attrs.nodeType as SimNode["type"],
-                size: attrs.size as number,
-                x: attrs.x as number,
-                y: attrs.y as number,
-            };
-            d3Nodes.push(node);
-            nodeMap.set(id, node);
+        const epoch = ++simEpochRef.current;
+        worker.postMessage({
+            type: "init",
+            epoch,
+            nodes: payload.nodes,
+            links: payload.links,
+            settleMs: settleMsForCount(payload.nodes.length),
         });
+    }, [buildSimPayload]);
 
-        // Build d3 link objects (visible only)
-        const d3Links: D3Link[] = [];
-        graph.forEachEdge((_id, attrs, src, tgt) => {
-            if (attrs.hidden) return;
-            const source = nodeMap.get(src);
-            const target = nodeMap.get(tgt);
-            if (source && target) {
-                d3Links.push({ source, target, edgeType: attrs.edgeType as string });
-            }
-        });
-
-        simNodesRef.current = nodeMap;
-
-        import("d3-force").then((d3) => {
-            const g = graphRef.current;
-            const s = sigmaRef.current;
-            if (!g || !s) return;
-
-            const nodeCount = d3Nodes.length;
-            const linkForce = d3.forceLink<D3Node, D3Link>(d3Links)
-                .id((n) => n.id)
-                .distance((l) => d3LinkDistance((l as D3Link).edgeType))
-                .strength(0.4);
-
-            const sim = d3.forceSimulation<D3Node, D3Link>(d3Nodes)
-                .force("charge", d3.forceManyBody<D3Node>().strength((n) => d3ChargeFor(n.nodeType)))
-                .force("link", linkForce as unknown as d3.Force<D3Node, D3Link>)
-                .force("center", d3.forceCenter(0, 0).strength(0.05))
-                .force("collision", d3.forceCollide<D3Node>().radius((n) => n.size + 3).strength(0.7))
-                .alphaDecay(0.01)
-                .alphaTarget(0.003)
-                .stop();
-
-            simRef.current = sim;
-
-            // After settle time, lower alphaTarget for micro-motion only
-            const settleMs = nodeCount < 200 ? 3000 : nodeCount < 1000 ? 5000 : nodeCount < 3000 ? 7000 : 5000;
-            layoutStopTimerRef.current = setTimeout(() => {
-                sim.alphaTarget(0.001);
-                layoutSettledRef.current = true;
-            }, settleMs);
-
-            // RAF loop: tick d3, pin dragged node, write positions to Graphology, refresh Sigma
-            const tick = () => {
-                sim.tick();
-                const pinId = draggedNodeRef.current;
-                const pinPos = dragMousePosRef.current;
-                sim.nodes().forEach((n) => {
-                    if (!g.hasNode(n.id)) return;
-                    if (n.id === pinId && pinPos) {
-                        n.fx = pinPos.x;
-                        n.fy = pinPos.y;
-                    }
-                    g.setNodeAttribute(n.id, "x", n.x ?? 0);
-                    g.setNodeAttribute(n.id, "y", n.y ?? 0);
-                });
-                s.refresh();
-                animFrameRef.current = requestAnimationFrame(tick);
-            };
-            animFrameRef.current = requestAnimationFrame(tick);
-        });
-    }, []);
-
-    // Update d3 sim forces in-place with only currently visible nodes/edges, then bump alpha.
-    // Preserves current positions and velocities — no teardown, no camera reset.
+    // Update worker simulation in-place with only currently visible nodes/edges.
+    // Velocities are preserved via id-keyed lookup inside the worker.
     const reheatSim = useCallback(() => {
-        const sim = simRef.current;
-        const graph = graphRef.current;
-        if (!sim || !graph) return;
+        const worker = simWorkerRef.current;
+        if (!worker) return;
+        const payload = buildSimPayload();
+        if (!payload) return;
 
-        const d3Nodes: D3Node[] = [];
-        const nodeMap = new Map<string, D3Node>();
-        graph.forEachNode((id, attrs) => {
-            if (attrs.hidden) return;
-            const existing = simNodesRef.current.get(id);
-            const node: D3Node = existing ?? {
-                id,
-                nodeType: attrs.nodeType as SimNode["type"],
-                size: attrs.size as number,
-                x: attrs.x as number,
-                y: attrs.y as number,
-            };
-            d3Nodes.push(node);
-            nodeMap.set(id, node);
+        const epoch = ++simEpochRef.current;
+        worker.postMessage({
+            type: "reheat",
+            epoch,
+            nodes: payload.nodes,
+            links: payload.links,
+            settleMs: reheatSettleMsForCount(payload.nodes.length),
         });
-        const d3Links: D3Link[] = [];
-        graph.forEachEdge((_id, attrs, src, tgt) => {
-            if (attrs.hidden) return;
-            const source = nodeMap.get(src);
-            const target = nodeMap.get(tgt);
-            if (source && target) {
-                d3Links.push({ source, target, edgeType: attrs.edgeType as string });
-            }
-        });
-        simNodesRef.current = nodeMap;
-
-        import("d3-force").then((d3) => {
-            const s = simRef.current;
-            if (!s) return;
-            const linkForce = d3.forceLink<D3Node, D3Link>(d3Links)
-                .id((n) => n.id)
-                .distance((l) => d3LinkDistance((l as D3Link).edgeType))
-                .strength(0.4);
-            s.nodes(d3Nodes);
-            s.force("charge", d3.forceManyBody<D3Node>().strength((n) => d3ChargeFor(n.nodeType)));
-            s.force("link", linkForce as unknown as d3.Force<D3Node, D3Link>);
-            s.force("collision", d3.forceCollide<D3Node>().radius((n) => n.size + 3).strength(0.7));
-            // Bump alpha so RAF tick produces movement; no restart of d3's internal timer
-            s.alpha(Math.max(s.alpha(), 0.2)).alphaTarget(0.003);
-            if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
-            layoutSettledRef.current = false;
-            const nodeCount = d3Nodes.length;
-            const settleMs = nodeCount < 200 ? 2000 : nodeCount < 1000 ? 4000 : 5000;
-            layoutStopTimerRef.current = setTimeout(() => {
-                s.alphaTarget(0.001);
-                layoutSettledRef.current = true;
-            }, settleMs);
-        });
-    }, []);
+    }, [buildSimPayload]);
 
     const expandParentFolders = useCallback((path: string) => {
         const parts = path.split("/");
@@ -1832,6 +1816,31 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         sigma.refresh();
     }, [restoreColors]);
 
+    // Server-computed FA2 seed layout — primes initial node positions so the worker
+    // converges in fewer ticks. Non-fatal: ring fallback in syncGraphData covers a miss.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        let cancelled = false;
+        seedPositionsRef.current = null;
+        const token = (() => {
+            try { return localStorage.getItem("gitviz_github_pat"); } catch { return null; }
+        })();
+        const headers: Record<string, string> = {};
+        if (token) headers["x-github-token"] = token;
+        fetch(`/api/graph/seed?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`, { headers })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data: { positions?: Record<string, [number, number]> } | null) => {
+                if (cancelled || !data?.positions) return;
+                const map = new Map<string, [number, number]>();
+                for (const [id, xy] of Object.entries(data.positions)) {
+                    if (Array.isArray(xy) && xy.length === 2) map.set(id, [xy[0], xy[1]]);
+                }
+                seedPositionsRef.current = map.size > 0 ? map : null;
+            })
+            .catch(() => { /* silent — ring seed remains the fallback */ });
+        return () => { cancelled = true; };
+    }, [owner, repo]);
+
     // Effect 1 — create Sigma instance once. Runs only on mount.
     // Event handlers are wired here; restoreColors/applyHoverEffect are stable callbacks ([] deps).
     useEffect(() => {
@@ -1852,7 +1861,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 const { nodeList, pathToId } = syncGraphData(
                     graph,
                     elems.nodes as Array<{ data: Record<string, unknown> }>,
-                    elems.edges as Array<{ data: Record<string, unknown> }>
+                    elems.edges as Array<{ data: Record<string, unknown> }>,
+                    seedPositionsRef.current,
                 );
                 visibleNodesRef.current = nodeList;
                 pathToIdRef.current = pathToId;
@@ -1875,6 +1885,57 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 zIndex: true,
             });
             sigmaRef.current = sigma;
+
+            // Spawn the physics worker. All d3-force ticks now run off-thread —
+            // main thread only writes positions back into Graphology and refreshes Sigma.
+            const worker = new Worker(
+                new URL("../../workers/file-tree-sim.worker.ts", import.meta.url),
+            );
+            simWorkerRef.current = worker;
+            layoutSettledRef.current = false;
+
+            const flushPending = () => {
+                refreshFrameRef.current = null;
+                const pending = pendingTickRef.current;
+                pendingTickRef.current = null;
+                if (!pending) return;
+                const g = graphRef.current;
+                const s = sigmaRef.current;
+                if (!g || !s) return;
+                const ids = simIdsByEpochRef.current.get(pending.epoch);
+                if (!ids) return;
+                const draggedId = draggedNodeRef.current;
+                for (let i = 0; i < ids.length; i++) {
+                    const id = ids[i];
+                    if (id === draggedId) continue;
+                    if (!g.hasNode(id)) continue;
+                    g.setNodeAttribute(id, "x", pending.positions[i * 2]);
+                    g.setNodeAttribute(id, "y", pending.positions[i * 2 + 1]);
+                }
+                s.refresh();
+            };
+
+            worker.onmessage = (e: MessageEvent) => {
+                const msg = e.data as
+                    | { type: "ready"; epoch: number; ids: string[] }
+                    | { type: "tick"; epoch: number; positions: Float32Array }
+                    | { type: "settled"; epoch: number };
+                if (msg.type === "ready") {
+                    simIdsByEpochRef.current.clear();
+                    simIdsByEpochRef.current.set(msg.epoch, msg.ids);
+                    layoutSettledRef.current = false;
+                } else if (msg.type === "tick") {
+                    if (msg.epoch !== simEpochRef.current) return;
+                    pendingTickRef.current = msg;
+                    if (refreshFrameRef.current === null) {
+                        refreshFrameRef.current = requestAnimationFrame(flushPending);
+                    }
+                } else if (msg.type === "settled") {
+                    if (msg.epoch === simEpochRef.current) {
+                        layoutSettledRef.current = true;
+                    }
+                }
+            };
 
             if (savedCameraRef.current) {
                 sigma.getCamera().setState(savedCameraRef.current);
@@ -1924,28 +1985,28 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             });
             sigma.on("clickStage", () => {
                 lockedNodeIdRef.current = null;
-                restoreColors();
+                clearBlastRadiusRef.current();
             });
 
-            // Live physics drag using d3 fx/fy pinning — true Obsidian-style.
+            // Live physics drag — pin the node in the worker via dragStart/dragMove/dragEnd.
             const camera = sigma.getCamera();
             sigma.on("downNode", ({ node }) => {
                 draggedNodeRef.current = node;
-                const simNode = simNodesRef.current.get(node);
-                if (simNode) {
-                    dragMousePosRef.current = { x: simNode.x ?? 0, y: simNode.y ?? 0 };
-                }
                 graph.setNodeAttribute(node, "highlighted", true);
                 camera.disable();
-                // Reheat simulation so neighbours react visibly
-                const sim = simRef.current;
-                if (sim) sim.alpha(Math.max(sim.alpha(), 0.3)).alphaTarget(0.3);
+                simWorkerRef.current?.postMessage({ type: "dragStart", id: node });
             });
             const captor = sigma.getMouseCaptor();
             const onBodyMove = (e: { x: number; y: number; preventSigmaDefault: () => void; original: Event }) => {
-                if (!draggedNodeRef.current) return;
-                dragMousePosRef.current = sigma.viewportToGraph({ x: e.x, y: e.y });
-                // RAF tick handles fx/fy pin + sigma.refresh() — no manual call needed
+                const node = draggedNodeRef.current;
+                if (!node) return;
+                const pos = sigma.viewportToGraph({ x: e.x, y: e.y });
+                // Apply pin locally so the dragged node tracks the cursor at 60fps without a worker round-trip.
+                if (graph.hasNode(node)) {
+                    graph.setNodeAttribute(node, "x", pos.x);
+                    graph.setNodeAttribute(node, "y", pos.y);
+                }
+                simWorkerRef.current?.postMessage({ type: "dragMove", id: node, x: pos.x, y: pos.y });
                 e.preventSigmaDefault();
                 e.original.preventDefault();
                 e.original.stopPropagation();
@@ -1953,16 +2014,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             const endDrag = () => {
                 const node = draggedNodeRef.current;
                 if (!node) return;
-                // Release d3 pin
-                const simNode = simNodesRef.current.get(node);
-                if (simNode) { simNode.fx = undefined; simNode.fy = undefined; }
-                graph.removeNodeAttribute(node, "highlighted");
+                if (graph.hasNode(node)) graph.removeNodeAttribute(node, "highlighted");
                 draggedNodeRef.current = null;
-                dragMousePosRef.current = null;
                 camera.enable();
-                // Cool down to micro-motion target
-                const sim = simRef.current;
-                if (sim) sim.alphaTarget(layoutSettledRef.current ? 0.001 : 0.003);
+                simWorkerRef.current?.postMessage({ type: "dragEnd", id: node });
             };
             captor.on("mousemovebody", onBodyMove);
             captor.on("mouseup", endDrag);
@@ -1973,16 +2028,18 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             cancelled = true;
             savedCameraRef.current = sigmaRef.current?.getCamera().getState() ?? null;
             draggedNodeRef.current = null;
-            dragMousePosRef.current = null;
-            if (animFrameRef.current !== null) {
-                cancelAnimationFrame(animFrameRef.current);
-                animFrameRef.current = null;
+            if (refreshFrameRef.current !== null) {
+                cancelAnimationFrame(refreshFrameRef.current);
+                refreshFrameRef.current = null;
             }
-            if (layoutStopTimerRef.current) clearTimeout(layoutStopTimerRef.current);
-            layoutStopTimerRef.current = null;
-            simRef.current?.stop();
-            simRef.current = null;
-            simNodesRef.current.clear();
+            pendingTickRef.current = null;
+            const w = simWorkerRef.current;
+            if (w) {
+                w.postMessage({ type: "stop" });
+                w.terminate();
+            }
+            simWorkerRef.current = null;
+            simIdsByEpochRef.current.clear();
             try { sigmaRef.current?.kill(); } catch { /* noop */ }
             sigmaRef.current = null;
             graphRef.current = null;
@@ -2003,33 +2060,57 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         const { nodeList, pathToId } = syncGraphData(
             graph,
             elements.nodes as Array<{ data: Record<string, unknown> }>,
-            elements.edges as Array<{ data: Record<string, unknown> }>
+            elements.edges as Array<{ data: Record<string, unknown> }>,
+            seedPositionsRef.current,
         );
         visibleNodesRef.current = nodeList;
         pathToIdRef.current = pathToId;
         lockedNodeIdRef.current = null;
+
+        // Compute normalized hub scores and tiers from raw hubScore on each file node
+        let maxRaw = 1;
+        graph.forEachNode((_id, attrs) => {
+            if (attrs.nodeType === "file") {
+                const raw = (attrs.hubScore as number) || 0;
+                if (raw > maxRaw) maxRaw = raw;
+            }
+        });
+        const hubList: Array<{ id: string; path: string; label: string; rawScore: number; normalizedScore: number; hubTier: string }> = [];
+        graph.forEachNode((id, attrs) => {
+            if (attrs.nodeType !== "file") return;
+            const raw = (attrs.hubScore as number) || 0;
+            const normalized = Math.round((raw / maxRaw) * 100);
+            const tier = normalized >= 80 ? "critical" : normalized >= 50 ? "high" : normalized >= 25 ? "medium" : "normal";
+            graph.setNodeAttribute(id, "normalizedHubScore", normalized);
+            graph.setNodeAttribute(id, "hubTier", tier);
+            if (raw > 0) {
+                hubList.push({ id, path: attrs.path as string, label: attrs.label as string, rawScore: raw, normalizedScore: normalized, hubTier: tier });
+            }
+        });
+        hubList.sort((a, b) => b.rawScore - a.rawScore);
+        setTopHubNodes(hubList.slice(0, 10));
 
         applyVisibility();
         sigma.refresh();
         restartLayout();
     }, [graphKey, elements, applyVisibility, restartLayout]);
 
-    // Tab visibility: pause simulation when tab is hidden, resume if not yet settled.
+    // Tab visibility: pause incoming-tick refreshes when hidden, resume the worker if not yet settled.
     useEffect(() => {
         const handler = () => {
             if (document.hidden) {
-                if (animFrameRef.current !== null) {
-                    cancelAnimationFrame(animFrameRef.current);
-                    animFrameRef.current = null;
+                if (refreshFrameRef.current !== null) {
+                    cancelAnimationFrame(refreshFrameRef.current);
+                    refreshFrameRef.current = null;
                 }
-                simRef.current?.stop();
+                pendingTickRef.current = null;
             } else if (!layoutSettledRef.current) {
-                restartLayout();
+                reheatSim();
             }
         };
         document.addEventListener("visibilitychange", handler);
         return () => document.removeEventListener("visibilitychange", handler);
-    }, [restartLayout]);
+    }, [reheatSim]);
 
     useEffect(() => {
         visibilityRef.current = {
@@ -2049,6 +2130,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         applyVisibility();
         reheatSim();
     }, [showRoot, showFolders, showFiles, showContainsEdges, showDefinesEdges, showImportsEdges, showCallsEdges, showExtendsEdges, showImplementsEdges, showFileImportEdges, symbolKindVisibility, applyVisibility, reheatSim]);
+
+    useEffect(() => {
+        applyHubColors(showCriticalFiles);
+    }, [showCriticalFiles, applyHubColors, graphKey]);
 
     const handleZoomIn = () => {
         sigmaRef.current?.getCamera().animatedZoom({ duration: 200 });
@@ -2199,6 +2284,42 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                 </Button>
                             </div>
                         </div>
+
+                        {(() => {
+                            const nodeId = selectedFile ? pathToIdRef.current.get(selectedFile.path) : null;
+                            const attrs = nodeId ? graphRef.current?.getNodeAttributes(nodeId) : null;
+                            const tier = attrs?.hubTier as string | undefined;
+                            if (!tier || tier === "normal") return null;
+                            return (
+                                <div className="border-b border-slate-800/80 px-3 py-2 flex items-center justify-between gap-2 shrink-0">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className={`text-[10px] font-mono font-semibold shrink-0 ${tier === "critical" ? "text-red-400" : tier === "high" ? "text-amber-400" : "text-slate-400"}`}>
+                                            {tier === "critical" ? "⚠ Critical" : tier === "high" ? "↑ High Impact" : "· Medium Impact"}
+                                        </span>
+                                        {blastRadiusActive && (
+                                            <span className="text-[10px] text-amber-300 truncate">
+                                                — affects {blastRadiusCount} file{blastRadiusCount !== 1 ? "s" : ""}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {blastRadiusActive ? (
+                                        <button
+                                            className="text-[10px] px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 shrink-0"
+                                            onClick={clearBlastRadius}
+                                        >
+                                            Clear
+                                        </button>
+                                    ) : (
+                                        <button
+                                            className="text-[10px] px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 shrink-0"
+                                            onClick={() => nodeId && applyBlastRadius(nodeId)}
+                                        >
+                                            💥 Blast radius
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })()}
 
                         <div className="flex-1 min-h-0 flex">
                             <div className="flex-1 min-w-0 border-r border-slate-800/80 overflow-x-auto" ref={codePanelRef}>
@@ -2361,6 +2482,44 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
 
                             <div>
+                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setShowCriticalFilesPanel((prev) => !prev)}>
+                                    <span>Critical Files</span>
+                                    {showCriticalFilesPanel ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                </button>
+                                {showCriticalFilesPanel && (
+                                    <div className="space-y-1.5 mt-1.5">
+                                        <button
+                                            className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCriticalFiles ? "bg-red-500/20 border-red-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
+                                            onClick={() => setShowCriticalFiles((prev) => !prev)}
+                                        >
+                                            <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
+                                            <span className="flex-1 text-left text-slate-200">Color by impact</span>
+                                        </button>
+                                        {topHubNodes.length === 0 ? (
+                                            <p className="text-[10px] text-slate-500 px-2">No import edges yet — enable File Imports below.</p>
+                                        ) : (
+                                            <>
+                                                <p className="text-[10px] text-slate-500 px-2">Most depended-on files</p>
+                                                {topHubNodes.map((node, i) => (
+                                                    <button
+                                                        key={node.id}
+                                                        className="w-full flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-800/60 text-left"
+                                                        onClick={() => focusNodeInGraph(node.path)}
+                                                    >
+                                                        <span className="text-[10px] text-slate-500 shrink-0 w-4">#{i + 1}</span>
+                                                        <span className="flex-1 min-w-0 truncate text-[10px] text-slate-200">{node.label}</span>
+                                                        <span className={`text-[10px] shrink-0 ${node.hubTier === "critical" ? "text-red-400" : node.hubTier === "high" ? "text-amber-400" : "text-slate-500"}`}>
+                                                            {node.rawScore}
+                                                        </span>
+                                                    </button>
+                                                ))}
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
                                 <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setNodeFiltersOpen((prev) => !prev)}>
                                     <span>Node Types</span>
                                     {nodeFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
@@ -2452,10 +2611,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 )}
 
-                {tree.length > 2000 && (
+                {totalFileCount > clusterInfo.files && (
                     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-950/70 backdrop-blur text-[11px] text-amber-200/90">
                         <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-amber-400" />
-                        Showing {Math.min(tree.length, 2000).toLocaleString()} of {tree.length.toLocaleString()} files — sorted by relevance
+                        Showing top {clusterInfo.files.toLocaleString()} of {totalFileCount.toLocaleString()} files (filtered by importance)
                     </div>
                 )}
 

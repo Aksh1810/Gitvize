@@ -380,3 +380,35 @@ export function buildGraphData(
 // --- Export for use in Mermaid and Sigma ---
 
 export { CLUSTER_COLORS, MODULE_TYPE_COLORS, getExtension, getFilename, getParentDir };
+
+// --- Smart filter for file-tree-graph (shared with /api/graph/seed) ---
+// IMPORTANT: this function must stay deterministic — the server-side seed route
+// uses the same scoring to compute layouts that the client matches by node ID.
+
+const PRIORITY_TOP_DIRS = new Set([
+    "src", "lib", "app", "components", "core", "api", "pkg", "cmd",
+    "internal", "server", "client", "ui", "pages", "routes", "services",
+]);
+const CODE_EXTS = new Set([
+    "ts", "tsx", "js", "jsx", "py", "go", "rs", "java",
+    "c", "cpp", "cs", "rb", "swift", "kt", "scala",
+]);
+
+export function selectImportantTreeItems(tree: TreeItem[], maxItems = 2000): TreeItem[] {
+    if (tree.length <= maxItems) return tree;
+    const scored = tree.map((item) => {
+        const parts = item.path.split("/");
+        const depth = parts.length;
+        const topDir = parts[0]?.toLowerCase() ?? "";
+        const ext = (item.path.split(".").pop() ?? "").toLowerCase();
+        let score = Math.max(0, 6 - depth) * 2;
+        if (PRIORITY_TOP_DIRS.has(topDir)) score += 10;
+        if (CODE_EXTS.has(ext)) score += 8;
+        const lower = item.path.toLowerCase();
+        if (lower.includes("test") || lower.includes("spec") || lower.includes("__test__")) score -= 5;
+        if (parts.some((p) => p.startsWith("."))) score -= 8;
+        return { item, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, maxItems).map((s) => s.item);
+}
