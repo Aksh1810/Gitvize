@@ -22,12 +22,13 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 
 - Auto-generated Mermaid flowcharts showing how files relate to each other
 - **Premium AI Diagramming**: uses `gemini-2.5-flash` to generate context-aware architectural diagrams
+- Smart mode (deterministic, no external AI call) with optional Premium mode for richer AI output
 - Files grouped into layers: App Routes, UI Components, Logic/Core, Config, Tests, Docs
 - Interactive Mermaid rendering with pan/zoom, draggable nodes, and export to PNG / Mermaid code
 
 ### Dependencies
 
-- Parses `package.json`, `requirements.txt`, `go.mod`, `Cargo.toml`, and more
+- Parses `package.json`, `requirements.txt`, `go.mod`, `Cargo.toml`, `pyproject.toml`
 - Solid lines = production dependencies, dotted lines = dev dependencies
 - Left-to-right Dagre layout with legend
 
@@ -54,7 +55,7 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 | Layer | Technology |
 |-------|-----------|
 | Framework | Next.js 16 (App Router, Turbopack) |
-| Language | TypeScript |
+| Languages | TypeScript + JavaScript + CSS |
 | Styling | Tailwind CSS v4 |
 | UI Components | Radix UI / shadcn/ui |
 | Animations | Framer Motion |
@@ -63,8 +64,9 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 | Charts | Recharts |
 | Syntax Highlighting | Prism.js |
 | Icons | Lucide React |
-| Data Source | GitHub REST API + local git clone (simple-git) |
-| AI | Gemini API (key pool, smart/premium modes) |
+| Data Source | GitHub REST API (SSE streaming + 5-min cache) |
+| Optional Infra | Upstash Redis cache/rate limit, Postgres + Drizzle |
+| AI | Smart mode (deterministic) + Gemini/OpenAI/Anthropic premium mode |
 
 ## Getting Started
 
@@ -79,7 +81,7 @@ npm run lint      # ESLint
 
 1. Paste any GitHub repository URL — e.g. `https://github.com/facebook/react`
 2. Gitvize fetches the file tree, branches, commits, contributors, and dependencies
-3. Switch between tabs: **File Tree**, **Architecture**, **Branches**, **Dependencies**, **Contributors**, **Knowledge Graph**
+3. Switch between tabs: **File Tree**, **Architecture**, **Contributors**, **Branches**, **Dependencies**
 4. In the File Tree tab, use the filter panel to enable symbol types and code edges on demand
 5. For AI features: enter your Gemini API key in Settings to unlock Premium Diagrams
 
@@ -98,19 +100,24 @@ src/
 │       ├── github/repo/             # GitHub data fetching
 │       │   ├── route.ts             # Main data endpoint
 │       │   ├── access/route.ts      # Pre-flight accessibility check
-│       │   ├── stream/route.ts      # SSE clone-first streaming
+│       │   ├── stream/route.ts      # SSE GitHub API streaming endpoint
 │       │   ├── commits/route.ts     # Paginated commit history
-│       │   └── file/route.ts        # Serve file content from local clone
+│       │   ├── file/route.ts        # Fetch single file content
+│       │   └── files/route.ts       # Batched file content fetch
+│       ├── graph/seed/route.ts      # Precomputed layout seed positions
 │       └── analyze/route.ts         # AI analysis endpoint
 ├── components/
 │   ├── charts/                      # Recharts-based commit heatmap, language donut
 │   ├── diagrams/                    # All graph/diagram components
 │   │   └── nodes/                   # Custom React Flow node types
 │   └── ui/                          # Reusable UI (shadcn/ui)
+├── db/
+│   ├── index.ts                     # Optional Drizzle/Postgres connection
+│   └── schema.ts                    # Database schema
 ├── lib/
 │   ├── github.ts                    # ghFetch, fetchAllRepoData, checkRepoAccess
-│   ├── local-git.ts                 # Server-side git clone + data extraction
-│   ├── ai.ts                        # Gemini key pool, getMockAnalysis, runAIPipeline
+│   ├── local-git.ts                 # Local git adapter utilities
+│   ├── ai.ts                        # Gemini key pool, getMockAnalysis, analyzeRepository
 │   ├── symbol-parser.ts             # Symbol extraction + multi-language import parsing
 │   ├── dep-parser.ts                # Dependency manifest parser
 │   ├── graph-builder.ts             # KnowledgeGraph node/edge builder
@@ -125,6 +132,18 @@ src/
 │   └── utils.ts                     # cn() class merger
 └── types/index.ts                   # All shared TypeScript types
 ```
+
+## Environment Variables
+
+Core:
+
+- `GITHUB_TOKEN` or `GITHUB_TOKENS` (comma-separated) for higher GitHub API limits
+- `GEMINI_API_KEY` / `GEMINI_API_KEYS` or generic `AI_API_KEY` (+ optional `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL`) for premium AI mode
+
+Optional:
+
+- `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` for distributed cache/rate limiting
+- `DATABASE_URL` for Postgres/Drizzle integration
 
 ## License
 
