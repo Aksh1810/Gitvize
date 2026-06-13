@@ -50,32 +50,6 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 - Language donut chart (Recharts), tech stack detection
 - Contributor avatars, star/fork counts, repo metadata
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Framework | Next.js 16 (App Router, Turbopack) |
-| Languages | TypeScript + JavaScript + CSS |
-| Styling | Tailwind CSS v4 |
-| UI Components | Radix UI / shadcn/ui |
-| Animations | Framer Motion |
-| File Tree Graph | Graphology + Sigma.js + d3-force (RAF loop) |
-| Architecture Diagrams | Mermaid.js |
-| Charts | Recharts |
-| Syntax Highlighting | Prism.js |
-| Icons | Lucide React |
-| Data Source | GitHub REST API (SSE streaming + 5-min cache) |
-| Optional Infra | Upstash Redis cache/rate limit, Postgres + Drizzle |
-| AI | Smart mode (deterministic) + Gemini/OpenAI/Anthropic premium mode |
-
-## Getting Started
-
-```bash
-npm install
-npm run dev       # dev server with Turbopack
-npm run build     # production build
-npm run lint      # ESLint
-```
 
 ### Usage
 
@@ -133,17 +107,6 @@ src/
 └── types/index.ts                   # All shared TypeScript types
 ```
 
-## Environment Variables
-
-Core:
-
-- `GITHUB_TOKEN` or `GITHUB_TOKENS` (comma-separated) for higher GitHub API limits
-- `GEMINI_API_KEY` / `GEMINI_API_KEYS` or generic `AI_API_KEY` (+ optional `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL`) for premium AI mode
-
-Optional:
-
-- `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` for distributed cache/rate limiting
-- `DATABASE_URL` for Postgres/Drizzle integration
 
 ## License
 
