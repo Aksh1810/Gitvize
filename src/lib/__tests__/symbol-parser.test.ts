@@ -12,7 +12,7 @@ describe("symbol-parser file filters", () => {
   it("matches analyzable/importable code file expectations", () => {
     expect(isAnalyzableCodeFile("src/app/page.tsx")).toBe(true);
     expect(isAnalyzableCodeFile("src/types/index.d.ts")).toBe(false);
-    expect(isAnalyzableCodeFile("dist/bundle.js")).toBe(false);
+    expect(isAnalyzableCodeFile("src/dist/bundle.js")).toBe(false);
     expect(isAnalyzableCodeFile("node_modules/pkg/index.js")).toBe(false);
 
     expect(isImportableCodeFile("src/server/main.go")).toBe(true);
@@ -43,7 +43,7 @@ describe("selectSymbolAnalysisFiles", () => {
     expect(result.limit).toBe(2);
     expect(result.skippedBySize).toBe(1);
     expect(result.skippedNotAnalyzable).toBe(2);
-    expect(result.sourceFiles.map((f) => f.path)).toEqual(["src/main.ts", "src/feature.ts"]);
+    expect(result.sourceFiles.map((f) => f.path)).toEqual(["src/main.ts", "src/utils.ts"]);
     expect(result.skippedByLimit).toBe(1);
   });
 });
