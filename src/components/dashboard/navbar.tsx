@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import {
     Download,
     Share2,
-    Star,
+    ExternalLink,
     Sparkles,
     KeyRound,
 } from "lucide-react";
@@ -35,6 +35,8 @@ export default function Navbar({
             toast.success("Link copied to clipboard!", {
                 description: url,
             });
+        }).catch(() => {
+            toast.error("Could not copy the link. Copy it from your address bar instead.");
         });
     };
 
@@ -57,79 +59,57 @@ export default function Navbar({
                     </div>
                 </Link>
 
-                {/* Breadcrumb */}
-                <div className="hidden md:flex items-center gap-2 ui-body">
-                    <a
-                        href={`https://github.com/${owner}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1 rounded-full border border-white/14 bg-white/[0.03] text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                        {owner}
-                    </a>
-                    <span className="text-muted-foreground/50">/</span>
+                <div className="hidden md:flex items-center ui-body">
                     <a
                         href={`https://github.com/${owner}/${repo}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-3 py-1 rounded-full border border-indigo-400/30 bg-indigo-500/10 text-white font-semibold tracking-tight hover:bg-indigo-500/20 transition-colors"
+                        className="inline-flex items-center gap-1.5 text-slate-300 hover:text-white pro-focus-ring rounded px-2 py-1"
                     >
-                        {repo}
+                        View on GitHub <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
-                    <a
-                        href={`https://github.com/Aksh1810/gitvize`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title="Star this repo on GitHub"
-                    >
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="pro-control pro-focus-ring ui-micro"
-                        >
-                            <Star className="w-4 h-4 mr-1.5 text-amber-200" />
-                            <span className="hidden sm:inline">Star</span>
-                        </Button>
-                    </a>
-
                     <Button
                         variant="ghost"
                         size="sm"
                         onClick={onGithubToken}
+                        aria-label="GitHub token"
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <KeyRound className="w-4 h-4 mr-1.5 text-emerald-300" />
-                        <span className="hidden sm:inline">Token</span>
+                        <span className="hidden sm:inline">GitHub token</span>
                     </Button>
 
                     <Button
                         variant="ghost"
                         size="sm"
                         onClick={onAISettings}
+                        aria-label="AI settings"
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
-                        <span className="hidden sm:inline">AI</span>
+                        <span className="hidden sm:inline">AI settings</span>
                     </Button>
 
                     <Button
                         variant="ghost"
                         size="sm"
                         onClick={onExport}
+                        aria-label="Export repository data"
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <Download className="w-4 h-4 mr-1.5 text-white/80" />
-                        <span className="hidden sm:inline">Export</span>
+                        <span className="hidden sm:inline">Export data</span>
                     </Button>
 
                     <Button
                         variant="ghost"
                         size="sm"
                         onClick={handleShare}
+                        aria-label="Copy share link"
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <Share2 className="w-4 h-4 mr-1.5 text-white/80" />

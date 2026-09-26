@@ -2,8 +2,6 @@
 
 import { DiagramTab } from "@/types";
 import { DIAGRAM_TABS } from "@/lib/constants";
-import { motion } from "framer-motion";
-import { transitions } from "@/lib/motion";
 import {
     Boxes,
     Network,
@@ -30,35 +28,30 @@ interface TabNavProps {
 
 export default function TabNav({ activeTab, onTabChange, rightAction }: TabNavProps) {
     return (
-        <div className="flex items-center justify-between gap-3 px-4 py-3 overflow-x-auto border-b border-white/10 bg-[#0b111f]/45">
-            <div className="tab-track surface-neo-soft flex items-center gap-1 p-1">
+        <div className="flex items-center justify-between gap-3 px-4 py-2 overflow-x-auto border-b border-white/10 bg-[#0b111f]/80">
+            <nav aria-label="Repository views" className="flex items-center gap-1 min-w-max">
                 {DIAGRAM_TABS.map((tab) => {
                     const isActive = activeTab === tab.id;
                     return (
                         <button
                             key={tab.id}
+                            type="button"
                             onClick={() => onTabChange(tab.id)}
-                            className={`relative flex items-center gap-2 px-4 py-2 ui-body font-medium rounded-lg pro-focus-ring transition-colors ${
+                            aria-current={isActive ? "page" : undefined}
+                            className={`relative flex items-center gap-2 px-3 py-2 ui-body font-medium rounded-md pro-focus-ring transition-colors ${
                                 isActive
-                                    ? "text-white"
-                                    : "text-white/70 hover:text-white hover:bg-white/5"
+                                    ? "bg-sky-300/12 text-sky-100 ring-1 ring-sky-300/35"
+                                    : "text-white/65 hover:text-white hover:bg-white/5"
                             }`}
                         >
-                            {isActive && (
-                                <motion.span
-                                    layoutId="tab-pill"
-                                    className="tab-pill pro-pill-active"
-                                    transition={transitions.spring}
-                                />
-                            )}
                             <span className="relative z-10 flex items-center gap-2">
                                 {iconMap[tab.icon]}
-                                <span className="hidden sm:inline">{tab.label}</span>
+                                <span>{tab.label}</span>
                             </span>
                         </button>
                     );
                 })}
-            </div>
+            </nav>
             {rightAction}
         </div>
     );

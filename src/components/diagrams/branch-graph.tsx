@@ -212,6 +212,8 @@ export default function BranchGraph({
                 </div>
                 <div className="flex items-center gap-1 bg-secondary/30 rounded-lg p-0.5 border border-border/20">
                     <button
+                        type="button"
+                        aria-pressed={view === "timeline"}
                         onClick={() => setView("timeline")}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "timeline"
                             ? "bg-white/8 text-slate-200 border border-white/15"
@@ -222,6 +224,8 @@ export default function BranchGraph({
                         Commits
                     </button>
                     <button
+                        type="button"
+                        aria-pressed={view === "history"}
                         onClick={() => setView("history")}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "history"
                             ? "bg-white/8 text-slate-200 border border-white/15"
@@ -433,6 +437,7 @@ export default function BranchGraph({
                                     <div className="relative flex items-center">
                                         <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
                                         <select
+                                            aria-label="Sort commits"
                                             value={sortBy}
                                             onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "author")}
                                             className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-slate-400/40 focus:outline-none focus:ring-1 focus:ring-slate-400/15 transition-colors appearance-none cursor-pointer text-foreground"
@@ -448,12 +453,14 @@ export default function BranchGraph({
                                         <input
                                             type="text"
                                             placeholder="Search commits..."
+                                            aria-label="Search commits"
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
                                             className="h-8 w-[200px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-slate-400/40 focus:outline-none focus:ring-1 focus:ring-slate-400/15 transition-colors"
                                         />
                                         {searchQuery && (
                                             <button
+                                                aria-label="Clear commit search"
                                                 onClick={() => setSearchQuery("")}
                                                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                             >
@@ -489,11 +496,13 @@ export default function BranchGraph({
 
                                             <div className="space-y-1 ml-10">
                                                 {dayCommits.map((commit) => (
-                                                    <motion.div
+                                                    <motion.button
                                                         key={commit.sha}
+                                                        type="button"
+                                                        aria-expanded={selectedCommit?.sha === commit.sha}
                                                         initial={{ opacity: 0, x: -8 }}
                                                         animate={{ opacity: 1, x: 0 }}
-                                                        className={`group relative flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${selectedCommit?.sha === commit.sha
+                                                        className={`group relative flex w-full text-left items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 ${selectedCommit?.sha === commit.sha
                                                             ? "bg-white/6 border border-white/15"
                                                             : "hover:bg-secondary/30 border border-transparent"
                                                             }`}
@@ -569,7 +578,7 @@ export default function BranchGraph({
                                                         <code className="text-[10px] text-slate-400/70 bg-white/5 px-1.5 py-0.5 rounded font-mono shrink-0 mt-1">
                                                             {commit.shortSha}
                                                         </code>
-                                                    </motion.div>
+                                                    </motion.button>
                                                 ))}
                                             </div>
                                         </div>

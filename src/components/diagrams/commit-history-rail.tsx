@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { GitCommit, GitMerge, GitBranch, ChevronDown } from "lucide-react";
+import { GitMerge, GitBranch, ChevronDown } from "lucide-react";
 import type { Branch, Commit } from "@/types";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ function laneColor(colorIndex: number): string {
 }
 
 const MAX_LANES = 8;
-const ROW_HEIGHT = 44;
+const ROW_HEIGHT = 60;
 const LANE_SPACING = 24;
 const LANE_START_X = 32;
 const DOT_R = 5.5;
@@ -128,7 +128,7 @@ export default function CommitHistoryRail({
             sortedCommits: sorted.slice(0, 500),
             clipped: sorted.length > 500,
         };
-    }, [commits]);
+    }, [commits, reachableShas]);
 
     // ── Step 2: Build branch HEAD lookups ────────────────────────────────────
     // branchHeadToName: sha → first branch name (used during lane label assignment)
@@ -397,8 +397,8 @@ export default function CommitHistoryRail({
                 </div>
             )}
 
-            {/* Scrollable graph + commit list */}
-            <div className="max-h-[560px] overflow-auto custom-scrollbar rounded-xl border border-border/20 bg-[#070b15]/70">
+            {/* Graph and commit list scroll with the page */}
+            <div className="rounded-xl border border-border/20 bg-[#070b15]/70">
                 <div className="relative" style={{ minHeight: totalHeight }}>
 
                     {/* ── Single SVG canvas spanning the full commit list ── */}
@@ -426,7 +426,7 @@ export default function CommitHistoryRail({
                         </defs>
 
                         {/* ── DAG edges ── */}
-                        {edges.map((edge, i) => {
+                        {edges.map((edge) => {
                             const childX  = laneXs[edge.fromLane] ?? laneXs[0];
                             const parentX = laneXs[edge.toLane]   ?? laneXs[0];
                             const childY  = edge.fromRow * ROW_HEIGHT + midY;
@@ -517,45 +517,19 @@ export default function CommitHistoryRail({
                             <div style={{ width: svgWidth }} className="shrink-0" />
 
                             {/* Commit info */}
-                            <div className="min-w-0 flex-1 flex items-center gap-2 px-3">
-                                <span className="text-[10px] text-muted-foreground/70 w-[48px] shrink-0">
-                                    {formatDateLabel(item.commit.date)}
-                                </span>
-                                {item.isMerge ? (
-                                    <GitMerge className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                                ) : (
-                                    <GitCommit className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
-                                )}
-                                <p
-                                    className="text-xs text-foreground/90 truncate flex-1"
-                                    title={item.commit.message}
-                                >
+                            <div className="min-w-0 flex-1 flex flex-col justify-center gap-1 px-3">
+                                <p className="text-sm text-foreground/90 truncate" title={item.commit.message}>
                                     {item.commit.message}
                                 </p>
-                                <span className="text-[10px] text-muted-foreground/70 max-w-[120px] truncate hidden sm:inline">
-                                    {item.commit.authorName}
-                                </span>
-                                {branchHeadToNames.get(item.commit.sha)?.map((bName) => {
-                                    const color = branchNameToColor.get(bName) ?? "#64748b";
-                                    return (
-                                        <span
-                                            key={bName}
-                                            className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-medium"
-                                            style={{
-                                                border: `1px solid ${color}55`,
-                                                color,
-                                                background: `${color}18`,
-                                            }}
-                                        >
-                                            <GitBranch className="w-2.5 h-2.5" />
-                                            <span className="max-w-[100px] truncate">{bName}</span>
-                                        </span>
-                                    );
-                                })}
-                                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-white/15 bg-white/5 text-slate-300 shrink-0 font-mono">
-                                    <GitBranch className="w-2.5 h-2.5" />
-                                    {item.commit.shortSha}
-                                </span>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
+                                    <span className="truncate">{item.commit.authorName}</span>
+                                    <span aria-hidden="true">·</span>
+                                    <time dateTime={item.commit.date} className="shrink-0">{formatDateLabel(item.commit.date)}</time>
+                                    {branchHeadToNames.get(item.commit.sha)?.map((bName) => (
+                                        <span key={bName} className="hidden sm:inline truncate max-w-28" style={{ color: branchNameToColor.get(bName) }}>{bName}</span>
+                                    ))}
+                                    <code className="ml-auto shrink-0 text-slate-400">{item.commit.shortSha}</code>
+                                </div>
                             </div>
                         </div>
                     ))}

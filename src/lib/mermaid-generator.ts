@@ -142,11 +142,9 @@ function scorePathForArchitecture(path: string): number {
 
 function computeAdaptiveMaxFiles(tree: TreeItem[]): number {
     const blobCount = tree.filter((t) => t.type === "blob").length;
-    if (blobCount <= 80) return 28;
-    if (blobCount <= 200) return 36;
-    if (blobCount <= 500) return 46;
-    if (blobCount <= 1200) return 56;
-    return 64;
+    if (blobCount <= 80) return 20;
+    if (blobCount <= 500) return 24;
+    return 28;
 }
 
 /* ------------------------------------------------------------------ */
@@ -459,12 +457,53 @@ export function generateArchitectureMermaid(
     analysis: ArchitectureAnalysis | null,
     tree: TreeItem[],
     owner: string,
-    repo: string
+    repo: string,
+    defaultBranch: string = "main"
 ): string {
-    // If AI already produced Mermaid code, use it directly
-    if (analysis?.mermaidDiagram) {
-        return analysis.mermaidDiagram;
+    const diagram = analysis?.mermaidDiagram || generateMermaidFromTree(tree, owner, repo);
+    return diagram.replaceAll(
+        `https://github.com/${owner}/${repo}/blob/main/`,
+        `https://github.com/${owner}/${repo}/blob/${encodeURIComponent(defaultBranch)}/`
+    );
+}
+
+/** A small entry view; the file-level Mermaid diagram remains available on demand. */
+export function generateArchitectureOverview(tree: TreeItem[]): string {
+    const names: Record<ArchLayer, string> = {
+        app: "App routes", ui: "UI components", logic: "Core logic",
+        test: "Tests", config: "Tooling", docs: "Docs", other: "Other",
+    };
+    const counts = new Map<ArchLayer, number>();
+    for (const item of tree) {
+        if (item.type !== "blob") continue;
+        const layer = classifyFile(item.path).layer;
+        counts.set(layer, (counts.get(layer) ?? 0) + 1);
     }
-    // Otherwise generate from tree
-    return generateMermaidFromTree(tree, owner, repo);
+
+    const selected = selectImportantFiles(tree, computeAdaptiveMaxFiles(tree));
+    const files: ClassifiedFile[] = selected.map((item) => {
+        const name = item.path.split("/").pop() ?? item.path;
+        const layer = classifyFile(item.path).layer;
+        return { path: item.path, name, baseName: name.replace(/\.\w+$/, ""), ext: name.split(".").pop() ?? "", dir: item.path.split("/").slice(0, -1).join("/"), layer, mermaidClass: LAYER_META[layer].mermaidClass, label: name };
+    });
+    const layerById = new Map(files.map((file) => [safeId(file.path), file.layer]));
+    const connections = new Set<string>();
+    for (const edge of inferEdges(files)) {
+        const from = layerById.get(edge.fromId);
+        const to = layerById.get(edge.toId);
+        if (from && to && from !== to) connections.add(`${from} --> ${to}`);
+    }
+
+    const lines = ["flowchart LR"];
+    for (const layer of ["app", "ui", "logic", "test", "config", "docs", "other"] as ArchLayer[]) {
+        const count = counts.get(layer);
+        if (count) lines.push(`  ${layer}["${names[layer]} · ${count} files"]:::${LAYER_META[layer].mermaidClass}`);
+    }
+    lines.push(...Array.from(connections).slice(0, 8).map((edge) => `  ${edge}`));
+    lines.push("  classDef ui fill:#0b3a6a,stroke:#93c5fd,color:#eff6ff,font-size:18px");
+    lines.push("  classDef core fill:#14532d,stroke:#86efac,color:#ecfdf5,font-size:18px");
+    lines.push("  classDef platform fill:#334155,stroke:#cbd5e1,color:#f1f5f9,font-size:18px");
+    lines.push("  classDef test fill:#3f3f46,stroke:#a1a1aa,color:#fafafa,font-size:18px");
+    lines.push("  classDef doc fill:#1f2937,stroke:#fbbf24,color:#fffbeb,font-size:18px");
+    return lines.join("\n");
 }

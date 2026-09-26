@@ -6,6 +6,7 @@ import Graph from "graphology";
 import type Sigma from "sigma";
 import { List, type RowComponentProps } from "react-window";
 import { getFileColor } from "@/lib/file-icons";
+import { searchFiles } from "@/lib/search-engine";
 import {
     settleMsForCount,
     reheatSettleMsForCount,
@@ -375,6 +376,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     } | null>(null);
     const [selectedFile, setSelectedFile] = useState<FileNodeData | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [searchOpen, setSearchOpen] = useState(false);
+    const searchResults = useMemo(() => searchFiles(searchQuery.trim(), tree, 8), [searchQuery, tree]);
     const [fileContent, setFileContent] = useState<string | null>(null);
     const [fileLoading, setFileLoading] = useState(false);
     const [fileError, setFileError] = useState<string | null>(null);
@@ -411,10 +414,13 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [explorerWidth, setExplorerWidth] = useState(220);
     const [explorerViewportHeight, setExplorerViewportHeight] = useState(560);
     const [showRightFilters, setShowRightFilters] = useState(false);
-    const [showSearch, setShowSearch] = useState(false);
+
+    useEffect(() => {
+        if (window.innerWidth < 768) setShowExplorer(false);
+    }, []);
     const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
-    const [symbolFiltersOpen, setSymbolFiltersOpen] = useState(true);
-    const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(true);
+    const [symbolFiltersOpen, setSymbolFiltersOpen] = useState(false);
+    const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(false);
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set([""]));
     const [treeFocusPath, setTreeFocusPath] = useState<string>("");
     const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
@@ -1816,6 +1822,20 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         sigma.refresh();
     }, [restoreColors]);
 
+    const resetFilters = () => {
+        setShowRoot(true);
+        setShowFolders(true);
+        setShowFiles(true);
+        setShowContainsEdges(true);
+        setShowDefinesEdges(false);
+        setShowImportsEdges(false);
+        setShowCallsEdges(false);
+        setShowExtendsEdges(false);
+        setShowImplementsEdges(false);
+        setShowFileImportEdges(false);
+        setSymbolKindVisibility({ class: false, function: false, interface: false, type: false, method: false, variable: false });
+    };
+
     // Server-computed FA2 seed layout — primes initial node positions so the worker
     // converges in fewer ticks. Non-fatal: ring fallback in syncGraphData covers a miss.
     useEffect(() => {
@@ -1937,9 +1957,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 }
             };
 
-            if (savedCameraRef.current) {
-                sigma.getCamera().setState(savedCameraRef.current);
-            }
+            if (savedCameraRef.current) sigma.getCamera().setState(savedCameraRef.current);
 
             restartLayout();
 
@@ -2147,7 +2165,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
 
     return (
-        <div className="relative w-full h-full flex bg-black diagram-grid" style={{ background: '#000000ff' }}>
+        <div className="relative w-full h-full flex bg-[#080d18] diagram-grid">
             <div
                 id="file-explorer-panel"
                 className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200 ease-in-out"
@@ -2245,7 +2263,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     className="absolute left-full top-0 h-full z-40 overflow-hidden"
                     initial={false}
                     animate={{
-                        width: showExplorerInspector ? inspectorWidth : 0,
+                        width: showExplorerInspector ? Math.min(inspectorWidth, typeof window === "undefined" ? inspectorWidth : window.innerWidth - 24) : 0,
                         opacity: showExplorerInspector ? 1 : 0,
                     }}
                     transition={{
@@ -2359,7 +2377,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             </div>
 
             <div className="relative flex-1 h-full">
-                <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
+                <div className="absolute top-3 left-3 right-3 z-20 flex flex-wrap items-start gap-2 pointer-events-none [&>*]:pointer-events-auto">
                     {!showExplorer && (
                         <button
                             onClick={() => startTransition(() => setShowExplorer(true))}
@@ -2370,42 +2388,48 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             Explorer
                         </button>
                     )}
-                    <div className="flex items-center gap-1 px-3 h-8 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-[11px] font-mono text-slate-300">
-                        <span><strong className="text-slate-100">{elements.nodes.length}</strong> nodes</span>
+                    <div className="hidden sm:flex items-center gap-1 px-3 h-9 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-xs text-slate-300">
+                        <span><strong className="text-slate-100">{clusterInfo.files}</strong> files</span>
                         <span className="text-slate-600">|</span>
-                        <span><strong className="text-slate-100">{elements.edges.length}</strong> edges</span>
+                        <span><strong className="text-slate-100">{clusterInfo.folders}</strong> folders</span>
                     </div>
-                    <div className="relative flex items-center">
-                        <button
-                            onClick={() => setShowSearch((prev) => !prev)}
-                            className={`flex items-center justify-center w-8 h-8 rounded-md border ${showSearch ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
-                            aria-label="Toggle search"
-                        >
-                            <Search className="w-4 h-4" />
-                        </button>
-                        <div className={`${showSearch ? "ml-2 max-w-[180px] opacity-100" : "ml-0 max-w-0 opacity-0"} overflow-hidden transition-all duration-500`}>
-                            <div className="relative">
-                                <input
-                                    type="text"
-                                    placeholder="Search graph"
-                                    value={searchQuery}
-                                    onChange={(event) => handleSearch(event.target.value)}
-                                    className="pl-3 pr-7 h-8 w-[180px] text-xs font-mono bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40"
-                                />
-                                {searchQuery && (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleSearch("")}
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0"
-                                        aria-label="Clear search"
-                                    >
-                                        <X className="w-3 h-3" />
+                    {symbolDiagnostics.fetchFailed > 0 && (
+                        <span role="status" className="flex items-center px-3 h-9 rounded-md border border-amber-500/40 bg-amber-950/80 text-xs text-amber-200">
+                            Partial symbol index: {symbolDiagnostics.fetchFailed} files unavailable
+                        </span>
+                    )}
+                    <div className="relative w-full sm:w-64 order-last sm:order-none">
+                        <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" aria-hidden="true" />
+                        <input
+                            type="search"
+                            aria-label="Find a file by name or path"
+                            placeholder="Find a file or path"
+                            value={searchQuery}
+                            onFocus={() => setSearchOpen(true)}
+                            onChange={(event) => { handleSearch(event.target.value); setSearchOpen(true); }}
+                            onKeyDown={(event) => {
+                                if (event.key === "Escape") setSearchOpen(false);
+                                if (event.key === "Enter" && searchResults[0]) {
+                                    handleSearch("");
+                                    handleExplorerFileSelect({ name: searchResults[0].filename, path: searchResults[0].path, extension: searchResults[0].extension });
+                                    setSearchOpen(false);
+                                }
+                            }}
+                            className="h-9 w-full rounded-md border border-slate-600 bg-slate-900/95 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                        />
+                        {searchOpen && searchQuery.trim() && (
+                            <div className="absolute top-11 left-0 right-0 z-40 max-h-80 overflow-y-auto rounded-lg border border-slate-600 bg-[#111a2b] p-1 shadow-2xl" role="status">
+                                <p className="px-2 py-1 text-xs text-slate-400">{searchResults.length ? `Top ${searchResults.length} matches` : "No files found"}</p>
+                                {searchResults.map((result) => (
+                                    <button key={result.path} type="button" onClick={() => { handleSearch(""); handleExplorerFileSelect({ name: result.filename, path: result.path, extension: result.extension }); setSearchOpen(false); }} className="w-full rounded px-2 py-2 text-left hover:bg-sky-300/10 focus-visible:bg-sky-300/10 focus-visible:outline-none">
+                                        <span className="block truncate text-sm text-white">{result.filename}</span>
+                                        <span className="block truncate text-xs text-slate-400">{result.path}</span>
                                     </button>
-                                )}
+                                ))}
                             </div>
-                        </div>
+                        )}
                     </div>
-                    <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center justify-center w-8 h-8 rounded-md border ${showRightFilters ? "bg-slate-800/90 border-slate-600 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`} aria-label="Toggle filters"><Filter className="w-4 h-4" /></button>
+                    <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center gap-2 px-3 h-9 rounded-md border text-sm ${showRightFilters ? "bg-sky-300/15 border-sky-300/50 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white focus-visible:outline-2 focus-visible:outline-sky-300`} aria-label="Toggle filters" aria-expanded={showRightFilters}><Filter className="w-4 h-4" /> Filters</button>
                     <button
                         type="button"
                         onClick={() => {
@@ -2413,7 +2437,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             const allKinds: SymbolKind[] = ["class", "function", "interface", "type", "method", "variable"];
                             setSymbolKindVisibility(Object.fromEntries(allKinds.map((k) => [k, !anyActive])) as Record<SymbolKind, boolean>);
                         }}
-                        className={`flex items-center gap-1 px-2.5 h-8 rounded-md border text-xs transition-colors ${Object.values(symbolKindVisibility).some((v) => v) ? "bg-cyan-900/50 border-cyan-700 text-cyan-300" : "bg-slate-900/90 border-slate-700 text-slate-400"} hover:text-white`}
+                        className={`flex items-center gap-1 px-2.5 h-9 rounded-md border text-xs transition-colors ${Object.values(symbolKindVisibility).some((v) => v) ? "bg-cyan-900/50 border-cyan-700 text-cyan-300" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
                         title="Toggle symbol overlay (classes, functions, interfaces)"
                     >
                         <Braces className="w-3.5 h-3.5" />
@@ -2426,7 +2450,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     className="absolute top-0 right-0 bottom-0 z-30 overflow-hidden"
                     initial={false}
                     animate={{
-                        width: showRightFilters ? filterPanelWidth : 0,
+                        width: showRightFilters ? Math.min(filterPanelWidth, typeof window === "undefined" ? filterPanelWidth : window.innerWidth - 24) : 0,
                         opacity: showRightFilters ? 1 : 0,
                     }}
                     transition={{
@@ -2449,37 +2473,35 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     )}
                     <div className="h-full rounded-2xl bg-slate-900/95 backdrop-blur border border-slate-700/80 flex flex-col overflow-hidden">
                         <div className="flex items-center justify-between px-2.5 py-2 border-b border-slate-800">
-                            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filters</span>
+                            <span className="text-sm text-slate-100 font-semibold">Graph filters</span>
+                            <button type="button" onClick={resetFilters} className="ml-auto mr-2 text-xs text-sky-300 hover:text-white">Reset</button>
                             <button onClick={() => setShowRightFilters(false)} className="text-slate-400 hover:text-slate-200" aria-label="Close filters">
                                 <X className="w-4 h-4" />
                             </button>
                         </div>
                         <div className="flex-1 overflow-auto px-2.5 py-2.5 text-[10px] font-mono text-slate-300 space-y-3">
-                            <div className="rounded-md border border-slate-700/70 bg-slate-900/70 px-2 py-2 space-y-1">
-                                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-400">
-                                    <span>Symbol Index</span>
-                                    <span>{symbolLoading ? "Indexing" : "Ready"}</span>
-                                </div>
-                                <p className="text-[10px] text-slate-200">
+                            <details className="rounded-md border border-slate-700/70 bg-slate-900/70 px-2 py-2 space-y-1">
+                                <summary className="cursor-pointer text-xs text-slate-200">Symbol index · {symbolLoading ? "Indexing" : "Ready"}</summary>
+                                <p className="text-xs text-slate-200 mt-2">
                                     Indexed {symbolGraph.symbols.length} symbols from {symbolDiagnostics.fetchSucceeded + symbolDiagnostics.cacheHits}/{symbolDiagnostics.selectedCount} files.
                                 </p>
-                                <p className="text-[10px] text-slate-400">
+                                <p className="text-xs text-slate-400">
                                     Symbols: JS/TS only. File imports: all languages ({multiLangLoading ? "indexing…" : `${fileImportEdges.length} edges`}).
                                 </p>
                                 {(symbolDiagnostics.skippedByLimit > 0 || symbolDiagnostics.skippedBySize > 0) && (
-                                    <p className="text-[10px] text-amber-300/90">
+                                    <p className="text-xs text-amber-300/90">
                                         Skipped {symbolDiagnostics.skippedByLimit} by limit and {symbolDiagnostics.skippedBySize} by size cap.
                                     </p>
                                 )}
                                 {symbolDiagnostics.fetchFailed > 0 && (
-                                    <p className="text-[10px] text-amber-300/90">
+                                    <p className="text-xs text-amber-300/90">
                                         {symbolDiagnostics.fetchFailed} source fetches failed; showing partial symbol graph.
                                     </p>
                                 )}
                                 {symbolError && (
-                                    <p className="text-[10px] text-rose-300">{symbolError}</p>
+                                    <p className="text-xs text-rose-300">{symbolError}</p>
                                 )}
-                            </div>
+                            </details>
 
                             <div>
                                 <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setShowCriticalFilesPanel((prev) => !prev)}>
@@ -2622,10 +2644,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
                 <div className="absolute bottom-2 left-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
-                        <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
-                        <Button variant="secondary" size="icon" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
+                        <Button variant="secondary" size="icon" aria-label="Zoom in" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
+                        <Button variant="secondary" size="icon" aria-label="Zoom out" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
                         <button
                             onClick={handleFit}
+                            aria-label="Fit graph in view"
                             className="w-8 h-8 rounded-md text-xs font-medium bg-slate-800/80 text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors flex flex-col items-center justify-center gap-0.5"
                         >
                             <Maximize2 className="w-3 h-3" />

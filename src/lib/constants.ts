@@ -90,8 +90,8 @@ export const HOW_IT_WORKS_STEPS = [
         icon: "Link",
     },
     {
-        title: "AI Analyzes the Code",
-        description: "Our AI pipeline ingests the file tree, reads the README, and builds a deep understanding of the architecture.",
+        title: "Gitvize maps the structure",
+        description: "A quick, automatic overview is ready by default. You can add an AI key for a richer architecture diagram.",
         icon: "Brain",
     },
     {

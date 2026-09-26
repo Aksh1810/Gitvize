@@ -9,7 +9,6 @@ import {
     ArrowUpDown,
     ExternalLink,
     BookOpen,
-    Star,
     Download,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -173,8 +172,13 @@ function getPackageInfo(name: string): PackageInfo {
     return { description: "A package used by this project.", category: "Other" };
 }
 
-function getNpmUrl(name: string): string {
-    return `https://www.npmjs.com/package/${name}`;
+function getPackageUrl(dep: ParsedDependency): string {
+    switch (dep.ecosystem) {
+        case "pypi": return `https://pypi.org/project/${encodeURIComponent(dep.name)}/`;
+        case "go": return `https://pkg.go.dev/${encodeURI(dep.name)}`;
+        case "cargo": return `https://crates.io/crates/${encodeURIComponent(dep.name)}`;
+        default: return `https://www.npmjs.com/package/${dep.name}`;
+    }
 }
 
 /* ─── npm download count fetcher ─── */
@@ -274,17 +278,16 @@ function formatDownloads(n: number): string {
 
 interface DependencyGraphProps {
     dependencies: ParsedDependency[];
-    projectName: string;
 }
 
 export default function DependencyGraph({
     dependencies,
-    projectName,
 }: DependencyGraphProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"name" | "category" | "type">("type");
 
-    const npmMeta = useNpmMeta(dependencies);
+    const npmDependencies = useMemo(() => dependencies.filter((dep) => dep.ecosystem === "npm"), [dependencies]);
+    const npmMeta = useNpmMeta(npmDependencies);
 
     const enriched = useMemo(() => {
         return dependencies.map((dep) => {
@@ -294,7 +297,6 @@ export default function DependencyGraph({
                 ...dep,
                 description: npm?.description || known.description,
                 category: known.category,
-                popular: known.popular || (npm?.downloads != null && npm.downloads > 500_000),
                 homepage: known.homepage || npm?.homepage || null,
                 downloads: npm?.downloads ?? null,
             };
@@ -356,23 +358,18 @@ export default function DependencyGraph({
     return (
         <div className="w-full h-full flex flex-col">
             {/* Header */}
-            <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-border/20">
-                <div className="flex items-center gap-2">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border/20">
+                <div className="flex flex-wrap items-center gap-2">
                     <Package className="w-4 h-4 text-indigo-400" />
                     <span className="text-sm font-semibold">Dependencies</span>
                     <Badge variant="secondary" className="text-[10px]">{dependencies.length}</Badge>
-                    {directCount > 0 && (
-                        <span className="text-[10px] text-indigo-400/70">{directCount} direct</span>
-                    )}
-                    {devCount > 0 && (
-                        <span className="text-[10px] text-purple-400/70">{devCount} dev</span>
-                    )}
                 </div>
 
                 <div className="flex items-center gap-2">
                     <div className="relative flex items-center">
                         <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
                         <select
+                            aria-label="Sort dependencies"
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value as "name" | "category" | "type")}
                             className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors appearance-none cursor-pointer text-foreground"
@@ -387,12 +384,14 @@ export default function DependencyGraph({
                         <input
                             type="text"
                             placeholder="Search packages..."
+                            aria-label="Search dependencies"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="h-8 w-[180px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors"
                         />
                         {searchQuery && (
                             <button
+                                aria-label="Clear dependency search"
                                 onClick={() => setSearchQuery("")}
                                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                             >
@@ -405,8 +404,11 @@ export default function DependencyGraph({
 
             {/* Cards */}
             <div className="flex-1 overflow-auto custom-scrollbar">
-                <div className="max-w-5xl mx-auto px-6 py-5">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
+                    <p className="text-sm text-muted-foreground mb-5">
+                        {directCount} direct · {devCount} development dependencies
+                    </p>
+                    <div className="grid grid-cols-1 gap-2">
                         {filtered.map((dep, idx) => {
                             const catColor = CATEGORY_COLORS[dep.category] ?? CATEGORY_COLORS.Other;
 
@@ -416,7 +418,7 @@ export default function DependencyGraph({
                                     initial={{ opacity: 0, y: 8 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: Math.min(idx * 0.02, 0.4) }}
-                                    className="group rounded-xl border border-border/20 bg-white/[0.03] backdrop-blur-sm hover:bg-white/[0.06] hover:border-border/30 transition-all p-4 flex flex-col gap-3"
+                                    className="group rounded-xl border border-border/20 bg-white/[0.03] hover:bg-white/[0.06] hover:border-border/30 transition-colors p-4 flex flex-col gap-2"
                                 >
                                     {/* Top row: name + badges */}
                                     <div className="flex items-start justify-between gap-2">
@@ -437,22 +439,16 @@ export default function DependencyGraph({
                                             >
                                                 {dep.category}
                                             </span>
-                                            {dep.popular && (
-                                                <span className="flex items-center gap-0.5 text-[10px] font-medium px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400">
-                                                    <Star className="w-2.5 h-2.5" />
-                                                    Popular
-                                                </span>
-                                            )}
                                         </div>
                                     </div>
 
                                     {/* Description */}
-                                    <p className="text-xs text-muted-foreground leading-relaxed">
-                                        {dep.description}
-                                    </p>
+                                    {dep.description !== "A package used by this project." && (
+                                        <p className="text-sm text-muted-foreground leading-relaxed">{dep.description}</p>
+                                    )}
 
                                     {/* Bottom row: version, type, downloads, links */}
-                                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/10">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/10">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             {dep.version && dep.version !== "*" && (
                                                 <span className="text-[10px] font-mono text-muted-foreground/80 bg-secondary/40 px-1.5 py-0.5 rounded">
@@ -478,13 +474,13 @@ export default function DependencyGraph({
 
                                         <div className="flex items-center gap-2 shrink-0">
                                             <a
-                                                href={getNpmUrl(dep.name)}
+                                                href={getPackageUrl(dep)}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
                                                 className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-indigo-400 transition-colors"
                                             >
                                                 <BookOpen className="w-3 h-3" />
-                                                Learn more
+                                                {dep.ecosystem === "pypi" ? "PyPI" : dep.ecosystem === "go" ? "Go docs" : dep.ecosystem === "cargo" ? "crates.io" : "npm"}
                                             </a>
                                             {dep.homepage && (
                                                 <a

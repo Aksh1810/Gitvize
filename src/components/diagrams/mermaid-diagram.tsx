@@ -91,7 +91,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
 
         const paddingFactor = 0.92;
         const fitScale = Math.min(containerWidth / svgW, containerHeight / svgH) * paddingFactor;
-        const clampedScale = Math.max(0.1, Math.min(3, fitScale));
+        const clampedScale = Math.max(0.1, Math.min(1, fitScale));
 
         return {
             scale: clampedScale,

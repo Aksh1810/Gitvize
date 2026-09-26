@@ -80,7 +80,7 @@ export default function ContributorsNetwork({
             )}
 
             {/* Content */}
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden">
                 <ListView
                     contributors={contributors}
                     searchQuery={searchQuery}
@@ -122,10 +122,13 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
 
     return (
         <div className="w-full h-full overflow-auto custom-scrollbar">
-            <div className="max-w-4xl mx-auto px-6 py-5 space-y-5">
+            <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+                <p className="text-sm text-muted-foreground">
+                    {contributors.reduce((total, contributor) => total + contributor.contributions, 0).toLocaleString()} commits across {contributors.length} contributors
+                </p>
 
                 {/* Controls */}
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     <div className="relative flex items-center">
                         <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
                         <select
@@ -144,10 +147,11 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                             placeholder="Search..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="h-8 w-[160px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/20 transition-colors"
+                            aria-label="Search contributors"
+                            className="h-9 w-[180px] pl-8 pr-8 text-sm rounded-lg bg-secondary/50 border border-border/30 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/20 transition-colors"
                         />
                         {searchQuery && (
-                            <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                            <button aria-label="Clear contributor search" onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                                 <X className="w-3.5 h-3.5" />
                             </button>
                         )}
@@ -155,7 +159,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                 </div>
 
                 {/* Contributors list */}
-                <div className="space-y-1">
+                <div className="rounded-xl border border-border/20 bg-white/[0.03] divide-y divide-border/10 overflow-hidden">
                     {filtered.map((contributor, idx) => {
                         const pct = (contributor.contributions / maxContributions) * 100;
                         const rank = contributors.findIndex((c) => c.login === contributor.login) + 1;
@@ -169,7 +173,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                                 initial={{ opacity: 0, x: -8 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ delay: Math.min(idx * 0.02, 0.5) }}
-                                className="group flex items-center gap-4 p-3 rounded-lg hover:bg-secondary/20 border border-transparent hover:border-border/20 transition-colors cursor-pointer"
+                                className="group flex items-center gap-3 sm:gap-4 px-3 sm:px-5 py-4 hover:bg-secondary/20 transition-colors cursor-pointer"
                             >
                                 <span className="text-[11px] text-muted-foreground/50 w-6 text-right shrink-0 font-mono">
                                     #{rank}
@@ -177,17 +181,17 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                                 <AvatarWithFallback
                                     src={contributor.avatarUrl}
                                     alt={contributor.login}
-                                    className="w-8 h-8 rounded-full shrink-0 ring-1 ring-border/20"
+                                    className="w-10 h-10 rounded-full shrink-0 ring-1 ring-border/20"
                                 />
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2">
-                                        <span className="text-sm font-medium truncate group-hover:text-white transition-colors">
+                                        <span className="text-base font-medium truncate group-hover:text-white transition-colors">
                                             {contributor.login}
                                         </span>
                                         <ExternalLink className="w-3 h-3 text-muted-foreground/0 group-hover:text-muted-foreground/50 transition-colors shrink-0" />
                                     </div>
-                                    <div className="flex items-center gap-2 mt-1">
-                                        <div className="flex-1 h-1 rounded-full bg-secondary/30 overflow-hidden">
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <div className="flex-1 h-1.5 rounded-full bg-secondary/30 overflow-hidden">
                                             <div
                                                 className="h-full rounded-full bg-cyan-500/60 transition-all duration-500"
                                                 style={{ width: `${pct}%` }}
@@ -195,7 +199,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                                         </div>
                                     </div>
                                 </div>
-                                <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums flex items-center gap-1">
+                                <span className="text-sm text-muted-foreground shrink-0 tabular-nums flex items-center gap-1" aria-label={`${contributor.contributions.toLocaleString()} commits`}>
                                     <GitCommit className="w-3 h-3" />
                                     {contributor.contributions.toLocaleString()}
                                 </span>

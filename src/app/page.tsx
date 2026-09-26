@@ -8,7 +8,6 @@ import {
   Link as LinkIcon,
   Brain,
   LayoutDashboard,
-  Star,
   ExternalLink,
   Users,
   GitPullRequest,
@@ -121,6 +120,8 @@ export default function LandingPage() {
         } finally {
           setIsNavigating(false);
         }
+      } else {
+        setAccessHint("Enter a GitHub URL or owner/repo, such as facebook/react.");
       }
     },
     [checkAccess, input, router]
@@ -150,65 +151,72 @@ export default function LandingPage() {
       <div className="landing-graph-overlay" aria-hidden="true" />
 
       {/* Hero */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 pt-20">
+      <main className="relative z-10 flex-1 flex flex-col items-center px-4 pt-24">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute top-0 right-1/4 w-96 h-96 bg-cyan-600/[0.08] rounded-full blur-3xl pointer-events-none" />
         <motion.div
           variants={fadeSlideUp}
           initial="hidden"
           animate="show"
-          className="text-center max-w-4xl mx-auto mb-12 hero-glow"
+          className="w-full max-w-6xl mx-auto mb-12 hero-glow grid items-center gap-10 lg:grid-cols-[1fr_0.9fr] lg:gap-16"
         >
+          <div>
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-sky-300/25 bg-sky-300/10 px-3 py-1 ui-eyebrow text-sky-200">A map for unfamiliar code</div>
 
-          <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-indigo-500/10 px-3 py-1 ui-eyebrow text-indigo-100">
-            <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
-            Developer-first repository intelligence
-          </div>
-
-          <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight mb-6">
-            <span className="gradient-text">Visualize</span> Any
-            <br />
-            GitHub Repository
+          <h1 className="text-5xl sm:text-6xl font-semibold tracking-[-0.05em] leading-[1.06] mb-6 text-white">
+            See how a repository <span className="text-sky-300">fits together.</span>
           </h1>
 
-          <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
-            Transform any repo into interactive architecture diagrams, file
-            trees, contributor networks, and more. Powered by AI, built for
-            developers.
+          <p className="text-lg text-slate-300 max-w-xl mb-8 leading-relaxed">
+            Find the files that matter, trace connections, and inspect code from one workspace. Start with a public GitHub repo or add a token for a private one.
           </p>
 
           {/* Input */}
+          <label htmlFor="repo-input" className="mb-2 block text-sm font-medium text-slate-100">GitHub repository</label>
           <form
             onSubmit={handleSubmit}
-            className="surface-neo mesh-grid flex flex-col sm:flex-row gap-3 max-w-3xl mx-auto p-3"
+            className="flex flex-col sm:flex-row gap-2 max-w-xl"
           >
             <div className="relative flex-1">
               <Input
                 type="text"
+                id="repo-input"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="owner/repo or github.com/owner/repo"
-                className="h-14 text-base sm:text-lg pl-5 pr-4 bg-white/[0.03] border-white/15 focus:border-slate-300/55 focus:ring-2 focus:ring-slate-200/20 rounded-xl"
+                onChange={(e) => { setInput(e.target.value); setAccessHint(null); }}
+                placeholder="github.com/owner/repo"
+                aria-describedby={accessHint ? "repo-error" : "repo-help"}
+                className="h-14 text-base pl-4 pr-4 bg-[#121d30] border-slate-500/60 focus:border-sky-300 focus:ring-2 focus:ring-sky-300/40 rounded-lg"
               />
             </div>
             <Button
               type="submit"
               size="lg"
               disabled={isNavigating}
-              className="h-14 px-8 text-lg rounded-xl border border-white/30 bg-white/[0.92] text-slate-950 hover:bg-white hover:border-white shadow-lg shadow-black/30 transition-all"
+              className="h-14 px-6 text-base rounded-lg border border-sky-200 bg-sky-300 text-slate-950 hover:bg-sky-200 hover:border-sky-200 shadow-lg shadow-black/30 transition-all"
             >
               {isNavigating ? (
                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
               ) : (
                 <ArrowRight className="w-5 h-5 mr-2" />
               )}
-              Visualize
+              Explore repo
             </Button>
           </form>
 
-          {accessHint && (
-            <p className="mt-3 text-sm text-amber-200/90">{accessHint}</p>
-          )}
+          <p id="repo-help" className="mt-2 text-sm text-slate-400">Try a URL or a short name such as facebook/react.</p>
+          {accessHint && <p id="repo-error" role="alert" className="mt-3 text-sm text-amber-200/90">{accessHint}</p>}
+          </div>
+
+          <div className="rounded-2xl border border-sky-300/25 bg-[#111c2d] p-5 shadow-[0_30px_90px_rgba(0,0,0,0.3)]" aria-label="Illustration of a repository file map">
+            <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-4"><div><p className="text-xs uppercase tracking-[0.15em] text-sky-300">Repository map</p><p className="mt-1 text-sm text-slate-300">Find a path through the code</p></div><span className="rounded-md border border-white/15 px-2 py-1 font-mono text-xs text-slate-300">example/repo</span></div>
+            <svg viewBox="0 0 390 320" className="w-full" role="img" aria-label="Folders app and components connected to four source files">
+              <path d="M150 91 H183 V64 H214 M183 91 V120 H214 M150 236 H183 V209 H214 M183 236 V265 H214" fill="none" stroke="#44738f" strokeWidth="2" />
+              {[[36,73,"app",114],[214,45,"page.tsx",142],[214,101,"api/route.ts",142],[36,218,"components",114],[214,190,"Graph.tsx",142],[214,246,"Search.tsx",142]].map(([x,y,name,width]) => <g key={name}><rect x={x} y={y} width={width} height="38" rx="7" fill={width === 114 ? "#16354a" : "#1b2944"} stroke={width === 114 ? "#64c7df" : "#89a4f9"} strokeOpacity="0.65" /><circle cx={Number(x)+16} cy={Number(y)+19} r="4" fill={width === 114 ? "#64c7df" : "#89a4f9"} /><text x={Number(x)+29} y={Number(y)+24} fill="#edf4fa" fontSize="13" fontFamily="ui-monospace, monospace">{name}</text></g>)}
+              <text x="36" y="24" fill="#8ca7ba" fontSize="11" fontFamily="ui-monospace, monospace">FILES / RELATIONSHIPS</text>
+              <text x="36" y="310" fill="#8ca7ba" fontSize="11" fontFamily="ui-monospace, monospace">SELECT A FILE → INSPECT ITS CODE</text>
+            </svg>
+            <div className="mt-2 flex flex-wrap gap-3 border-t border-white/10 pt-4 text-xs text-slate-300"><span>● Folders</span><span>● Source files</span><span>─ Relationships</span></div>
+          </div>
         </motion.div>
 
         {/* Example Repos */}
@@ -216,13 +224,13 @@ export default function LandingPage() {
           variants={staggerContainer}
           initial="hidden"
           animate="show"
-          className="w-full max-w-5xl mx-auto mb-20"
+          className="w-full max-w-6xl mx-auto mb-20"
         >
           <p className="text-center ui-body text-muted-foreground mb-6">
-            Or explore a popular repository
+            Or open an example repository
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {EXAMPLE_REPOS.map((repo) => (
+            {EXAMPLE_REPOS.slice(0, 4).map((repo) => (
               <motion.button
                 key={`${repo.owner}/${repo.repo}`}
                 variants={fadeSlideUp}
@@ -238,13 +246,6 @@ export default function LandingPage() {
                   <span className="font-semibold text-foreground group-hover:text-indigo transition-colors">
                     {repo.repo}
                   </span>
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-indigo/20 text-muted-foreground"
-                  >
-                    <Star className="w-3 h-3 mr-1" />
-                    {repo.stars}
-                  </Badge>
                 </div>
                 <p className="ui-micro text-muted-foreground mb-2 line-clamp-2">
                   {repo.description}

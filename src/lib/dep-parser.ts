@@ -6,6 +6,7 @@ export interface ParsedDependency {
     name: string;
     version: string;
     isDirect: boolean;
+    ecosystem?: "npm" | "pypi" | "go" | "cargo";
 }
 
 export function parseDependencyFile(
@@ -14,15 +15,15 @@ export function parseDependencyFile(
 ): ParsedDependency[] {
     switch (filename) {
         case "package.json":
-            return parsePackageJson(content);
+            return parsePackageJson(content).map((dep) => ({ ...dep, ecosystem: "npm" }));
         case "requirements.txt":
-            return parseRequirementsTxt(content);
+            return parseRequirementsTxt(content).map((dep) => ({ ...dep, ecosystem: "pypi" }));
         case "go.mod":
-            return parseGoMod(content);
+            return parseGoMod(content).map((dep) => ({ ...dep, ecosystem: "go" }));
         case "Cargo.toml":
-            return parseCargoToml(content);
+            return parseCargoToml(content).map((dep) => ({ ...dep, ecosystem: "cargo" }));
         case "pyproject.toml":
-            return parsePyprojectToml(content);
+            return parsePyprojectToml(content).map((dep) => ({ ...dep, ecosystem: "pypi" }));
         default:
             return [];
     }
@@ -85,7 +86,7 @@ function parseGoMod(content: string): ParsedDependency[] {
         if (inRequire) {
             const parts = trimmed.split(/\s+/);
             if (parts.length >= 2) {
-                const name = parts[0].split("/").pop() ?? parts[0];
+                const name = parts[0];
                 deps.push({
                     name,
                     version: parts[1],
