@@ -518,11 +518,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         );
     }, [repoData?.dependencyFiles]);
 
-    const useDotFieldBackground =
-        activeTab === "architecture" ||
-        activeTab === "contributors" ||
-        activeTab === "branches" ||
-        activeTab === "dependencies";
+    const diagramBackground = activeTab === "architecture" ? "diagram-dot-field" : activeTab === "files" ? "diagram-grid" : "";
 
     const fileTypeLegend = useMemo(() => {
         const extCounts = new Map<string, number>();
@@ -551,9 +547,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         if (analysis) {
             return (
                 <ArchitectureDiagram
+                    key={analysis.source}
                     analysis={analysis.architecture}
+                    source={analysis.source}
                     owner={owner}
                     repo={repo}
+                    defaultBranch={repoData?.metadata.defaultBranch ?? "main"}
                     tree={repoData?.fileTree?.tree}
                     onFallback={() => setAnalysis(null)}
                 />
@@ -577,7 +576,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 No data available for this view.
             </div>
         );
-    }, [analysis, isAnalyzing, owner, pipelineSteps, repo, repoData?.fileTree]);
+    }, [analysis, isAnalyzing, owner, pipelineSteps, repo, repoData?.fileTree, repoData?.metadata.defaultBranch]);
 
     const filesTabContent = useMemo(() => {
         if (repoData?.fileTree) {
@@ -633,8 +632,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     }, [owner, repo, repoData]);
 
     const dependenciesTabContent = useMemo(
-        () => <DependencyGraph dependencies={dependencies} projectName={repo} />,
-        [dependencies, repo]
+        () => <DependencyGraph dependencies={dependencies} />,
+        [dependencies]
     );
 
     const openOnboarding = useCallback(() => {
@@ -687,7 +686,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     if (!repoData) return null;
 
     return (
-        <div className="h-screen overflow-hidden pt-14">
+        <div className="h-screen overflow-hidden pt-14 flex flex-col">
             <Navbar
                 owner={owner}
                 repo={repo}
@@ -707,7 +706,20 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }}
             />
 
-            <div className="max-w-[1800px] mx-auto h-full flex flex-col ">
+            <div className="w-full max-w-[1800px] mx-auto flex-1 min-h-0 flex flex-col">
+                <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 bg-[#0b111f]">
+                    <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-sky-300/80">Repository workspace</p>
+                        <h1 className="text-lg font-semibold text-white truncate">{owner} / {repo}</h1>
+                        {repoData.metadata.description && <p className="text-xs text-slate-400 truncate max-w-2xl">{repoData.metadata.description}</p>}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300" aria-label="Repository summary">
+                        <span><strong className="text-white">{repoData.fileTree?.tree.filter((item) => item.type === "blob").length.toLocaleString() ?? "0"}</strong> files</span>
+                        <span><strong className="text-white">{repoData.contributors.length}</strong> contributors</span>
+                        <span><strong className="text-white">{repoData.branches.length}</strong> branches</span>
+                        <span className="text-slate-500">{repoData.metadata.defaultBranch} branch</span>
+                    </div>
+                </div>
                 <TabNav
                     activeTab={activeTab}
                     onTabChange={handleTabChange}
@@ -718,15 +730,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             className="inline-flex items-center gap-2 rounded-md border border-border/30 bg-slate-900/55 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800/70 shrink-0"
                         >
                             <HelpCircle className="w-3.5 h-3.5" />
-                            Show Quick Tips
+                            Help
                         </button>
                     }
                 />
 
-                <div className="p-4 flex-1 min-h-0">
+                <div className="p-2 sm:p-3 flex-1 min-h-0">
                     {/* Main diagram area */}
                     <div className="flex-1 h-full min-h-0">
-                        <div className={`relative h-full diagram-shell overscroll-contain surface-neo ${useDotFieldBackground ? "diagram-dot-field" : "diagram-grid"} mesh-grid`}>
+                        <div className={`relative h-full diagram-shell overscroll-contain surface-neo ${diagramBackground}`}>
                             {isTabMounted("architecture") && (
                                 <div
                                     className={`absolute inset-0 ${activeTab === "architecture" ? "pointer-events-auto" : "hidden pointer-events-none"}`}

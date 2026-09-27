@@ -16,6 +16,7 @@
 # next.js
 /.next/
 /out/
+/.docs
 
 # production
 /build
@@ -53,6 +54,8 @@ yarn-error.log*
 next-env.d.ts
 
 CLAUDE.md
-.claude/
+.claude
 .env.example
 AGENT_CHANGES.md
+docs/ui-ux-research.md
+docs/ui-ux-audit.md
