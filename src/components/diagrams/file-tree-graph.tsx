@@ -416,7 +416,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [showRightFilters, setShowRightFilters] = useState(false);
 
     useEffect(() => {
-        if (window.innerWidth < 768) setShowExplorer(false);
+        const collapseOnNarrowScreen = () => {
+            if (window.innerWidth < 768) setShowExplorer(false);
+        };
+        collapseOnNarrowScreen();
+        window.addEventListener("resize", collapseOnNarrowScreen);
+        return () => window.removeEventListener("resize", collapseOnNarrowScreen);
     }, []);
     const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
     const [symbolFiltersOpen, setSymbolFiltersOpen] = useState(false);
@@ -674,19 +679,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 if (el) { el.style.transition = "none"; el.style.width = `${nextWidth}px`; }
             } else if (inspectorResizingRef.current) {
                 const delta = event.clientX - inspectorDragStartXRef.current;
-                const nextWidth = Math.min(700, Math.max(280, inspectorDragStartWidthRef.current + delta));
+                const explorerPixels = document.getElementById("file-explorer-panel")?.clientWidth ?? 0;
+                const nextWidth = Math.min(700, window.innerWidth - explorerPixels - 24, Math.max(280, inspectorDragStartWidthRef.current + delta));
                 inspectorWidthRef.current = nextWidth;
-                const el = document.getElementById("inspector-panel-inner");
-                if (el) el.style.width = `${nextWidth}px`;
                 const motion = document.getElementById("inspector-panel-motion");
                 if (motion) { motion.style.transition = "none"; motion.style.width = `${nextWidth}px`; }
             } else if (filterResizingRef.current) {
                 // Filters panel is on the right; dragging left expands it
                 const delta = filterDragStartXRef.current - event.clientX;
-                const nextWidth = Math.min(400, Math.max(180, filterDragStartWidthRef.current + delta));
+                const nextWidth = Math.min(400, window.innerWidth - 24, Math.max(180, filterDragStartWidthRef.current + delta));
                 filterWidthRef.current = nextWidth;
-                const el = document.getElementById("filter-panel-inner");
-                if (el) el.style.width = `${nextWidth}px`;
                 const motion = document.getElementById("filter-panel-motion");
                 if (motion) { motion.style.transition = "none"; motion.style.width = `${nextWidth}px`; }
             }
@@ -1716,6 +1718,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const handleExplorerFileSelect = useCallback((node: { name: string; path: string; extension?: string; size?: number }) => {
         expandParentFolders(node.path);
         setTreeFocusPath(node.path);
+        if (window.innerWidth < 768) setShowExplorer(false);
         setShowExplorerInspector(true);
         setSelectedFile({
             label: node.name,
@@ -1823,6 +1826,11 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     }, [restoreColors]);
 
     const resetFilters = () => {
+        lockedNodeIdRef.current = null;
+        clearBlastRadius();
+        handleSearch("");
+        setSearchOpen(false);
+        setShowCriticalFiles(false);
         setShowRoot(true);
         setShowFolders(true);
         setShowFiles(true);
@@ -1979,6 +1987,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 if (attrs.nodeType === "file") {
                     setSymbolFocus(null);
                     setFocusLine(null);
+                    if (window.innerWidth < 768) setShowExplorer(false);
                     setShowExplorerInspector(true);
                     setSelectedFile({
                         label: attrs.label,
@@ -1992,6 +2001,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     const ext = fileLabel.includes(".") ? fileLabel.split(".").pop() : undefined;
                     setSymbolFocus(attrs.label);
                     setFocusLine(null);
+                    if (window.innerWidth < 768) setShowExplorer(false);
                     setShowExplorerInspector(true);
                     setSelectedFile({
                         label: fileLabel,
@@ -2178,7 +2188,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => setShowExplorerInspector((prev) => !prev)}
+                                onClick={() => {
+                                    if (window.innerWidth < 768) setShowExplorer(false);
+                                    setShowExplorerInspector((prev) => !prev);
+                                }}
                                 className="h-7 w-7 text-slate-400 hover:text-slate-200"
                                 aria-label={showExplorerInspector ? "Hide inspector" : "Show inspector"}
                             >
@@ -2260,21 +2273,22 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
                 <motion.div
                     id="inspector-panel-motion"
-                    className="absolute left-full top-0 h-full z-40 overflow-hidden"
+                    className="absolute left-0 md:left-full top-0 h-full z-40 overflow-hidden"
                     initial={false}
                     animate={{
-                        width: showExplorerInspector ? Math.min(inspectorWidth, typeof window === "undefined" ? inspectorWidth : window.innerWidth - 24) : 0,
+                        width: showExplorerInspector ? inspectorWidth : 0,
                         opacity: showExplorerInspector ? 1 : 0,
                     }}
+                    style={{ maxWidth: `calc(100vw - ${showExplorer ? explorerWidth + 24 : 24}px)` }}
                     transition={{
                         width: { type: "spring", stiffness: 300, damping: 30 },
                         opacity: { duration: 0.5, ease: "easeInOut" },
                     }}
                 >
-                    <div id="inspector-panel-inner" style={{ width: inspectorWidth }} className="h-full relative">
+                    <div id="inspector-panel-inner" style={{ width: "100%" }} className="h-full relative">
                     {showExplorerInspector && (
                         <div
-                            className="absolute top-0 right-0 h-full w-2 cursor-col-resize z-50 group"
+                            className="hidden md:block absolute top-0 right-0 h-full w-2 cursor-col-resize z-50 group"
                             onMouseDown={(e) => {
                                 inspectorResizingRef.current = true;
                                 inspectorDragStartXRef.current = e.clientX;
@@ -2380,7 +2394,10 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 <div className="absolute top-3 left-3 right-3 z-20 flex flex-wrap items-start gap-2 pointer-events-none [&>*]:pointer-events-auto">
                     {!showExplorer && (
                         <button
-                            onClick={() => startTransition(() => setShowExplorer(true))}
+                            onClick={() => startTransition(() => {
+                                if (window.innerWidth < 768) setShowExplorerInspector(false);
+                                setShowExplorer(true);
+                            })}
                             className="flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur text-slate-300 hover:text-white hover:border-slate-500 text-xs"
                             aria-label="Show explorer"
                         >
@@ -2450,18 +2467,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     className="absolute top-0 right-0 bottom-0 z-30 overflow-hidden"
                     initial={false}
                     animate={{
-                        width: showRightFilters ? Math.min(filterPanelWidth, typeof window === "undefined" ? filterPanelWidth : window.innerWidth - 24) : 0,
+                        width: showRightFilters ? filterPanelWidth : 0,
                         opacity: showRightFilters ? 1 : 0,
                     }}
+                    style={{ maxWidth: "calc(100vw - 24px)" }}
                     transition={{
                         width: { type: "spring", stiffness: 300, damping: 30 },
                         opacity: { duration: 0.5, ease: "easeInOut" },
                     }}
                 >
-                    <div id="filter-panel-inner" style={{ width: filterPanelWidth }} className="h-full relative">
+                    <div id="filter-panel-inner" style={{ width: "100%" }} className="h-full relative">
                     {showRightFilters && (
                         <div
-                            className="absolute top-0 left-0 h-full w-2 cursor-col-resize z-50 group"
+                            className="hidden md:block absolute top-0 left-0 h-full w-2 cursor-col-resize z-50 group"
                             onMouseDown={(e) => {
                                 filterResizingRef.current = true;
                                 filterDragStartXRef.current = e.clientX;

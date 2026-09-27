@@ -115,22 +115,26 @@ const KNOWN_PACKAGES: Record<string, PackageInfo> = {
     jsonwebtoken:        { description: "Create and verify JSON Web Tokens (JWT).", category: "Auth", popular: true },
     bcrypt:              { description: "Library to hash and check passwords securely.", category: "Auth" },
 
-    // ── Python common ──
-    flask:               { description: "Lightweight Python web framework.", category: "Backend", popular: true },
-    django:              { description: "High-level Python web framework for rapid development.", category: "Backend", popular: true },
-    fastapi:             { description: "Modern, fast Python web framework for building APIs.", category: "Backend", popular: true },
-    numpy:               { description: "Fundamental package for scientific computing with Python.", category: "Data Science", popular: true },
-    pandas:              { description: "Data analysis and manipulation library for Python.", category: "Data Science", popular: true },
-    requests:            { description: "Simple HTTP library for Python.", category: "Networking", popular: true },
-    pytest:              { description: "Simple and powerful testing framework for Python.", category: "Testing", popular: true },
-    black:               { description: "The uncompromising Python code formatter.", category: "Build", popular: true },
+};
 
-    // ── Go common ──
-    gin:                 { description: "Fast HTTP web framework for Go.", category: "Backend", popular: true },
-
-    // ── Rust common ──
-    serde:               { description: "Serialization framework for Rust.", category: "Utility", popular: true },
-    tokio:               { description: "Asynchronous runtime for Rust.", category: "Runtime", popular: true },
+const OTHER_PACKAGES: Record<"pypi" | "go" | "cargo", Record<string, PackageInfo>> = {
+    pypi: {
+        flask: { description: "Lightweight Python web framework.", category: "Backend" },
+        django: { description: "High-level Python web framework for rapid development.", category: "Backend" },
+        fastapi: { description: "Modern, fast Python web framework for building APIs.", category: "Backend" },
+        numpy: { description: "Fundamental package for scientific computing with Python.", category: "Data Science" },
+        pandas: { description: "Data analysis and manipulation library for Python.", category: "Data Science" },
+        requests: { description: "Simple HTTP library for Python.", category: "Networking" },
+        pytest: { description: "Simple and powerful testing framework for Python.", category: "Testing" },
+        black: { description: "The uncompromising Python code formatter.", category: "Build" },
+    },
+    go: {
+        "github.com/gin-gonic/gin": { description: "Fast HTTP web framework for Go.", category: "Backend" },
+    },
+    cargo: {
+        serde: { description: "Serialization framework for Rust.", category: "Utility" },
+        tokio: { description: "Asynchronous runtime for Rust.", category: "Runtime" },
+    },
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -158,7 +162,10 @@ const CATEGORY_COLORS: Record<string, string> = {
     Other: "#475569",
 };
 
-function getPackageInfo(name: string): PackageInfo {
+export function getPackageInfo(name: string, ecosystem: ParsedDependency["ecosystem"]): PackageInfo {
+    if (ecosystem && ecosystem !== "npm") {
+        return OTHER_PACKAGES[ecosystem][name] ?? { description: "", category: "Other" };
+    }
     // Direct lookup
     if (KNOWN_PACKAGES[name]) return KNOWN_PACKAGES[name];
 
@@ -291,8 +298,8 @@ export default function DependencyGraph({
 
     const enriched = useMemo(() => {
         return dependencies.map((dep) => {
-            const known = getPackageInfo(dep.name);
-            const npm = npmMeta.get(dep.name);
+            const known = getPackageInfo(dep.name, dep.ecosystem);
+            const npm = dep.ecosystem === "npm" ? npmMeta.get(dep.name) : undefined;
             return {
                 ...dep,
                 description: npm?.description || known.description,
@@ -414,7 +421,7 @@ export default function DependencyGraph({
 
                             return (
                                 <motion.div
-                                    key={dep.name}
+                                    key={`${dep.ecosystem}:${dep.name}`}
                                     initial={{ opacity: 0, y: 8 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: Math.min(idx * 0.02, 0.4) }}

@@ -29,15 +29,17 @@ export default function Navbar({
     onAISettings,
     onGithubToken,
 }: NavbarProps) {
-    const handleShare = () => {
+    const handleShare = async () => {
         const url = window.location.href;
-        navigator.clipboard.writeText(url).then(() => {
+        try {
+            if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+            await navigator.clipboard.writeText(url);
             toast.success("Link copied to clipboard!", {
                 description: url,
             });
-        }).catch(() => {
-            toast.error("Could not copy the link. Copy it from your address bar instead.");
-        });
+        } catch {
+            toast.error("Could not copy the link. Copy it from your address bar instead.", { description: url });
+        }
     };
 
     return (

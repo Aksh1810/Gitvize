@@ -13,7 +13,7 @@ import { TreeItem, ArchitectureAnalysis } from "@/types";
 
 /** Create a valid Mermaid node ID from any path */
 function safeId(path: string): string {
-    return "n_" + path.replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/_$/, "");
+    return "n_" + Array.from(path, (char) => /[a-zA-Z0-9]/.test(char) ? char : `_x${char.codePointAt(0)!.toString(16)}_`).join("");
 }
 
 /** Escape a string for use inside Mermaid quoted labels ["..."] */
