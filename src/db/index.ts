@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Database Connection
+// Gitvize — Database Connection
 // ============================================================================
 
 import { drizzle } from "drizzle-orm/postgres-js";

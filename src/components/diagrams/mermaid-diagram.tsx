@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================================
-// GitViz — Mermaid.js Interactive Diagram Component
+// Gitvize — Mermaid.js Interactive Diagram Component
 // ============================================================================
 // Renders Mermaid.js SVG with click-to-navigate (GitDiagram-style).
 // Features: pan/zoom, dark theme, export PNG, copy Mermaid code.

@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Local Git Repository Data Provider
+// Gitvize — Local Git Repository Data Provider
 // ============================================================================
 // Clones repos to /tmp and reads data via git CLI (simple-git) instead of
 // calling the GitHub API. Returns the exact same shapes the frontend expects.

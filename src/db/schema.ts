@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Database Schema (Drizzle ORM + PostgreSQL)
+// Gitvize — Database Schema (Drizzle ORM + PostgreSQL)
 // ============================================================================
 
 import {

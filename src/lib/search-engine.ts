@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Search Engine (BM25 keyword + fuzzy matching)
+// Gitvize — Search Engine (BM25 keyword + fuzzy matching)
 // ============================================================================
 // Provides fast search across file paths, names, and module labels.
 

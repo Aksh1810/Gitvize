@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================================
-// GitViz — Knowledge Graph (Sigma.js + WebGL)
+// Gitvize — Knowledge Graph (Sigma.js + WebGL)
 // ============================================================================
 // GitNexus-style interactive knowledge graph with ForceAtlas2 layout,
 // community-based coloring, and hover/click interactions.

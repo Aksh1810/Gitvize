@@ -109,7 +109,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                             </li>
                         </ul>
                         <a
-                            href="https://github.com/Aksh1810/Gitviz"
+                            href="https://github.com/Aksh1810/Gitvize"
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
@@ -125,7 +125,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                                 Personal Access Token
                             </Label>
                             <a
-                                href="https://github.com/settings/tokens/new?scopes=public_repo&description=GitViz"
+                                href="https://github.com/settings/tokens/new?scopes=public_repo&description=Gitvize"
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1 text-[10px] text-cyan-300 hover:underline"

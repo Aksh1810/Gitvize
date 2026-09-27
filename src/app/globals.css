@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ============================================================================
-   GitViz — Deep Space Theme
+   Gitvize — Deep Space Theme
    ============================================================================ */
 
 @theme inline {
@@ -62,7 +62,7 @@
 }
 
 /* 
-  GitViz is always dark — deep space.
+  Gitvize is always dark — deep space.
   We use .dark class from shadcn but set it as the default.
 */
 :root {

@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — File Icons & Extension Mapping
+// Gitvize — File Icons & Extension Mapping
 // ============================================================================
 
 import { FILE_EXTENSION_COLORS } from "./constants";
