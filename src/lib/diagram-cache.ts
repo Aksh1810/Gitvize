@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — AI Diagram Cache (localStorage-based)
+// Gitvize — AI Diagram Cache (localStorage-based)
 // ============================================================================
 // Caches AI-generated architecture analysis per repo so that when
 // credits are exhausted or the same repo is revisited, we serve

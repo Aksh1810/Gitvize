@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — AI Service Layer (Configurable Provider)
+// Gitvize — AI Service Layer (Configurable Provider)
 // ============================================================================
 
 import { ArchitectureAnalysis, FileAnnotation, TreeItem } from "@/types";

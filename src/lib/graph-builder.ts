@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Graph Builder (Graphology-compatible knowledge graph)
+// Gitvize — Graph Builder (Graphology-compatible knowledge graph)
 // ============================================================================
 // Transforms file tree + dependency data into a graph structure.
 // Inspired by GitNexus's deterministic AST-based knowledge graph approach,

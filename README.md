@@ -61,7 +61,7 @@ Gitvize turns any public GitHub repo URL into interactive, beautiful visualizati
 
 ### GitHub PAT (optional but recommended)
 
-Add a GitHub Personal Access Token to avoid rate limits. Click the key icon in the header or set `gitviz_github_pat` in `localStorage`. With a token you get 5,000 API requests/hour instead of 60.
+Add a GitHub Personal Access Token to avoid rate limits. Click the key icon in the header. With a token you get 5,000 API requests/hour instead of 60.
 
 ## Project Structure
 

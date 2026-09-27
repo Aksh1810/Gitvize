@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Dependency File Parsers
+// Gitvize — Dependency File Parsers
 // ============================================================================
 
 export interface ParsedDependency {

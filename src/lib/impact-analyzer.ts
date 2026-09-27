@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Impact Analyzer (GitNexus-inspired blast radius analysis)
+// Gitvize — Impact Analyzer (GitNexus-inspired blast radius analysis)
 // ============================================================================
 // Given a file, traces all upstream importers to calculate blast radius.
 

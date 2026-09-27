@@ -1,5 +1,5 @@
 // ============================================================================
-// GitViz — Universal GitDiagram-style Mermaid Code Generator
+// Gitvize — Universal GitDiagram-style Mermaid Code Generator
 // ============================================================================
 // Generates detailed Mermaid flowchart code from ANY repository's file tree.
 // Robust character escaping, smart file selection for large repos, and

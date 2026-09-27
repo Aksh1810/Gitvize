@@ -267,7 +267,7 @@ export default function LandingPage() {
           </div>
         </motion.div>
 
-        {/* When to use GitViz */}
+        {/* When to use Gitvize */}
         <motion.section
           variants={fadeSlideUp}
           initial="hidden"
@@ -276,7 +276,7 @@ export default function LandingPage() {
           className="w-full max-w-5xl mx-auto mb-20"
         >
           <h2 className="text-3xl font-bold text-center mb-12">
-            When to use <span className="gradient-text">GitViz</span>
+            When to use <span className="gradient-text">Gitvize</span>
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             {USE_CASES.map((item) => (

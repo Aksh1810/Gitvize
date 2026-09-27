@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================================
-// GitViz — Architecture Diagram (GitDiagram-style Mermaid)
+// Gitvize — Architecture Diagram (GitDiagram-style Mermaid)
 // ============================================================================
 // Renders architecture as a detailed Mermaid flowchart, matching GitDiagram's
 // visual quality: subgraphs, colored classDefs, specific edge labels, click events.
