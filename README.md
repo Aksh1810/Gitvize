@@ -108,6 +108,20 @@ src/
 ```
 
 
+## Testing
+
+Install dependencies with `npm ci`, then run:
+
+```bash
+npm test              # Run all Jest tests once
+npm run test:watch    # Re-run tests affected by local edits
+npm run test:coverage # Write a coverage report to coverage/
+```
+
+The setup uses [Next.js's Jest integration](https://nextjs.org/docs/app/guides/testing/jest), React Testing Library, and jsdom. Add tests under `__tests__/` using `.test.ts` or `.test.tsx`; the `@/` import alias works in tests. Pure Node tests can use a `/** @jest-environment node */` file header.
+
+The initial suite covers file search, dependency data, architecture diagrams, and clipboard handling. GitHub Actions runs it on pull requests and pushes to `main`, using Node.js 24. Tests run locally without GitHub tokens, AI keys, or external API calls. Coverage reports currently include only modules imported by the tests.
+
 ## License
 
 MIT
