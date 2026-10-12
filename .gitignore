@@ -10,13 +10,12 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
+# Jest coverage output
+/coverage/
 
 # next.js
 /.next/
 /out/
-/.docs
 
 # production
 /build
@@ -32,12 +31,12 @@ yarn-error.log*
 .pnpm-debug.log*
 *.log
 
-# env files (can opt-in for committing if needed)
+# local environment files; allow a placeholder-only root template
 .env*
-!.env.example
+!/.env.example
 
 # vercel
-.vercel
+.vercel/
 
 # tooling caches
 .eslintcache
@@ -47,15 +46,16 @@ yarn-error.log*
 # editors/ide
 .idea/
 .vscode/
-.gemini/
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
+# local assistant tooling and working notes
+/.docs/
+/.gemini/
+/.claude/
 CLAUDE.md
-.claude
-.env.example
 AGENT_CHANGES.md
 docs/ui-ux-research.md
 docs/ui-ux-audit.md
