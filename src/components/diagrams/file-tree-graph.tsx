@@ -683,7 +683,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 const el = document.getElementById("file-explorer-panel");
                 if (el) { el.style.transition = "none"; el.style.width = `${nextWidth}px`; }
             } else if (inspectorResizingRef.current) {
-                const delta = event.clientX - inspectorDragStartXRef.current;
+                const delta = inspectorDragStartXRef.current - event.clientX;
                 const explorerPixels = document.getElementById("file-explorer-panel")?.clientWidth ?? 0;
                 const nextWidth = Math.min(700, window.innerWidth - explorerPixels - 24, Math.max(280, inspectorDragStartWidthRef.current + delta));
                 inspectorWidthRef.current = nextWidth;
@@ -2193,7 +2193,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
 
     return (
-        <div className="relative w-full h-full flex bg-[#080d18] diagram-grid">
+        <div className="repository-workbench relative w-full h-full flex bg-[#080d18] diagram-grid">
             <div
                 id="file-explorer-panel"
                 className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200 ease-in-out"
@@ -2322,18 +2322,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         document.body.style.userSelect = "none";
                         document.body.style.cursor = "col-resize";
                     }}
-                ><span className="absolute top-0 bottom-0 right-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>}
+                ><span className="absolute top-0 bottom-0 right-0 w-px bg-transparent group-hover:bg-slate-400 transition-colors" /></div>}
 
+            </div>
                 <motion.div
                     id="inspector-panel-motion"
                     inert={!showExplorerInspector}
-                    className="absolute left-0 md:left-full top-0 h-full z-40 overflow-hidden"
+                    className="workbench-inspector h-full z-40 overflow-hidden shrink-0 order-3"
                     initial={false}
                     animate={{
                         width: showExplorerInspector ? inspectorWidth : 0,
                         opacity: showExplorerInspector ? 1 : 0,
                     }}
-                    style={{ maxWidth: `calc(100vw - ${showExplorer ? explorerWidth + 24 : 24}px)` }}
+                    style={{ maxWidth: "42%" }}
                     transition={{
                         width: { type: "spring", stiffness: 300, damping: 30 },
                         opacity: { duration: 0.5, ease: "easeInOut" },
@@ -2342,7 +2343,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     <div id="inspector-panel-inner" style={{ width: "100%" }} className="h-full relative">
                     {showExplorerInspector && (
                         <div
-                            className="hidden md:block absolute top-0 right-0 h-full w-2 cursor-col-resize z-50 group"
+                            className="hidden md:block absolute top-0 left-0 h-full w-2 cursor-col-resize z-50 group"
                             onMouseDown={(e) => {
                                 inspectorResizingRef.current = true;
                                 inspectorDragStartXRef.current = e.clientX;
@@ -2350,13 +2351,13 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                 document.body.style.userSelect = "none";
                                 document.body.style.cursor = "col-resize";
                             }}
-                        ><span className="absolute top-0 bottom-0 right-0 w-px bg-slate-600/80 group-hover:bg-slate-300 transition-colors" /></div>
+                        ><span className="absolute top-0 bottom-0 right-0 w-px bg-transparent group-hover:bg-slate-400 transition-colors" /></div>
                     )}
-                    <div className="h-full rounded-2xl bg-[#070b15]/95 backdrop-blur-xl border border-slate-700/60 flex flex-col overflow-hidden">
-                        <div className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#0b1020]/95">
+                    <div className="inspector-surface h-full flex flex-col overflow-hidden">
+                        <div className="inspector-heading sticky top-0 z-20">
                             <div className="flex items-center justify-between px-3 py-2.5">
                                 <div className="min-w-0 flex items-center gap-1.5">
-                                    <span className="ui-eyebrow text-slate-400">Code Inspector</span>
+                                    <FileCode2 className="w-4 h-4 shrink-0 text-slate-400" aria-hidden="true" />
                                     <span className="ui-body font-semibold text-slate-100 truncate">{selectedFile?.label ?? ""}</span>
                                 </div>
                                 <Button
@@ -2371,6 +2372,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
                         </div>
 
+                        {selectedFile && <div className="workbench-file-path" title={selectedFile.path}>{selectedFile.path}</div>}
                         {(() => {
                             const nodeId = selectedFile ? pathToIdRef.current.get(selectedFile.path) : null;
                             const attrs = nodeId ? graphRef.current?.getNodeAttributes(nodeId) : null;
@@ -2442,10 +2444,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                     </div>
                 </motion.div>
-            </div>
 
-            <div className="relative flex-1 min-w-0 h-full flex flex-col">
-                <div className="relative z-20 shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-700/70 bg-[#131f34] p-3">
+            <div className="workbench-graph relative flex-1 min-w-0 h-full flex flex-col order-2">
+                <div className="graph-toolbar relative z-20 shrink-0 flex flex-wrap items-center gap-2 bg-[#131f34] p-3">
                     {!showExplorer && (
                         <button
                             onClick={() => startTransition(() => {
@@ -2459,7 +2460,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             Explorer
                         </button>
                     )}
-                    <div className="hidden sm:flex items-center gap-1 px-3 h-9 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-md text-xs text-slate-300">
+                    <div className="hidden sm:flex items-center gap-1 px-3 h-9 text-xs text-slate-300">
                         <span><strong className="text-slate-100">{clusterInfo.files}</strong> files</span>
                         <span className="text-slate-600">|</span>
                         <span><strong className="text-slate-100">{clusterInfo.folders}</strong> folders</span>
