@@ -181,8 +181,13 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                 ]);
 
                 if (!cancelled) {
-                    setSvgContent(svg);
-                    lastGoodSvgRef.current = svg;
+                    const diagram = new DOMParser().parseFromString(svg, "text/html");
+                    diagram.querySelectorAll<SVGElement>("[style]").forEach((element) => {
+                        ["fill", "stroke", "color", "background", "background-color"].forEach((property) => element.style.removeProperty(property));
+                    });
+                    const themedSvg = diagram.querySelector("svg")!.outerHTML;
+                    setSvgContent(themedSvg);
+                    lastGoodSvgRef.current = themedSvg;
                     setIsRendering(false);
                 }
             } catch (err) {
@@ -405,14 +410,25 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
 
         // Add CSS styles inline to preserve colors usually provided by the webpage
         const styleEl = document.createElement("style");
+        const theme = getComputedStyle(containerRef.current!);
+        const surface = theme.getPropertyValue("--atlas-surface").trim();
+        const ink = theme.getPropertyValue("--atlas-ink").trim();
+        const accent = theme.getPropertyValue("--atlas-blue").trim();
+        const selected = theme.getPropertyValue("--atlas-selected").trim();
+        const muted = theme.getPropertyValue("--atlas-muted").trim();
+        svgEl.style.background = surface;
         styleEl.textContent = `
             * { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-            .node rect, .node circle, .node polygon { fill: #1e293b; stroke: #818cf8; stroke-width: 1.5px; }
-            .node .label { color: #f8fafc; font-size: 14px; }
-            .edgePath path { stroke: #475569; stroke-width: 1.5px; }
-            .edgeLabel { background-color: #0f172a; color: #cbd5e1; padding: 2px 4px; border-radius: 4px; }
+            svg .node :is(rect, circle, polygon, ellipse, path) { fill: ${selected} !important; stroke: ${accent} !important; }
+            svg :is(.nodeLabel, .nodeLabel p, .cluster-label, .cluster-label p, .edgeLabel, .edgeLabel p) { color: ${ink} !important; }
+            svg text { fill: ${ink} !important; }
+            svg .cluster rect { fill: ${surface} !important; stroke: ${muted} !important; }
+            svg :is(.flowchart-link, .edgePath path) { stroke: ${muted} !important; }
+            svg marker path { fill: ${muted} !important; stroke: ${muted} !important; }
+            svg :is(.edgeLabel, .edgeLabel p, .labelBkg) { background: ${surface} !important; fill: ${surface} !important; }
         `;
-        svgEl.insertBefore(styleEl, svgEl.firstChild);
+        styleEl.textContent = styleEl.textContent.replaceAll("svg ", `svg#${CSS.escape(svgEl.id)}#${CSS.escape(svgEl.id)} `);
+        svgEl.appendChild(styleEl);
 
         const serializedSvg = new XMLSerializer().serializeToString(svgEl);
         const svgBlob = new Blob([serializedSvg], { type: "image/svg+xml;charset=utf-8" });

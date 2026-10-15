@@ -7,7 +7,7 @@
 - Added a single light/dark toggle to the homepage and workspace using the installed `next-themes` package. Light is the default; the preference persists across navigation and reloads.
 - Shared paper, surface, ink, muted, border, accent, and selection tokens now drive both pages, loading states, and dialogs.
 - Every repository view uses the same heading placement, explanatory text, content spacing, and navigation. Removed repeated editorial slogans and staggered package-card entrances.
-- Contributor, dependency, and commit-history surfaces adapt to the selected theme. File/code and architecture canvases intentionally remain dark work surfaces in both modes.
+- Contributor, dependency, commit-history, file/code, and architecture surfaces adapt to the selected theme. Graph labels, connections, controls, and exported architecture SVGs follow the selected palette while file-type colors remain recognizable.
 - Browser-verified dark homepage persistence after reload, navigation into the workspace, light/dark controls, light settings dialog, mobile dependency/architecture layouts at 390px, and light commit graph readability. Viewport reset afterward.
 - 38 tests and TypeScript pass. Production build passed before the final style-only commit-history panel correction; tests and TypeScript were rerun afterward. Changed-file lint has existing hook/image warnings and no errors.
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo, startTransition, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { motion } from "framer-motion";
+import { useTheme } from "next-themes";
 import Graph from "graphology";
 import type Sigma from "sigma";
 import { List, type RowComponentProps } from "react-window";
@@ -365,6 +366,7 @@ function syncGraphData(
 }
 
 export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
+    const { resolvedTheme } = useTheme();
     const containerRef = useRef<HTMLDivElement>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
     const symbolWorkerRef = useRef<Worker | null>(null);
@@ -436,6 +438,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [blastRadiusAffected, setBlastRadiusAffected] = useState<Set<string>>(new Set());
     const [blastRadiusCount, setBlastRadiusCount] = useState(0);
     const sigmaRef = useRef<Sigma | null>(null);
+    useEffect(() => {
+        sigmaRef.current?.setSetting("labelColor", { color: resolvedTheme === "dark" ? "#c3cedd" : "#34445c" });
+    }, [resolvedTheme]);
     const graphRef = useRef<Graph | null>(null);
     const simWorkerRef = useRef<Worker | null>(null);
     const simEpochRef = useRef(0);
@@ -1908,7 +1913,20 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 maxCameraRatio: 10,
                 labelSize: 11,
                 labelFont: "monospace",
-                labelColor: { color: "#94a3b8" },
+                labelColor: { color: document.documentElement.classList.contains("dark") ? "#c3cedd" : "#34445c" },
+                nodeReducer: (_node, attributes) => attributes.color === DIM_COLOR
+                    ? { ...attributes, color: document.documentElement.classList.contains("dark") ? "#3c4657" : "#d8dee8" }
+                    : attributes,
+                edgeReducer: (_edge, attributes) => {
+                    if (document.documentElement.classList.contains("dark")) return attributes;
+                    const lightColors: Record<string, string> = {
+                        contains: "#559c87", defines: "#0891b2", imports: "#2563eb",
+                        calls: "#7c3aed", extends: "#c2410c", implements: "#be185d", fileImport: "#a16207",
+                    };
+                    return { ...attributes, color: attributes.color === attributes.baseColor
+                        ? lightColors[attributes.edgeType] ?? "#aab7ca"
+                        : String(attributes.color).startsWith("rgba(255,255,255,") ? "#e4e9f0" : attributes.color };
+                },
                 labelRenderedSizeThreshold: nodeCount > 3000 ? 12 : nodeCount > 1000 ? 9 : 6,
                 zIndex: true,
             });
@@ -2224,6 +2242,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                 return (
                                     <div style={style} key={row.path || "root"} className="px-1.5 py-0.5" {...ariaAttributes}>
                                         <button
+                                            data-selected={isSelected}
                                             className={`group relative w-full h-[28px] flex items-center gap-1.5 rounded-md border transition-colors duration-150 ${isSelected ? "bg-indigo-500/28 border-indigo-400/70 text-white shadow-[inset_2px_0_0_0_#818cf8]" : "border-transparent text-slate-300 hover:bg-slate-800/75 hover:text-slate-100"} ${isFocused && !isSelected ? "ring-1 ring-slate-500/70" : ""}`}
                                             style={{ paddingLeft: 6 + row.depth * 14 }}
                                             onClick={() => {

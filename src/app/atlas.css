@@ -317,6 +317,31 @@
 .workspace-data :is(input, select) { background: var(--atlas-paper); color: var(--atlas-ink); border: 1px solid var(--atlas-line); border-radius: 6px; min-height: 36px; }
 .workspace-data .atlas-branch-card button { border-radius: 6px; }
 .history-rail-canvas { background: var(--atlas-paper); }
+.workspace-code { --foreground: var(--atlas-ink); --muted-foreground: var(--atlas-muted); --background: var(--atlas-surface); --secondary: var(--atlas-selected); --border: var(--atlas-line); color: var(--atlas-ink); }
+.workspace-canvas .workspace-code { background: var(--atlas-surface); border-color: var(--atlas-line); }
+.workspace-code .diagram-grid, .workspace-code .atlas-architecture.diagram-dot-field { background-color: var(--atlas-surface); background-image: radial-gradient(var(--atlas-line) .7px, transparent .7px); background-size: 24px 24px; }
+.workspace-code :is(.bg-\[\#0d1729\], .bg-\[\#080d18\]) { background: transparent; }
+.workspace-code :is(#file-explorer-inner, .bg-\[\#131f34\], .bg-\[\#111a2b\], .bg-\[\#111a2b\]\/95, .bg-slate-900\/95, .bg-\[\#070b15\]\/95, .bg-\[\#0b1020\]\/95) { background: var(--atlas-paper); border-color: var(--atlas-line); }
+.workspace-code :is(.text-slate-100, .text-slate-200, .text-slate-300, .text-white) { color: var(--atlas-ink); }
+.workspace-code :is(.text-slate-400, .text-slate-500, .text-slate-400\/70) { color: var(--atlas-muted); }
+.workspace-code :is(button, input, .pro-control), .workspace-code .atlas-architecture button { color: var(--atlas-ink); background: var(--atlas-surface); border-color: var(--atlas-line); box-shadow: none; }
+.workspace-code button:hover, .workspace-code button[aria-pressed="true"] { background: var(--atlas-selected); color: var(--atlas-blue); }
+.workspace-code :is(.bg-slate-900\/90, .bg-slate-900\/70, .bg-slate-900\/55) { background: var(--atlas-paper); }
+.workspace-code :is(.border-slate-700, .border-slate-800) { border-color: var(--atlas-line); }
+.workspace-code button[data-selected] { background: transparent; border-color: transparent; }
+.workspace-code button[data-selected="true"], .workspace-code button[data-selected]:hover { background: var(--atlas-selected); color: var(--atlas-blue); }
+:root:not(.dark) .workspace-code .token { color: #34445c; }
+:root:not(.dark) .workspace-code .token:is(.comment, .prolog, .doctype, .cdata) { color: #64748b; }
+:root:not(.dark) .workspace-code .token:is(.keyword, .boolean, .number, .operator) { color: #7c3aed; }
+:root:not(.dark) .workspace-code .token:is(.string, .attr-value) { color: #047857; }
+:root:not(.dark) .workspace-code .token:is(.function, .class-name, .tag, .attr-name) { color: #1d4ed8; }
+:is(#graph-theme, .workspace-code) .mermaid-container .node :is(rect, polygon, circle, ellipse, path) { fill: var(--atlas-selected) !important; stroke: var(--atlas-blue) !important; }
+.workspace-code .mermaid-container :is(.nodeLabel, .nodeLabel p, .cluster-label, .cluster-label p, .edgeLabel, .edgeLabel p) { color: var(--atlas-ink) !important; }
+.workspace-code .mermaid-container text { fill: var(--atlas-ink) !important; }
+.workspace-code .mermaid-container .cluster rect { fill: var(--atlas-paper) !important; stroke: var(--atlas-line) !important; }
+.workspace-code .mermaid-container :is(.flowchart-link, .edgePath path) { stroke: var(--atlas-muted) !important; }
+.workspace-code .mermaid-container marker path { fill: var(--atlas-muted) !important; stroke: var(--atlas-muted) !important; }
+:is(#graph-theme, .workspace-code) .mermaid-container :is(.edgeLabel, .edgeLabel p, .labelBkg) { background: var(--atlas-surface) !important; fill: var(--atlas-surface) !important; }
 .workspace-data :is(.text-muted-foreground\/50, .text-muted-foreground\/60, .text-muted-foreground\/70, .text-slate-400\/70) { color: var(--atlas-muted); }
 .workspace-data > div > .shrink-0 { background: var(--atlas-surface); border-color: var(--atlas-line); }
 [data-slot="dialog-content"] { --foreground: var(--atlas-ink); --muted-foreground: var(--atlas-muted); --background: var(--atlas-surface); --border: var(--atlas-line); color: var(--atlas-ink); background: var(--atlas-surface); border-color: var(--atlas-line); border-radius: 10px; }
