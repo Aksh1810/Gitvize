@@ -330,6 +330,20 @@
 .workspace-code :is(.border-slate-700, .border-slate-800) { border-color: var(--atlas-line); }
 .workspace-code button[data-selected] { background: transparent; border-color: transparent; }
 .workspace-code button[data-selected="true"], .workspace-code button[data-selected]:hover { background: var(--atlas-selected); color: var(--atlas-blue); }
+.workspace-code #file-explorer-inner { background: var(--atlas-surface); border-color: var(--atlas-line); }
+.explorer-heading { color: var(--atlas-ink); min-height: 44px; }
+.workspace-code .explorer-heading button { background: transparent; color: var(--atlas-muted); border: 0; }
+.explorer-search { margin: 0 12px 12px; z-index: 40; }
+.workspace-code .explorer-search input { height: 34px; background: var(--atlas-paper); font-size: 12px; border-radius: 5px; }
+.explorer-search input::placeholder { color: var(--atlas-muted); }
+.workspace-code .explorer-search [role="status"] { background: var(--atlas-surface); border-color: var(--atlas-line); box-shadow: 0 8px 24px #00000014; border-radius: 5px; }
+.explorer-tree { font-size: 13px; line-height: 20px; }
+.workspace-code .explorer-row { color: var(--atlas-ink); }
+.workspace-code .explorer-row:hover { background: var(--atlas-paper); color: var(--atlas-ink); }
+.workspace-code .explorer-row[data-selected="true"] { background: var(--atlas-selected); color: var(--atlas-blue); font-weight: 500; }
+.explorer-tree:focus-within .explorer-row[data-focused="true"] { outline: 1px solid var(--atlas-blue); outline-offset: -1px; }
+.explorer-guide { background: var(--atlas-line); opacity: .65; pointer-events: none; }
+.explorer-icon { opacity: .85; }
 :root:not(.dark) .workspace-code .token { color: #34445c; }
 :root:not(.dark) .workspace-code .token:is(.comment, .prolog, .doctype, .cdata) { color: #64748b; }
 :root:not(.dark) .workspace-code .token:is(.keyword, .boolean, .number, .operator) { color: #7c3aed; }

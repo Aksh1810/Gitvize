@@ -413,7 +413,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const [symbolDiagnostics, setSymbolDiagnostics] = useState<SymbolDiagnostics>(EMPTY_SYMBOL_DIAGNOSTICS);
     const [showExplorer, setShowExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
-    const [explorerWidth, setExplorerWidth] = useState(220);
+    const [explorerWidth, setExplorerWidth] = useState(260);
     const [explorerViewportHeight, setExplorerViewportHeight] = useState(560);
     const [showRightFilters, setShowRightFilters] = useState(false);
 
@@ -455,7 +455,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
     const lockedNodeIdRef = useRef<string | null>(null);
     const draggedNodeRef = useRef<string | null>(null);
     const resizingRef = useRef(false);
-    const explorerWidthRef = useRef(220);
+    const explorerWidthRef = useRef(260);
     const dragStartXRef = useRef(0);
     const dragStartWidthRef = useRef(220);
     const inspectorResizingRef = useRef(false);
@@ -2200,8 +2200,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 style={{ width: showExplorer ? explorerWidth : 0, willChange: 'width' }}
             >
                 <div id="file-explorer-inner" inert={!showExplorer} className="h-full w-full border-r border-slate-700/80 bg-[#121e33] flex flex-col overflow-hidden">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
-                        <span className="ui-eyebrow text-slate-400">Explorer</span>
+                    <div className="explorer-heading flex items-center justify-between px-3 py-2">
+                        <span className="text-xs font-medium">Files</span>
                         <div className="flex items-center gap-1">
                             <Button
                                 variant="ghost"
@@ -2226,7 +2226,38 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </Button>
                         </div>
                     </div>
-                    <div className="relative flex-1 overflow-x-hidden overflow-y-hidden ui-body font-mono text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
+                    <div className="explorer-search relative">
+                        <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" aria-hidden="true" />
+                        <input
+                            type="search"
+                            aria-label="Find a file by name or path"
+                            placeholder="Find file…"
+                            value={searchQuery}
+                            onFocus={() => setSearchOpen(true)}
+                            onChange={(event) => { handleSearch(event.target.value); setSearchOpen(true); }}
+                            onKeyDown={(event) => {
+                                if (event.key === "Escape") setSearchOpen(false);
+                                if (event.key === "Enter" && searchResults[0]) {
+                                    handleSearch("");
+                                    handleExplorerFileSelect({ name: searchResults[0].filename, path: searchResults[0].path, extension: searchResults[0].extension });
+                                    setSearchOpen(false);
+                                }
+                            }}
+                            className="h-9 w-full rounded-md border border-slate-600 bg-slate-900/95 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
+                        />
+                        {searchOpen && searchQuery.trim() && (
+                            <div className="absolute top-11 left-0 right-0 z-40 max-h-80 overflow-y-auto rounded-lg border border-slate-600 bg-[#111a2b] p-1 shadow-2xl" role="status">
+                                <p className="px-2 py-1 text-xs text-slate-400">{searchResults.length ? `Top ${searchResults.length} matches` : "No files found"}</p>
+                                {searchResults.map((result) => (
+                                    <button key={result.path} type="button" onClick={() => { handleSearch(""); handleExplorerFileSelect({ name: result.filename, path: result.path, extension: result.extension }); setSearchOpen(false); }} className="w-full rounded px-2 py-2 text-left hover:bg-sky-300/10 focus-visible:bg-sky-300/10 focus-visible:outline-none">
+                                        <span className="block truncate text-sm text-white">{result.filename}</span>
+                                        <span className="block truncate text-xs text-slate-400">{result.path}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <div className="explorer-tree relative flex-1 overflow-x-hidden overflow-y-hidden ui-body text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
                         <List
                             listRef={explorerListRef}
                             style={{ height: explorerViewportHeight, width: "100%" }}
@@ -2238,12 +2269,15 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                 const isFolder = row.type === "folder";
                                 const isSelected = selectedFile?.path === row.path;
                                 const isFocused = treeFocusPath === row.path;
-                                const iconColor = isFolder ? "#f472b6" : getFileColor(row.name);
+                                const iconColor = isFolder ? "var(--atlas-muted)" : getFileColor(row.name);
                                 return (
                                     <div style={style} key={row.path || "root"} className="px-1.5 py-0.5" {...ariaAttributes}>
                                         <button
                                             data-selected={isSelected}
-                                            className={`group relative w-full h-[28px] flex items-center gap-1.5 rounded-md border transition-colors duration-150 ${isSelected ? "bg-indigo-500/28 border-indigo-400/70 text-white shadow-[inset_2px_0_0_0_#818cf8]" : "border-transparent text-slate-300 hover:bg-slate-800/75 hover:text-slate-100"} ${isFocused && !isSelected ? "ring-1 ring-slate-500/70" : ""}`}
+                                            aria-expanded={isFolder ? row.isExpanded : undefined}
+                                            aria-current={isSelected ? "true" : undefined}
+                                            data-focused={isFocused}
+                                            className="explorer-row group relative w-full h-[28px] flex items-center gap-1.5 rounded-sm border border-transparent transition-colors duration-150"
                                             style={{ paddingLeft: 6 + row.depth * 14 }}
                                             onClick={() => {
                                                 setTreeFocusPath(row.path);
@@ -2256,12 +2290,12 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                             }}
                                         >
                                             {Array.from({ length: row.depth }).map((_, guideIdx) => (
-                                                <span key={`${row.path}-guide-${guideIdx}`} className="absolute top-1 bottom-1 bg-slate-600/50" style={{ left: 12 + guideIdx * 14, width: '1.5px' }} />
+                                                <span key={`${row.path}-guide-${guideIdx}`} aria-hidden="true" className="explorer-guide absolute -top-0.5 -bottom-0.5" style={{ left: 12 + guideIdx * 14, width: 1 }} />
                                             ))}
                                             {isFolder ? (
                                                 row.hasChildren ? <span className={`shrink-0 transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}><ChevronRight className="shrink-0 w-3 h-3 text-slate-400" /></span> : <span className="shrink-0 w-3 h-3" />
                                             ) : <span className="shrink-0 w-3 h-3" />}
-                                            <div className="shrink-0 flex items-center justify-center">
+                                            <div className="explorer-icon shrink-0 flex items-center justify-center" aria-hidden="true">
                                                 {isFolder ? (row.isExpanded ? <FolderOpen className="w-3.5 h-3.5" style={{ color: iconColor }} /> : <Folder className="w-3.5 h-3.5" style={{ color: iconColor }} />) : getExplorerFileIcon(row.name)}
                                             </div>
                                             <span className="truncate text-left min-w-0" title={row.path || row.name || repo}>{row.name || repo}</span>
@@ -2429,37 +2463,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         <span><strong className="text-slate-100">{clusterInfo.files}</strong> files</span>
                         <span className="text-slate-600">|</span>
                         <span><strong className="text-slate-100">{clusterInfo.folders}</strong> folders</span>
-                    </div>
-                    <div className="relative w-full sm:w-64 order-last sm:order-none">
-                        <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" aria-hidden="true" />
-                        <input
-                            type="search"
-                            aria-label="Find a file by name or path"
-                            placeholder="Find a file or path"
-                            value={searchQuery}
-                            onFocus={() => setSearchOpen(true)}
-                            onChange={(event) => { handleSearch(event.target.value); setSearchOpen(true); }}
-                            onKeyDown={(event) => {
-                                if (event.key === "Escape") setSearchOpen(false);
-                                if (event.key === "Enter" && searchResults[0]) {
-                                    handleSearch("");
-                                    handleExplorerFileSelect({ name: searchResults[0].filename, path: searchResults[0].path, extension: searchResults[0].extension });
-                                    setSearchOpen(false);
-                                }
-                            }}
-                            className="h-9 w-full rounded-md border border-slate-600 bg-slate-900/95 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
-                        />
-                        {searchOpen && searchQuery.trim() && (
-                            <div className="absolute top-11 left-0 right-0 z-40 max-h-80 overflow-y-auto rounded-lg border border-slate-600 bg-[#111a2b] p-1 shadow-2xl" role="status">
-                                <p className="px-2 py-1 text-xs text-slate-400">{searchResults.length ? `Top ${searchResults.length} matches` : "No files found"}</p>
-                                {searchResults.map((result) => (
-                                    <button key={result.path} type="button" onClick={() => { handleSearch(""); handleExplorerFileSelect({ name: result.filename, path: result.path, extension: result.extension }); setSearchOpen(false); }} className="w-full rounded px-2 py-2 text-left hover:bg-sky-300/10 focus-visible:bg-sky-300/10 focus-visible:outline-none">
-                                        <span className="block truncate text-sm text-white">{result.filename}</span>
-                                        <span className="block truncate text-xs text-slate-400">{result.path}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
                     </div>
                     <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center gap-2 px-3 h-9 rounded-md border text-sm ${showRightFilters ? "bg-sky-300/15 border-sky-300/50 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white focus-visible:outline-2 focus-visible:outline-sky-300`} aria-label="Toggle filters" aria-expanded={showRightFilters}><Filter className="w-4 h-4" /> Filters</button>
                     <button
