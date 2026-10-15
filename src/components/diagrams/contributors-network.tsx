@@ -68,7 +68,7 @@ export default function ContributorsNetwork({
             <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-border/20">
                 <div className="flex items-center gap-2">
                     <Users className="w-4 h-4 text-cyan-400" />
-                    <span className="text-sm font-semibold">Contributors</span>
+                    <span className="text-sm font-semibold">People</span>
                     <Badge variant="secondary" className="text-[10px]">{contributors.length}</Badge>
                 </div>
             </div>
@@ -122,16 +122,17 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
 
     return (
         <div className="w-full h-full overflow-auto custom-scrollbar">
-            <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-                <p className="text-sm text-muted-foreground">
+            <div className="atlas-data-page space-y-5">
+                <div className="atlas-data-summary"><p>
                     {contributors.reduce((total, contributor) => total + contributor.contributions, 0).toLocaleString()} commits across {contributors.length} contributors
-                </p>
+                </p></div>
 
                 {/* Controls */}
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="relative flex items-center">
                         <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
                         <select
+                            aria-label="Sort contributors"
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value as "commits" | "name")}
                             className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/20 transition-colors appearance-none cursor-pointer text-foreground"
@@ -144,7 +145,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                         <input
                             type="text"
-                            placeholder="Search..."
+                            placeholder="Search contributors..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             aria-label="Search contributors"
@@ -159,7 +160,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                 </div>
 
                 {/* Contributors list */}
-                <div className="rounded-xl border border-border/20 bg-white/[0.03] divide-y divide-border/10 overflow-hidden">
+                <div className="atlas-contributor-list">
                     {filtered.map((contributor, idx) => {
                         const pct = (contributor.contributions / maxContributions) * 100;
                         const rank = contributors.findIndex((c) => c.login === contributor.login) + 1;
@@ -173,7 +174,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                                 initial={{ opacity: 0, x: -8 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ delay: Math.min(idx * 0.02, 0.5) }}
-                                className="group flex items-center gap-3 sm:gap-4 px-3 sm:px-5 py-4 hover:bg-secondary/20 transition-colors cursor-pointer"
+                                className="atlas-contributor group flex items-center gap-3 sm:gap-4 px-3 sm:px-5 py-4 transition-colors cursor-pointer"
                             >
                                 <span className="text-[11px] text-muted-foreground/50 w-6 text-right shrink-0 font-mono">
                                     #{rank}
@@ -193,7 +194,7 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                                     <div className="flex items-center gap-2 mt-2">
                                         <div className="flex-1 h-1.5 rounded-full bg-secondary/30 overflow-hidden">
                                             <div
-                                                className="h-full rounded-full bg-cyan-500/60 transition-all duration-500"
+                                                className="h-full rounded-full bg-blue-400/70 transition-all duration-500"
                                                 style={{ width: `${pct}%` }}
                                             />
                                         </div>

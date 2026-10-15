@@ -319,7 +319,7 @@ export default function CommitHistoryRail({
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return (
-        <div className="glass-card p-4">
+        <div className="atlas-branch-card p-4">
             {/* Header */}
             <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
@@ -398,7 +398,7 @@ export default function CommitHistoryRail({
             )}
 
             {/* Graph and commit list scroll with the page */}
-            <div className="rounded-xl border border-border/20 bg-[#070b15]/70">
+            <div className="history-rail-canvas rounded-lg border border-border">
                 <div className="relative" style={{ minHeight: totalHeight }}>
 
                     {/* ── Single SVG canvas spanning the full commit list ── */}

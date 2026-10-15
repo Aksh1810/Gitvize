@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import CommitHistoryRail from "./commit-history-rail";
 import type { Branch, Commit } from "@/types";
 
-const BRANCH_COLOR = "#6366f1";
+const BRANCH_COLOR = "var(--atlas-blue)";
 
 interface BranchGraphProps {
     branches: Branch[];
@@ -171,10 +171,10 @@ export default function BranchGraph({
     }, [defaultBranch, owner, repo]);
 
     const filteredCommits = useMemo(() => {
-        let result = [...allCommits];
+        let result = [...(selectedBranch === defaultBranch ? allCommits : branchCommits)];
 
         if (searchQuery.trim()) {
-            const q = searchQuery.toLowerCase();
+            const q = searchQuery.trim().toLowerCase();
             result = result.filter(
                 (c) =>
                     c.message.toLowerCase().includes(q) ||
@@ -193,9 +193,9 @@ export default function BranchGraph({
         }
 
         return result;
-    }, [allCommits, searchQuery, sortBy]);
+    }, [allCommits, branchCommits, selectedBranch, defaultBranch, searchQuery, sortBy]);
 
-    const displayCommits = selectedBranch === defaultBranch ? filteredCommits : branchCommits;
+    const displayCommits = filteredCommits;
 
     const groupedCommits = useMemo(
         () => groupCommitsByDate(displayCommits),
@@ -208,7 +208,7 @@ export default function BranchGraph({
             <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-border/20">
                 <div className="flex items-center gap-2">
                     <GitBranch className="w-4 h-4 text-slate-300" />
-                    <span className="text-sm font-semibold">Branches</span>
+                    <span className="text-sm font-semibold">History</span>
                 </div>
                 <div className="flex items-center gap-1 bg-secondary/30 rounded-lg p-0.5 border border-border/20">
                     <button
@@ -241,10 +241,10 @@ export default function BranchGraph({
             {view === "history" ? (
                 <>
                     <div className="flex-1 overflow-auto custom-scrollbar">
-                        <div className="px-6 py-6 space-y-6">
+                        <div className="atlas-data-page space-y-6">
 
                             {/* Branches Section */}
-                            <div className="glass-card p-5">
+                            <div className="atlas-branch-card p-5">
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-2">
                                         <GitBranch className="w-4 h-4 text-slate-300" />
@@ -265,9 +265,9 @@ export default function BranchGraph({
                                         onClick={() => setGraphBranch(graphBranch === defaultBranch ? null : defaultBranch)}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
                                         style={{
-                                            borderColor: graphBranch === defaultBranch ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
-                                            background: graphBranch === defaultBranch ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
-                                            color: graphBranch === defaultBranch ? BRANCH_COLOR : "#94a3b8",
+                                            borderColor: graphBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-line)",
+                                            background: graphBranch === defaultBranch ? "var(--atlas-selected)" : "transparent",
+                                            color: graphBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-muted)",
                                         }}
                                     >
                                         <GitBranch className="w-3 h-3" />
@@ -281,9 +281,9 @@ export default function BranchGraph({
                                                 onClick={() => setGraphBranch(isSelected ? null : b.name)}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
                                                 style={{
-                                                    borderColor: isSelected ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
-                                                    background: isSelected ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
-                                                    color: isSelected ? BRANCH_COLOR : "#94a3b8",
+                                                    borderColor: isSelected ? BRANCH_COLOR : "var(--atlas-line)",
+                                                    background: isSelected ? "var(--atlas-selected)" : "transparent",
+                                                    color: isSelected ? BRANCH_COLOR : "var(--atlas-muted)",
                                                 }}
                                             >
                                                 <GitBranch className="w-3 h-3" />
@@ -294,13 +294,13 @@ export default function BranchGraph({
                                 </div>
                             </div>
 
-                            <CommitHistoryRail commits={filteredCommits} defaultBranch={defaultBranch} branches={branches} selectedBranchOverride={graphBranch} />
+                            <CommitHistoryRail commits={allCommits} defaultBranch={defaultBranch} branches={branches} selectedBranchOverride={graphBranch} />
                         </div>
                     </div>
 
                     {hasMore && (
                         <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
-                            <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                                     <GitCommit className="w-3.5 h-3.5" />
                                     <span>{allCommits.length} loaded</span>
@@ -350,10 +350,10 @@ export default function BranchGraph({
                 <>
                     {/* Scrollable content */}
                     <div className="flex-1 overflow-auto custom-scrollbar">
-                        <div className="px-6 py-6 space-y-6">
+                        <div className="atlas-data-page space-y-6">
 
                             {/* Branches Section */}
-                            <div className="glass-card p-5">
+                            <div className="atlas-branch-card p-5">
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-2">
                                         <GitBranch className="w-4 h-4 text-slate-300" />
@@ -383,9 +383,9 @@ export default function BranchGraph({
                                         onClick={() => fetchBranchCommits(defaultBranch)}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
                                         style={{
-                                            borderColor: selectedBranch === defaultBranch ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
-                                            background: selectedBranch === defaultBranch ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
-                                            color: selectedBranch === defaultBranch ? BRANCH_COLOR : "#94a3b8",
+                                            borderColor: selectedBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-line)",
+                                            background: selectedBranch === defaultBranch ? "var(--atlas-selected)" : "transparent",
+                                            color: selectedBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-muted)",
                                         }}
                                     >
                                         <GitBranch className="w-3 h-3" />
@@ -403,9 +403,9 @@ export default function BranchGraph({
                                                 onClick={() => fetchBranchCommits(branch.name)}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
                                                 style={{
-                                                    borderColor: isSelected ? BRANCH_COLOR : "rgba(255,255,255,0.12)",
-                                                    background: isSelected ? `${BRANCH_COLOR}20` : "rgba(255,255,255,0.04)",
-                                                    color: isSelected ? BRANCH_COLOR : "#94a3b8",
+                                                    borderColor: isSelected ? BRANCH_COLOR : "var(--atlas-line)",
+                                                    background: isSelected ? "var(--atlas-selected)" : "transparent",
+                                                    color: isSelected ? BRANCH_COLOR : "var(--atlas-muted)",
                                                 }}
                                             >
                                                 <GitBranch className="w-3 h-3" />
@@ -417,8 +417,8 @@ export default function BranchGraph({
                             </div>
 
                             {/* Commits Header */}
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex flex-wrap items-center gap-2">
                                     <GitCommit className="w-4 h-4 text-muted-foreground" />
                                     <h3 className="text-sm font-semibold">Commits</h3>
                                     {isBranchLoading ? (
@@ -566,7 +566,7 @@ export default function BranchGraph({
                                                                             <div className="flex items-center gap-2">
                                                                                 <GitBranch className="w-3 h-3 text-muted-foreground" />
                                                                                 <Badge variant="outline" className="text-[9px]">
-                                                                                    {defaultBranch}
+                                                                                    {selectedBranch}
                                                                                 </Badge>
                                                                             </div>
                                                                         </div>
@@ -586,11 +586,11 @@ export default function BranchGraph({
                                 )}
 
                                 {/* End marker */}
-                                {!hasMore && allCommits.length > 0 && (
+                                {!isBranchLoading && !searchQuery && displayCommits.length > 0 && (selectedBranch !== defaultBranch || !hasMore) && (
                                     <div className="flex items-center gap-3 ml-1 pt-4 pb-2">
                                         <div className="w-[10px] h-[10px] rounded-full bg-muted-foreground/20 border-2 border-background z-10" />
                                         <span className="text-[11px] text-muted-foreground/50">
-                                            All {allCommits.length} commits loaded
+                                            {selectedBranch === defaultBranch ? `All ${allCommits.length} commits loaded` : `${branchCommits.length} commits loaded for ${selectedBranch}${branchCommits.length === 100 ? " (first 100)" : ""}`}
                                         </span>
                                     </div>
                                 )}
@@ -601,7 +601,7 @@ export default function BranchGraph({
                     {/* Sticky Bottom Bar — always visible, no scrolling needed */}
                     {hasMore && (
                         <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
-                            <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                                     <GitCommit className="w-3.5 h-3.5" />
                                     <span>{allCommits.length} loaded</span>

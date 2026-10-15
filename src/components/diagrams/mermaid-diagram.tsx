@@ -496,15 +496,16 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     }
 
     return (
-        <div className="relative h-full w-full overflow-hidden diagram-dot-field">
+        <div className="atlas-architecture relative flex h-full min-h-0 w-full flex-col overflow-hidden diagram-dot-field">
             {showStaleWarning && (
                 <div className="absolute top-4 right-4 z-20 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 backdrop-blur-sm">
                     Showing last valid diagram. Current Mermaid output has syntax issues.
                 </div>
             )}
             {/* Controls — positioned on the LEFT to avoid overlap with parent's "Generate Premium Diagram" button on the right */}
-            <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+            <div className="relative z-10 flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 p-3">
                 <Button
+                    aria-label="Zoom in on architecture"
                     variant="outline"
                     size="sm"
                     onClick={zoomIn}
@@ -513,6 +514,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                     <ZoomIn className="h-4 w-4" />
                 </Button>
                 <Button
+                    aria-label="Zoom out of architecture"
                     variant="outline"
                     size="sm"
                     onClick={zoomOut}
@@ -521,6 +523,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                     <ZoomOut className="h-4 w-4" />
                 </Button>
                 <Button
+                    aria-label="Fit architecture in view"
                     variant="outline"
                     size="sm"
                     onClick={resetView}
@@ -563,7 +566,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
             {/* SVG Container */}
             <div
                 ref={containerRef}
-                className={`relative h-full w-full ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+                className={`relative min-h-0 flex-1 w-full ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}

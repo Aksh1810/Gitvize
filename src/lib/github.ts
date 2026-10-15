@@ -617,9 +617,7 @@ async function _fetchAllRepoDataImpl(
 
     const [fileTree, branches, commits, readme, dependencyFiles, mergedPRs] =
         await Promise.all([
-            fetchFileTree(owner, repo, metadata.defaultBranch, token).catch(
-                () => null
-            ),
+            fetchFileTree(owner, repo, metadata.defaultBranch, token),
             branchesP,
             branchesP.then((b) =>
                 fetchCommitsForDAG(owner, repo, metadata.defaultBranch, b, token).catch(
@@ -663,7 +661,7 @@ function deduplicatedFetch(owner: string, repo: string) {
 // cache in dev). Each unique (owner, repo) pair gets its own cache entry.
 const cachedFetchAllRepoData = unstable_cache(
     deduplicatedFetch,
-    ["repo-data-v1"],
+    ["repo-data-v2"],
     { revalidate: 300 }
 );
 

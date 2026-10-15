@@ -2181,7 +2181,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200 ease-in-out"
                 style={{ width: showExplorer ? explorerWidth : 0, willChange: 'width' }}
             >
-                <div id="file-explorer-inner" className="h-full w-full rounded-2xl border border-slate-700/80 bg-slate-950/95 backdrop-blur flex flex-col overflow-hidden">
+                <div id="file-explorer-inner" inert={!showExplorer} className="h-full w-full border-r border-slate-700/80 bg-[#121e33] flex flex-col overflow-hidden">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                         <span className="ui-eyebrow text-slate-400">Explorer</span>
                         <div className="flex items-center gap-1">
@@ -2273,6 +2273,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
                 <motion.div
                     id="inspector-panel-motion"
+                    inert={!showExplorerInspector}
                     className="absolute left-0 md:left-full top-0 h-full z-40 overflow-hidden"
                     initial={false}
                     animate={{
@@ -2390,8 +2391,8 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </motion.div>
             </div>
 
-            <div className="relative flex-1 h-full">
-                <div className="absolute top-3 left-3 right-3 z-20 flex flex-wrap items-start gap-2 pointer-events-none [&>*]:pointer-events-auto">
+            <div className="relative flex-1 min-w-0 h-full flex flex-col">
+                <div className="relative z-20 shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-700/70 bg-[#131f34] p-3">
                     {!showExplorer && (
                         <button
                             onClick={() => startTransition(() => {
@@ -2410,11 +2411,6 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         <span className="text-slate-600">|</span>
                         <span><strong className="text-slate-100">{clusterInfo.folders}</strong> folders</span>
                     </div>
-                    {symbolDiagnostics.fetchFailed > 0 && (
-                        <span role="status" className="flex items-center px-3 h-9 rounded-md border border-amber-500/40 bg-amber-950/80 text-xs text-amber-200">
-                            Partial symbol index: {symbolDiagnostics.fetchFailed} files unavailable
-                        </span>
-                    )}
                     <div className="relative w-full sm:w-64 order-last sm:order-none">
                         <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" aria-hidden="true" />
                         <input
@@ -2460,10 +2456,16 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         <Braces className="w-3.5 h-3.5" />
                         <span>Symbols</span>
                     </button>
+                    {symbolDiagnostics.fetchFailed > 0 && (
+                        <span role="status" className="w-full text-[11px] text-amber-200/90">
+                            Partial symbol index: {symbolDiagnostics.fetchFailed} files unavailable. File browsing is still available.
+                        </span>
+                    )}
                 </div>
 
                 <motion.div
                     id="filter-panel-motion"
+                    inert={!showRightFilters}
                     className="absolute top-0 right-0 bottom-0 z-30 overflow-hidden"
                     initial={false}
                     animate={{
@@ -2658,7 +2660,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                     </div>
                 )}
 
-                <div ref={containerRef} className="w-full h-full rounded-xl bg-[#07050f]" />
+                <div ref={containerRef} className="w-full flex-1 min-h-0 bg-[#0d1729]" />
 
                 <div className="absolute bottom-2 left-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">

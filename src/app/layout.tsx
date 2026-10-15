@@ -4,7 +4,9 @@ import { Analytics } from "@vercel/analytics/next";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import AppMotionProvider from "@/components/motion/app-motion-provider";
+import ThemeProvider from "@/components/ui/theme-provider";
 import "./globals.css";
+import "./atlas.css";
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
@@ -49,18 +51,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
       <body
         className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased h-screen bg-background relative overflow-hidden`}
       >
+        <ThemeProvider>
         <TooltipProvider delayDuration={300}>
           <AppMotionProvider>
             <div className="app-background" />
-            <div className="app-orb orb-1" />
-            <div className="app-orb orb-2" />
-            <div className="app-orb orb-3" />
-            <div className="stars-bg" />
-            <div className="app-noise" />
             {children}
           </AppMotionProvider>
         </TooltipProvider>
@@ -68,12 +66,13 @@ export default function RootLayout({
           position="bottom-right"
           toastOptions={{
             style: {
-              background: "rgba(15, 23, 42, 0.9)",
-              border: "1px solid rgba(99, 102, 241, 0.2)",
-              color: "#f1f5f9",
+              background: "var(--atlas-surface)",
+              border: "1px solid var(--atlas-line)",
+              color: "var(--atlas-ink)",
             },
           }}
         />
+        </ThemeProvider>
         <Analytics />
       </body>
     </html>

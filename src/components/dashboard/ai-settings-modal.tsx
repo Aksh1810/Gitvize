@@ -111,11 +111,11 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="bg-slate-950/95 border-border/80 shadow-2xl sm:max-w-[560px]">
+            <DialogContent className="bg-[#152139] border-slate-700 shadow-2xl sm:max-w-[560px]">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-lg">
                         <Sparkles className="w-5 h-5 text-indigo-400" />
-                        AI Settings
+                        Make room for more context
                     </DialogTitle>
                     <DialogDescription>
                         Smart architecture diagrams work by default without any key.
@@ -128,7 +128,7 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                     {/* API Key */}
                     <div className="space-y-2 rounded-lg border border-border/50 bg-slate-900/70 p-3">
                         <div className="flex items-center justify-between">
-                            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                            <Label htmlFor="ai-api-key" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                                 API Key
                             </Label>
                             <a
@@ -142,6 +142,8 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                         </div>
                         <div className="relative">
                             <Input
+                                id="ai-api-key"
+                                autoComplete="off"
                                 type={showKey ? "text" : "password"}
                                 value={apiKey}
                                 onChange={(e) => setApiKey(e.target.value)}
@@ -151,6 +153,7 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                             <button
                                 type="button"
                                 onClick={() => setShowKey(!showKey)}
+                                aria-label={showKey ? "Hide API key" : "Show API key"}
                                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                             >
                                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -180,8 +183,8 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                                 </a>
                             </div>
                         ) : (
-                            <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-300">
-                                Key prefix not recognized yet. Use one of: `AIza`, `sk-ant-`, or `sk-`.
+                            <div className="rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 text-xs text-slate-300">
+                                {apiKey.trim() ? "Key prefix not recognized. Supported prefixes: AIza, sk-ant-, or sk-." : "Add a Gemini, Anthropic, or OpenAI key to detect your provider."}
                             </div>
                         )}
                     </div>
@@ -212,10 +215,10 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
                     <Button
                         onClick={handleSave}
                         disabled={!isValid}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                        className="bg-blue-600 hover:bg-blue-500 text-white"
                     >
                         <Sparkles className="w-4 h-4 mr-1.5" />
-                        Save & Generate
+                        Save settings
                     </Button>
                 </DialogFooter>
             </DialogContent>

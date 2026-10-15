@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo, useTransition, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { HelpCircle } from "lucide-react";
+import { DIAGRAM_TABS } from "@/lib/constants";
 import Navbar from "@/components/dashboard/navbar";
 import TabNav from "@/components/dashboard/tab-nav";
 import RepoOnboardingGuide from "@/components/dashboard/repo-onboarding-guide";
@@ -686,7 +688,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     if (!repoData) return null;
 
     return (
-        <div className="h-screen overflow-hidden pt-14 flex flex-col">
+        <div className="atlas-workspace">
             <Navbar
                 owner={owner}
                 repo={repo}
@@ -706,18 +708,18 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }}
             />
 
-            <div className="w-full max-w-[1800px] mx-auto flex-1 min-h-0 flex flex-col">
-                <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-3 bg-[#0b111f]">
+            <div className="workspace-layout">
+                <div className="workspace-heading">
                     <div className="min-w-0">
-                        <p className="text-[11px] uppercase tracking-[0.14em] text-sky-300/80">Repository workspace</p>
-                        <h1 className="text-lg font-semibold text-white truncate">{owner} / {repo}</h1>
-                        {repoData.metadata.description && <p className="text-xs text-slate-400 truncate max-w-2xl">{repoData.metadata.description}</p>}
+                        <p className="workspace-eyebrow">Repository workspace</p>
+                        <h1 className="font-semibold truncate"><span>{owner} / </span>{repo}</h1>
+                        {repoData.metadata.description && <p className="workspace-description" title={repoData.metadata.description}>{repoData.metadata.description}</p>}
                     </div>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300" aria-label="Repository summary">
+                    <div className="workspace-summary" aria-label="Repository summary">
                         <span><strong className="text-white">{repoData.fileTree?.tree.filter((item) => item.type === "blob").length.toLocaleString() ?? "0"}</strong> files</span>
                         <span><strong className="text-white">{repoData.contributors.length}</strong> contributors</span>
                         <span><strong className="text-white">{repoData.branches.length}</strong> branches</span>
-                        <span className="text-slate-500">{repoData.metadata.defaultBranch} branch</span>
+                        <span><strong className="text-white">{repoData.metadata.defaultBranch}</strong> branch</span>
                     </div>
                 </div>
                 <TabNav
@@ -735,17 +737,24 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     }
                 />
 
-                <div className="p-2 sm:p-3 flex-1 min-h-0">
+                <main className="workspace-canvas" aria-label={`${activeTab} view`}>
+                    <header className="workspace-view-heading">
+                        <div>
+                            <h2>{DIAGRAM_TABS.find((tab) => tab.id === activeTab)?.label}</h2>
+                            <p>{{ files: "Explore the structure. Select a file to read its code.", architecture: "See how the modules connect, then explore their key files.", contributors: "Find the people behind the code and their contributions.", branches: "Follow a branch and explore its commit history.", dependencies: "Inspect the packages this repository builds on." }[activeTab]}</p>
+                        </div>
+                        <Link href="/" className="workspace-new-repo">Explore another repo <span aria-hidden="true">↗</span></Link>
+                    </header>
                     {/* Main diagram area */}
-                    <div className="flex-1 h-full min-h-0">
-                        <div className={`relative h-full diagram-shell overscroll-contain surface-neo ${diagramBackground}`}>
+                    <div className="flex-1 min-h-0">
+                        <div className={`relative h-full diagram-shell overscroll-contain surface-neo ${activeTab === "files" || activeTab === "architecture" ? "workspace-code" : "workspace-data"} ${diagramBackground}`}>
                             {isTabMounted("architecture") && (
                                 <div
                                     className={`absolute inset-0 ${activeTab === "architecture" ? "pointer-events-auto" : "hidden pointer-events-none"}`}
                                     aria-hidden={activeTab !== "architecture"}
                                 >
                                     {activeTab === "architecture" && !isAnalyzing && (
-                                        <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+                                        <div className="absolute bottom-4 right-4 z-20 flex flex-wrap justify-end items-center gap-2 max-w-[calc(100%-6rem)]">
                                             {analysis?.source === "ai" && (
                                                 <button
                                                     onClick={() => setAnalysis(null)}
@@ -811,7 +820,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             )}
                         </div>
                     </div>
-                </div>
+                </main>
             </div>
 
             <AISettingsModal

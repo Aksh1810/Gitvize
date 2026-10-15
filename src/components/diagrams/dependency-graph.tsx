@@ -368,11 +368,11 @@ export default function DependencyGraph({
             <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border/20">
                 <div className="flex flex-wrap items-center gap-2">
                     <Package className="w-4 h-4 text-indigo-400" />
-                    <span className="text-sm font-semibold">Dependencies</span>
+                    <span className="text-sm font-semibold">Packages</span>
                     <Badge variant="secondary" className="text-[10px]">{dependencies.length}</Badge>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     <div className="relative flex items-center">
                         <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
                         <select
@@ -411,27 +411,24 @@ export default function DependencyGraph({
 
             {/* Cards */}
             <div className="flex-1 overflow-auto custom-scrollbar">
-                <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
+                <div className="atlas-data-page">
                     <p className="text-sm text-muted-foreground mb-5">
                         {directCount} direct · {devCount} development dependencies
                     </p>
-                    <div className="grid grid-cols-1 gap-2">
-                        {filtered.map((dep, idx) => {
+                    <div className="atlas-package-grid">
+                        {filtered.map((dep) => {
                             const catColor = CATEGORY_COLORS[dep.category] ?? CATEGORY_COLORS.Other;
 
                             return (
                                 <motion.div
                                     key={`${dep.ecosystem}:${dep.name}`}
-                                    initial={{ opacity: 0, y: 8 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: Math.min(idx * 0.02, 0.4) }}
-                                    className="group rounded-xl border border-border/20 bg-white/[0.03] hover:bg-white/[0.06] hover:border-border/30 transition-colors p-4 flex flex-col gap-2"
+                                    className="atlas-package group p-5 flex flex-col gap-3"
                                 >
                                     {/* Top row: name + badges */}
                                     <div className="flex items-start justify-between gap-2">
                                         <div className="flex items-center gap-2 min-w-0 flex-1">
                                             <Package className="w-4 h-4 shrink-0" style={{ color: catColor }} />
-                                            <span className="text-sm font-semibold truncate text-foreground group-hover:text-white transition-colors">
+                                            <span className="text-sm font-semibold truncate text-foreground">
                                                 {dep.name}
                                             </span>
                                         </div>

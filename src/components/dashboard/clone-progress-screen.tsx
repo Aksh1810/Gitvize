@@ -3,6 +3,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, Circle, Loader2, XCircle, GitBranch } from "lucide-react";
 import BrandLogo from "@/components/ui/brand-logo";
+import Link from "next/link";
 
 export type CloneStep =
     | "checking"
@@ -46,13 +47,7 @@ export default function CloneProgressScreen({
     const currentIdx = stepIndex(currentStep === "error" ? "checking" : currentStep);
 
     return (
-        <div className="h-screen w-full flex flex-col items-center justify-center bg-[#0a0e1a]">
-            {/* Ambient orbs */}
-            <div className="pointer-events-none fixed inset-0 overflow-hidden">
-                <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-indigo-600/10 blur-3xl" />
-                <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full bg-violet-600/8 blur-3xl" />
-            </div>
-
+        <div className="atlas-loading w-full flex flex-col items-center justify-center py-8">
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -72,9 +67,10 @@ export default function CloneProgressScreen({
                 </div>
 
                 {/* Progress card */}
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-6 shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
+                <div className="atlas-loading-card" aria-busy={currentStep !== "done" && currentStep !== "error"}>
+                    <h1>{currentStep === "error" ? "Let’s try another route." : "Connecting the dots."}</h1>
                     {currentStep === "error" ? (
-                        <div className="space-y-4">
+                        <div className="space-y-4" role="alert">
                             <div className="flex items-start gap-3">
                                 <XCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                                 <div>
@@ -102,7 +98,7 @@ export default function CloneProgressScreen({
                                     <motion.div
                                         key={step.key}
                                         initial={{ opacity: 0, x: -8 }}
-                                        animate={{ opacity: isPending ? 0.35 : 1, x: 0 }}
+                                        animate={{ opacity: isPending ? 0.7 : 1, x: 0 }}
                                         transition={{ delay: idx * 0.06 }}
                                         className="flex items-center gap-3"
                                     >
@@ -130,7 +126,8 @@ export default function CloneProgressScreen({
                                     animate={{ opacity: 1 }}
                                     exit={{ opacity: 0 }}
                                     transition={{ duration: 0.2 }}
-                                    className="text-[11px] text-muted-foreground/60 pt-2 border-t border-white/5"
+                                    role="status"
+                                    className="text-xs text-slate-400 pt-3 border-t border-white/10"
                                 >
                                     {message || "Working..."}
                                 </motion.p>
@@ -139,9 +136,10 @@ export default function CloneProgressScreen({
                     )}
                 </div>
 
-                <p className="text-center text-[11px] text-muted-foreground/40 mt-4">
-                    Repository is cloned locally — subsequent loads are instant
+                <p className="text-center text-xs text-slate-400 mt-4">
+                    Larger repositories may take a little longer to map.
                 </p>
+                <Link href="/" className="atlas-return">← Explore another repository</Link>
             </motion.div>
         </div>
     );

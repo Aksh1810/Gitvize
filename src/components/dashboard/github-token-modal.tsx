@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, ExternalLink } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, ExternalLink, Loader2 } from "lucide-react";
 
 export const GITHUB_PAT_TRANSIENT_KEY = "gitvize_github_pat_once";
 const GITHUB_PAT_LEGACY_TRANSIENT_KEY = "gitviz_github_pat_once";
@@ -43,44 +43,54 @@ export function consumeOneTimeGitHubToken(): string {
 interface GitHubTokenModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    onSave: (token: string) => void;
+    onSave: (token: string) => void | Promise<void>;
 }
 
 export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubTokenModalProps) {
     const [token, setToken] = useState("");
     const [showToken, setShowToken] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const handleOpenChange = (nextOpen: boolean) => {
+        if (saving) return;
         onOpenChange(nextOpen);
-        if (nextOpen) {
-            setToken("");
-            setShowToken(false);
-        }
+        setToken("");
+        setShowToken(false);
+        setError(null);
     };
 
     const normalized = token.trim();
     const canSave = normalized.length >= 20;
 
-    const handleSave = () => {
-        if (!canSave) return;
-        onSave(normalized);
-        onOpenChange(false);
-        setToken("");
-        setShowToken(false);
+    const handleSave = async () => {
+        if (!canSave || saving) return;
+        setSaving(true);
+        setError(null);
+        try {
+            await onSave(normalized);
+            onOpenChange(false);
+            setToken("");
+            setShowToken(false);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Could not verify your token. Please try again.");
+        } finally {
+            setSaving(false);
+        }
     };
 
     return (
         <Dialog open={open} onOpenChange={handleOpenChange}>
-            <DialogContent className="bg-slate-950/95 border-border/80 shadow-2xl sm:max-w-[560px]">
+            <DialogContent className="bg-[#152139] border-slate-700 shadow-2xl sm:max-w-[560px]">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-lg">
                         <KeyRound className="w-5 h-5 text-cyan-300" />
-                        GitHub Token
-                        <Lock className="w-4 h-4 text-slate-400 ml-auto" />
+                        Connect to GitHub
+                        <Lock className="w-4 h-4 text-slate-400" />
                     </DialogTitle>
                     <DialogDescription>
                         Add a Personal Access Token to access private repositories and increase rate limits.
-                        Your token is used one time for this visualization and is not persisted.
+                        Your token is used for this visualization and is not saved to local storage.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -89,13 +99,13 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                         <div className="flex items-center gap-2">
                             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
                             <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                                Never stored on our servers
+                                Access stays in your control
                             </span>
                         </div>
                         <ul className="space-y-1 text-[11px] text-slate-400">
-                            <li>• Stored only in your browser&apos;s session memory — cleared when you close the tab</li>
-                            <li>• Sent directly from your browser to GitHub&apos;s API</li>
-                            <li>• Never transmitted to or logged by our servers</li>
+                            <li>• Temporarily held in this browser tab for the repository request</li>
+                            <li>• Sent to Gitvize&apos;s server to authenticate requests to GitHub</li>
+                            <li>• Use a token limited to the repositories you want to explore</li>
                             <li>
                                 • Revoke anytime at{" "}
                                 <a
@@ -121,7 +131,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
 
                     <div className="space-y-2 rounded-lg border border-border/50 bg-slate-900/70 p-3">
                         <div className="flex items-center justify-between">
-                            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                            <Label htmlFor="github-access-token" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                                 Personal Access Token
                             </Label>
                             <a
@@ -136,9 +146,14 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
 
                         <div className="relative">
                             <Input
+                                id="github-access-token"
                                 type={showToken ? "text" : "password"}
                                 value={token}
-                                onChange={(e) => setToken(e.target.value)}
+                                onChange={(e) => { setToken(e.target.value); setError(null); }}
+                                disabled={saving}
+                                aria-invalid={!!error}
+                                aria-describedby={error ? "github-token-error" : undefined}
+                                autoComplete="off"
                                 placeholder="Paste your token (ghp_... / github_pat_...)"
                                 className="pr-10 bg-slate-950/80 border-border/70 font-mono text-sm"
                             />
@@ -160,17 +175,19 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                 </div>
 
                 <DialogFooter>
-                    <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                    <Button variant="ghost" disabled={saving} onClick={() => handleOpenChange(false)}>
                         Cancel
                     </Button>
                     <Button
                         onClick={handleSave}
-                        disabled={!canSave}
-                        className="bg-cyan-600 hover:bg-cyan-700 text-white"
+                        disabled={!canSave || saving}
+                        className="bg-blue-600 hover:bg-blue-500 text-white"
                     >
-                        Continue
+                        {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {saving ? "Connecting…" : "Continue"}
                     </Button>
                 </DialogFooter>
+                {error && <p id="github-token-error" role="alert" className="text-sm text-rose-300">{error}</p>}
             </DialogContent>
         </Dialog>
     );

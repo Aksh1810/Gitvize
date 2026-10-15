@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/ui/brand-logo";
+import ThemeToggle from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
 import { transitions } from "@/lib/motion";
 
@@ -44,7 +45,8 @@ export default function Navbar({
 
     return (
         <motion.nav
-            className="fixed top-0 left-0 right-0 z-50 px-4 py-3 backdrop-blur-xl bg-[#0a0e1a]/80 border-b border-white/[0.10]"
+            className="workspace-navbar z-40"
+            aria-label="Workspace actions"
             initial={{ y: -18, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={transitions.soft}
@@ -53,11 +55,12 @@ export default function Navbar({
                 {/* Logo */}
                 <Link
                     href="/"
-                    className="flex items-center gap-3 group"
+                    className="atlas-brand workspace-brand"
+                    aria-label="Gitvize home"
                 >
-                    <BrandLogo size={36} className="interactive-lift" />
+                    <BrandLogo size={32} />
                     <div className="hidden sm:flex flex-col">
-                        <span className="text-lg font-semibold tracking-tight text-white">Gitvize</span>
+                        <span>gitvize<span className="brand-period">.</span></span>
                     </div>
                 </Link>
 
@@ -66,7 +69,7 @@ export default function Navbar({
                         href={`https://github.com/${owner}/${repo}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-slate-300 hover:text-white pro-focus-ring rounded px-2 py-1"
+                        className="workspace-repo-link inline-flex items-center gap-1.5 text-slate-300 hover:text-white pro-focus-ring rounded px-2 py-1"
                     >
                         View on GitHub <ExternalLink className="h-3.5 w-3.5" />
                     </a>
@@ -74,6 +77,7 @@ export default function Navbar({
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
+                    <ThemeToggle />
                     <Button
                         variant="ghost"
                         size="sm"

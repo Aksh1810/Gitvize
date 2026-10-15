@@ -1,7 +1,7 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, X, Lightbulb } from "lucide-react";
+import { BookOpen, Lightbulb } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 /* ─── Per-tab tips ─── */
 
@@ -39,7 +39,7 @@ const TAB_TIPS: Record<string, Tip[]> = {
         { title: "Package cards", body: "Each dependency is shown as a card with its name, category badge, description, and version." },
         { title: "Popular badge", body: "Packages with a star badge are widely used across the ecosystem (500K+ weekly npm downloads)." },
         { title: "Direct vs dev", body: "The indigo 'direct' label means the package is a runtime dependency. Purple 'dev' means it's only used during development." },
-        { title: "Quick links", body: "Each card has 'Learn more' (npm page) and 'Homepage' links that open in a new tab." },
+        { title: "Quick links", body: "Open a package's registry page from its npm, PyPI, Go docs, or crates.io link. A Homepage link appears when available." },
         { title: "Search & sort", body: "Filter packages by name, description, or category. Sort by type, name, or category grouping." },
     ],
 };
@@ -60,71 +60,21 @@ export default function RepoOnboardingGuide({
     const tips = TAB_TIPS[activeTab] ?? TAB_TIPS.files;
 
     return (
-        <AnimatePresence>
-            {open && (
-                <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15 }}
-                    className="fixed inset-0 z-[70]"
-                >
-                    {/* Backdrop */}
-                    <div
-                        className="absolute inset-0 bg-black/50 backdrop-blur-[2px]"
-                        onClick={onClose}
-                    />
-
-                    {/* Panel */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 12, scale: 0.97 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                        className="absolute right-4 top-20 w-[min(400px,calc(100vw-2rem))] max-h-[calc(100vh-7rem)] rounded-2xl border border-white/15 bg-[#0a1020]/95 shadow-[0_20px_50px_rgba(2,6,23,0.6)] flex flex-col overflow-hidden"
-                    >
-                        {/* Header */}
-                        <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-3 border-b border-white/10">
-                            <div className="flex items-center gap-2">
-                                <Lightbulb className="w-4 h-4 text-amber-400" />
-                                <div>
-                                    <p className="text-[11px] uppercase tracking-wider text-slate-400">Quick Tips</p>
-                                    <h3 className="text-sm font-semibold text-slate-100 capitalize">{activeTab} tab</h3>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="rounded-md p-1 text-slate-400 hover:bg-slate-800/80 hover:text-slate-200 transition-colors"
-                                aria-label="Close quick tips"
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
+        <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+            <DialogContent className="border-slate-700 bg-[#152139] sm:max-w-[440px]">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2 capitalize"><Lightbulb className="h-5 w-5 text-blue-300" />Explore {activeTab}</DialogTitle>
+                    <DialogDescription>A few ways to find your bearings in this view.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3">
+                    {tips.map((tip) => (
+                        <div key={tip.title} className="flex items-start gap-3 rounded-lg border border-slate-700/70 bg-slate-900/40 p-4">
+                            <BookOpen className="h-4 w-4 shrink-0 mt-0.5 text-blue-300" />
+                            <div><h3 className="text-sm font-medium text-slate-100">{tip.title}</h3><p className="mt-1 text-xs leading-relaxed text-slate-300">{tip.body}</p></div>
                         </div>
-
-                        {/* Tips list */}
-                        <div className="flex-1 overflow-auto custom-scrollbar px-4 py-3 space-y-2.5">
-                            {tips.map((tip, i) => (
-                                <motion.div
-                                    key={tip.title}
-                                    initial={{ opacity: 0, x: -6 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: i * 0.04, duration: 0.15 }}
-                                    className="rounded-lg border border-indigo-500/20 bg-indigo-500/[0.07] px-3 py-2.5"
-                                >
-                                    <div className="flex items-start gap-2">
-                                        <BookOpen className="w-3.5 h-3.5 mt-0.5 shrink-0 text-indigo-400" />
-                                        <div>
-                                            <p className="text-xs font-medium text-slate-100">{tip.title}</p>
-                                            <p className="mt-0.5 text-[11px] leading-relaxed text-slate-300">{tip.body}</p>
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            ))}
-                        </div>
-                    </motion.div>
-                </motion.div>
-            )}
-        </AnimatePresence>
+                    ))}
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }

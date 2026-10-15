@@ -63,11 +63,13 @@ export default function ArchitectureDiagram({
     }
 
     return (
-        <div className="relative h-full w-full">
-            <MermaidDiagram code={mermaidCode} onNodeClick={handleNodeClick} onFallback={onFallback} />
-            <div className="absolute top-14 left-4 z-20 flex items-center gap-1 rounded-lg border border-white/15 bg-[#111a2b]/95 p-1 text-xs" aria-label="Architecture detail level">
+        <div className="relative flex h-full w-full flex-col">
+            <div className="flex shrink-0 items-center gap-1 border-b border-white/15 bg-[#111a2b]/95 p-2 text-xs" aria-label="Architecture detail level">
                 <button type="button" onClick={() => setView("overview")} aria-pressed={view === "overview"} className={`rounded px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-sky-300 ${view === "overview" ? "bg-sky-300/20 text-sky-100" : "text-slate-300 hover:text-white"}`}>Overview</button>
                 <button type="button" onClick={() => setView("files")} aria-pressed={view === "files"} className={`rounded px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-sky-300 ${view === "files" ? "bg-sky-300/20 text-sky-100" : "text-slate-300 hover:text-white"}`}>Key files</button>
+            </div>
+            <div className="min-h-0 flex-1">
+                <MermaidDiagram code={mermaidCode} onNodeClick={handleNodeClick} onFallback={onFallback} />
             </div>
         </div>
     );
