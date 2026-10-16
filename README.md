@@ -56,7 +56,7 @@ For local server settings, create `.env.local` in the repository root and restar
 
 | Variable | Purpose |
 | --- | --- |
-| `GITHUB_TOKEN` | Default server token for GitHub requests, useful for API limits and repositories the token can access. |
+| `GITHUB_TOKEN` | Server token for higher API limits on public repositories. Private repositories require a caller-supplied GitHub token. |
 | `GITHUB_TOKENS` | Optional comma-separated token pool used by the GitHub fetch helper. |
 | `GEMINI_API_KEY` / `GEMINI_API_KEYS` | A Gemini key or comma-separated key pool for Premium AI generation. |
 | `AI_API_KEY`, `AI_PROVIDER`, `AI_MODEL` | Generic AI configuration. Supported providers are `openai`, `anthropic`, and `gemini`; dedicated Gemini keys take precedence over these defaults. |

@@ -29,6 +29,7 @@ interface BranchGraphProps {
     defaultBranch: string;
     owner: string;
     repo: string;
+    githubToken?: string | null;
 }
 
 function timeAgo(dateStr: string): string {
@@ -65,7 +66,9 @@ export default function BranchGraph({
     defaultBranch,
     owner,
     repo,
+    githubToken,
 }: BranchGraphProps) {
+    const githubHeaders = useMemo((): Record<string, string> => githubToken ? { "x-github-token": githubToken } : {}, [githubToken]);
     const [view, setView] = useState<"timeline" | "history">("timeline");
     const [showAllBranches, setShowAllBranches] = useState(false);
     const [graphBranch, setGraphBranch] = useState<string | null>(null);
@@ -96,7 +99,7 @@ export default function BranchGraph({
         try {
             const nextPage = currentPage + 1;
             const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(nextPage) });
-            const res = await fetch(`/api/github/repo/commits?${params}`);
+            const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const newCommits: Commit[] = await res.json();
 
@@ -109,7 +112,7 @@ export default function BranchGraph({
         } finally {
             setIsLoadingMore(false);
         }
-    }, [currentPage, defaultBranch, owner, repo]);
+    }, [currentPage, defaultBranch, owner, repo, githubHeaders]);
 
     const loadAllCommits = useCallback(async () => {
         setIsLoadingAll(true);
@@ -120,7 +123,7 @@ export default function BranchGraph({
         try {
             while (keepGoing) {
                 const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(page) });
-                const res = await fetch(`/api/github/repo/commits?${params}`);
+                const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders });
                 if (!res.ok) {
                     keepGoing = false;
                     break;
@@ -147,7 +150,7 @@ export default function BranchGraph({
             setIsLoadingMore(false);
             setIsLoadingAll(false);
         }
-    }, [currentPage, defaultBranch, owner, repo]);
+    }, [currentPage, defaultBranch, owner, repo, githubHeaders]);
 
     const fetchBranchCommits = useCallback(async (branch: string) => {
         setSelectedBranch(branch);
@@ -158,7 +161,7 @@ export default function BranchGraph({
         setIsBranchLoading(true);
         try {
             const params = new URLSearchParams({ owner, repo, sha: branch, per_page: "100", page: "1" });
-            const res = await fetch(`/api/github/repo/commits?${params}`);
+            const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const commits: Commit[] = await res.json();
             setBranchCommits(commits);
@@ -168,7 +171,7 @@ export default function BranchGraph({
         } finally {
             setIsBranchLoading(false);
         }
-    }, [defaultBranch, owner, repo]);
+    }, [defaultBranch, owner, repo, githubHeaders]);
 
     const filteredCommits = useMemo(() => {
         let result = [...(selectedBranch === defaultBranch ? allCommits : branchCommits)];

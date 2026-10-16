@@ -34,10 +34,7 @@ export async function POST(request: NextRequest) {
     const repo = typeof body.repo === "string" ? body.repo : null;
     const paths = Array.isArray(body.paths) ? body.paths : null;
 
-    const token =
-        request.headers.get("x-github-token") ??
-        process.env.GITHUB_TOKEN ??
-        null;
+    const token = request.headers.get("x-github-token");
 
     if (!owner || !repo || !paths) {
         return NextResponse.json({ error: "owner, repo, and paths are required" }, { status: 400 });

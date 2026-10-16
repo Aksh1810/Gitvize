@@ -86,10 +86,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "Invalid owner or repo" }, { status: 400 });
     }
 
-    const token =
-        request.headers.get("x-github-token") ??
-        process.env.GITHUB_TOKEN ??
-        null;
+    const token = request.headers.get("x-github-token");
 
     try {
         const data = await fetchAllRepoData(owner, repo, token);

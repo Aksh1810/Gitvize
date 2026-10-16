@@ -86,7 +86,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const [hasUserAIKey, setHasUserAIKey] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
     const [tokenModalOpen, setTokenModalOpen] = useState(false);
-    const dashboardTokenRef = useRef<string | null>(null);
+    const [dashboardToken, setDashboardToken] = useState<string | null>(null);
     const [sessionToken] = useState<string | null>(() => {
         const token = consumeOneTimeGitHubToken();
         return token || null;
@@ -103,8 +103,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
     // One-time PAT token passed from the landing flow, or a token added via the dashboard Token button.
     const getToken = useCallback((): string | null => {
-        return dashboardTokenRef.current ?? sessionToken;
-    }, [sessionToken]);
+        return dashboardToken ?? sessionToken;
+    }, [dashboardToken, sessionToken]);
+
+    const githubToken = dashboardToken ?? sessionToken;
 
     // Fetch all repo data via SSE stream
     const fetchData = useCallback(async () => {
@@ -469,7 +471,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 setTimeout(() => toast.dismiss(toastId), 5000);
             }
         }
-    }, [repoData, owner, repo]);
+    }, [repoData, owner, repo, getToken]);
 
     // Load on mount — cleanup aborts the stream if the component unmounts or the
     // effect re-fires (e.g. React StrictMode double-invoke or owner/repo change).
@@ -589,6 +591,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         tree={repoData.fileTree.tree}
                         owner={owner}
                         repo={repo}
+                        githubToken={githubToken}
                         fileTypeLegend={fileTypeLegend}
                     />
                 </div>
@@ -600,7 +603,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 No data available for this view.
             </div>
         );
-    }, [fileTypeLegend, owner, repo, repoData?.fileTree]);
+    }, [fileTypeLegend, owner, repo, repoData?.fileTree, githubToken]);
 
     const contributorsTabContent = useMemo(
         () => (
@@ -624,6 +627,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
         return (
             <BranchGraph
+                githubToken={githubToken}
                 branches={repoData.branches}
                 commits={repoData.commits}
                 defaultBranch={repoData.metadata.defaultBranch}
@@ -631,7 +635,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 repo={repo}
             />
         );
-    }, [owner, repo, repoData]);
+    }, [owner, repo, repoData, githubToken]);
 
     const dependenciesTabContent = useMemo(
         () => <DependencyGraph dependencies={dependencies} />,
@@ -838,7 +842,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 open={tokenModalOpen}
                 onOpenChange={setTokenModalOpen}
                 onSave={(token) => {
-                    dashboardTokenRef.current = token;
+                    setDashboardToken(token);
                     setOneTimeGitHubToken(token);
                     toast.success("Token saved", {
                         description: "Rate limits increased.",

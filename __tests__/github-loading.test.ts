@@ -10,7 +10,7 @@ it("rejects unavailable file trees rather than returning a successful empty work
         const url = String(input);
         if (url.includes("/git/trees/")) return new Response("Service unavailable", { status: 503 });
         if (url.endsWith("/repos/example/loading-test")) {
-            return Response.json({ default_branch: "main", topics: [] });
+            return Response.json({ private: false, default_branch: "main", topics: [] });
         }
         if (url.includes("raw.githubusercontent.com") || url.endsWith("/readme")) return new Response("Not found", { status: 404 });
         return Response.json([]);

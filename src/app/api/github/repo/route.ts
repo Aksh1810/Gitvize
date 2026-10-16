@@ -51,10 +51,7 @@ export async function GET(request: NextRequest) {
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
 
-    const token =
-        request.headers.get("x-github-token") ??
-        process.env.GITHUB_TOKEN ??
-        null;
+    const token = request.headers.get("x-github-token");
 
     if (!owner || !repo) {
         return NextResponse.json(

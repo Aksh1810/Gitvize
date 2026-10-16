@@ -38,7 +38,7 @@ function headers(token?: string | null): HeadersInit {
     const h: HeadersInit = {
         Accept: "application/vnd.github.v3+json",
     };
-    const normalizedToken = (token ?? getNextServerToken())?.trim();
+    const normalizedToken = token?.trim();
     if (normalizedToken) {
         h.Authorization = `token ${normalizedToken}`;
     }
@@ -413,17 +413,19 @@ export async function checkRepoAccess(
 ): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string }> {
     const url = `${GITHUB_API}/repos/${owner}/${repo}`;
 
+    const callerToken = token?.trim();
+    const requestToken = callerToken || getNextServerToken();
     let res = await fetch(url, {
-        headers: headers(token),
-        next: { revalidate: 60 },
+        headers: headers(requestToken),
+        cache: "no-store",
     });
 
     // If a stored token is invalid/expired, retry without auth so public
     // repositories can still be resolved.
-    if ((res.status === 401 || res.status === 403) && token?.trim()) {
+    if ((res.status === 401 || res.status === 403) && requestToken) {
         res = await fetch(url, {
             headers: headers(null),
-            next: { revalidate: 60 },
+            cache: "no-store",
         });
     }
 
@@ -436,12 +438,24 @@ export async function checkRepoAccess(
     }
 
     const data = await res.json() as { private?: boolean; full_name?: string };
+    if (!callerToken && data.private !== false) {
+        return { ok: false, status: 404, isPrivate: false };
+    }
     return {
         ok: true,
         status: 200,
         isPrivate: Boolean(data.private),
         fullName: data.full_name,
     };
+}
+
+async function requireRepoToken(owner: string, repo: string, token?: string | null): Promise<string | undefined> {
+    const access = await checkRepoAccess(owner, repo, token);
+    if (!access.ok) {
+        const message = access.status === 404 ? "Repository not found or access denied" : "Repository unavailable";
+        throw new Error(`GitHub API error ${access.status} for /repos/${owner}/${repo}: ${message}`);
+    }
+    return token?.trim() || getNextServerToken();
 }
 
 // --- Dependency Files ---
@@ -492,10 +506,11 @@ export async function fetchCommitsPage(
     perPage: number,
     token?: string | null,
 ): Promise<Commit[]> {
+    const effectiveToken = await requireRepoToken(owner, repo, token);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await ghFetch<any[]>(
         `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(sha)}&per_page=${perPage}&page=${page}`,
-        token,
+        effectiveToken,
         { revalidate: 60 },
     );
     return data.map(mapApiCommit);
@@ -543,6 +558,8 @@ export async function fetchFileContent(
     filePath: string,
     token?: string | null,
 ): Promise<string> {
+    if (filePath.includes("..") || filePath.startsWith("/")) throw new Error("File path not found");
+    const effectiveToken = await requireRepoToken(owner, repo, token);
     const cacheKey = fileCacheKey(owner, repo, filePath, token);
     const cached = fileCacheGet(cacheKey);
     if (cached !== null) return cached;
@@ -553,14 +570,14 @@ export async function fetchFileContent(
     try {
         data = await ghFetch<any>(
             `/repos/${owner}/${repo}/contents/${encodedPath}`,
-            token,
+            effectiveToken,
             { noStore: true },
         );
     } catch {
         // GitHub returns 403/404 for blobs > 1 MB — fall back to raw content.
         const rawRes = await fetch(
-            `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${filePath}`,
-            token ? { headers: { Authorization: `token ${token}` } } : {},
+            `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${encodedPath}`,
+            { headers: headers(effectiveToken) },
         );
         if (!rawRes.ok) throw new Error(`File not found: ${filePath}`);
         const text = await rawRes.text();
@@ -653,7 +670,9 @@ function deduplicatedFetch(owner: string, repo: string) {
     const key = `${owner}/${repo}`;
     const existing = inflight.get(key);
     if (existing) return existing;
-    const p = _fetchAllRepoDataImpl(owner, repo, null).finally(() => inflight.delete(key));
+    const p = requireRepoToken(owner, repo)
+        .then((token) => _fetchAllRepoDataImpl(owner, repo, token))
+        .finally(() => inflight.delete(key));
     inflight.set(key, p);
     return p;
 }
@@ -662,7 +681,7 @@ function deduplicatedFetch(owner: string, repo: string) {
 // cache in dev). Each unique (owner, repo) pair gets its own cache entry.
 const cachedFetchAllRepoData = unstable_cache(
     deduplicatedFetch,
-    ["repo-data-v2"],
+    ["repo-data-v3"],
     { revalidate: 300 }
 );
 
@@ -671,11 +690,10 @@ export async function fetchAllRepoData(
     repo: string,
     token?: string | null
 ) {
-    const serverToken = process.env.GITHUB_TOKEN?.trim();
-    const isUserToken = !!token?.trim() && token.trim() !== serverToken;
-    if (isUserToken) {
+    const effectiveToken = await requireRepoToken(owner, repo, token);
+    if (token?.trim()) {
         // User's own PAT (private repo) — never serve cached content
-        return _fetchAllRepoDataImpl(owner, repo, token);
+        return _fetchAllRepoDataImpl(owner, repo, effectiveToken);
     }
     return cachedFetchAllRepoData(owner, repo);
 }

@@ -40,3 +40,21 @@ it("filters and sorts non-default branches without hiding the graph through an i
         global.fetch = originalFetch;
     }
 });
+
+it("uses the caller token to load private branch history", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async (_input, init) => {
+        const authorized = (init?.headers as Record<string, string> | undefined)?.["x-github-token"] === "caller-test-only";
+        return { ok: authorized, status: authorized ? 200 : 404, json: async () => commits } as Response;
+    }) as typeof fetch;
+    try {
+        render(<BranchGraph owner="example" repo="private" defaultBranch="main" githubToken="caller-test-only" commits={commits} branches={[
+            { name: "main", sha: "first", isDefault: true },
+            { name: "private-feature", sha: "second", isDefault: false },
+        ]} />);
+        fireEvent.click(screen.getByRole("button", { name: "private-feature" }));
+        await screen.findByText("2 commits loaded for private-feature");
+    } finally {
+        global.fetch = originalFetch;
+    }
+});

@@ -24,10 +24,7 @@ export async function GET(request: NextRequest) {
     const perPage = Math.min(100, Math.max(1, parseInt(searchParams.get("per_page") ?? "100", 10)));
     const sha = searchParams.get("sha") ?? "main";
 
-    const token =
-        request.headers.get("x-github-token") ??
-        process.env.GITHUB_TOKEN ??
-        null;
+    const token = request.headers.get("x-github-token");
 
     if (!owner || !repo) {
         return NextResponse.json({ error: "owner and repo are required" }, { status: 400 });

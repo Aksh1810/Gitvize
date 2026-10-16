@@ -53,6 +53,7 @@ interface FileTreeGraphProps {
     tree: TreeItem[];
     owner: string;
     repo: string;
+    githubToken?: string | null;
     fileTypeLegend?: Array<{ ext: string; count: number; color: string }>;
 }
 
@@ -365,7 +366,8 @@ function syncGraphData(
     return { nodeList, pathToId };
 }
 
-export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }: FileTreeGraphProps) {
+export default function FileTreeGraph({ tree, owner, repo, githubToken, fileTypeLegend = [] }: FileTreeGraphProps) {
+    const githubHeaders = useMemo((): Record<string, string> => githubToken ? { "x-github-token": githubToken } : {}, [githubToken]);
     const { resolvedTheme } = useTheme();
     const containerRef = useRef<HTMLDivElement>(null);
     const symbolCacheRef = useRef(new Map<string, string>());
@@ -753,7 +755,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
 
         try {
             const params = new URLSearchParams({ owner, repo, path: file.path });
-            const res = await fetch(`/api/github/repo/file?${params}`);
+            const res = await fetch(`/api/github/repo/file?${params}`, { headers: githubHeaders });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const text = await res.text();
             setFileContent(text);
@@ -762,7 +764,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         } finally {
             setFileLoading(false);
         }
-    }, [owner, repo]);
+    }, [owner, repo, githubHeaders]);
 
     // Fetch file content when a file is selected
     useEffect(() => {
@@ -917,7 +919,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 try {
                     const res = await fetch("/api/github/repo/files", {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: { ...githubHeaders, "Content-Type": "application/json" },
                         body: JSON.stringify({ owner, repo, paths: uncachedPaths }),
                     });
                     if (res.ok) {
@@ -990,7 +992,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             symbolWorkerRef.current?.terminate();
             symbolWorkerRef.current = null;
         };
-    }, [owner, repo, tree]);
+    }, [owner, repo, tree, githubHeaders]);
 
     // Multi-language file import analysis (Python, Go, Rust, Java, C/C++, C#)
     // Fetches non-JS/TS source files and extracts file-to-file import edges.
@@ -1042,7 +1044,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 try {
                     const res = await fetch("/api/github/repo/files", {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: { ...githubHeaders, "Content-Type": "application/json" },
                         body: JSON.stringify({ owner, repo, paths: uncachedPaths }),
                     });
                     if (res.ok) {
@@ -1092,7 +1094,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             importWorkerRef.current?.terminate();
             importWorkerRef.current = null;
         };
-    }, [owner, repo, tree]);
+    }, [owner, repo, tree, githubHeaders]);
 
     // Build graph elements — show all files
     const elements = useMemo(() => {
@@ -1855,12 +1857,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         if (typeof window === "undefined") return;
         let cancelled = false;
         seedPositionsRef.current = null;
-        const token = (() => {
-            try { return localStorage.getItem("gitviz_github_pat"); } catch { return null; }
-        })();
-        const headers: Record<string, string> = {};
-        if (token) headers["x-github-token"] = token;
-        fetch(`/api/graph/seed?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`, { headers })
+        fetch(`/api/graph/seed?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`, { headers: githubHeaders })
             .then((r) => (r.ok ? r.json() : null))
             .then((data: { positions?: Record<string, [number, number]> } | null) => {
                 if (cancelled || !data?.positions) return;
@@ -1872,7 +1869,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
             })
             .catch(() => { /* silent — ring seed remains the fallback */ });
         return () => { cancelled = true; };
-    }, [owner, repo]);
+    }, [owner, repo, githubHeaders]);
 
     // Effect 1 — create Sigma instance once. Runs only on mount.
     // Event handlers are wired here; restoreColors/applyHoverEffect are stable callbacks ([] deps).

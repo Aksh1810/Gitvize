@@ -20,10 +20,7 @@ export async function GET(request: NextRequest) {
     const repo = searchParams.get("repo");
     const filePath = searchParams.get("path");
 
-    const token =
-        request.headers.get("x-github-token") ??
-        process.env.GITHUB_TOKEN ??
-        null;
+    const token = request.headers.get("x-github-token");
 
     if (!owner || !repo || !filePath) {
         return NextResponse.json({ error: "owner, repo, and path are required" }, { status: 400 });

@@ -65,11 +65,8 @@ export async function GET(request: NextRequest) {
     const owner = searchParams.get("owner");
     const repo = searchParams.get("repo");
 
-    // Prefer the user's PAT from the request; fall back to the server-side token.
-    const token =
-        request.headers.get("x-github-token") ??
-        process.env.GITHUB_TOKEN ??
-        null;
+    // Preserve caller credentials; the service gates server tokens to public repos.
+    const token = request.headers.get("x-github-token");
 
     if (!owner || !repo || !OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
         return new Response(
