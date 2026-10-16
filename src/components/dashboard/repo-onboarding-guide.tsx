@@ -13,8 +13,8 @@ interface Tip {
 const TAB_TIPS: Record<string, Tip[]> = {
     files: [
         { title: "Node colors", body: "Folders are shown as larger nodes, files as smaller ones. Colors correspond to file type — hover any node to see its full path." },
-        { title: "Symbol overlay", body: "Toggle 'Show Symbols' to see classes, functions, and interfaces extracted from each file. Pink edges show cross-file references." },
-        { title: "Filter panel", body: "Use the filters to hide folders, limit depth, or focus on specific file types. This helps untangle large repos." },
+        { title: "Symbol overlay", body: "Toggle 'Symbols' to show or hide extracted code symbols. Use Symbol Types in Filters to choose which kinds appear." },
+        { title: "Filter panel", body: "Use Node Types to show or hide roots, folders, and files. Edge Types controls the connections shown. Reset restores the default filters." },
         { title: "Code inspector", body: "Click any file node to open a preview panel on the right showing its contents and metadata." },
         { title: "Focus mode", body: "Click a node to dim everything except its direct connections — click the background to reset." },
     ],

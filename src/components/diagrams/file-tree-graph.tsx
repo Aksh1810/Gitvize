@@ -2196,6 +2196,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
         <div className="repository-workbench relative w-full h-full flex bg-[#080d18] diagram-grid">
             <div
                 id="file-explorer-panel"
+                data-open={showExplorer}
                 className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200 ease-in-out"
                 style={{ width: showExplorer ? explorerWidth : 0, willChange: 'width' }}
             >
@@ -2475,6 +2476,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                         }}
                         className={`flex items-center gap-1 px-2.5 h-9 rounded-md border text-xs transition-colors ${Object.values(symbolKindVisibility).some((v) => v) ? "bg-cyan-900/50 border-cyan-700 text-cyan-300" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
                         title="Toggle symbol overlay (classes, functions, interfaces)"
+                        aria-pressed={Object.values(symbolKindVisibility).some((value) => value)}
                     >
                         <Braces className="w-3.5 h-3.5" />
                         <span>Symbols</span>
@@ -2547,7 +2549,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </details>
 
                             <div>
-                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setShowCriticalFilesPanel((prev) => !prev)}>
+                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" aria-expanded={showCriticalFilesPanel} onClick={() => setShowCriticalFilesPanel((prev) => !prev)}>
                                     <span>Critical Files</span>
                                     {showCriticalFilesPanel ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                 </button>
@@ -2556,6 +2558,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                         <button
                                             className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCriticalFiles ? "bg-red-500/20 border-red-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                             onClick={() => setShowCriticalFiles((prev) => !prev)}
+                                            aria-pressed={showCriticalFiles}
                                         >
                                             <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
                                             <span className="flex-1 text-left text-slate-200">Color by impact</span>
@@ -2585,7 +2588,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
 
                             <div>
-                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setNodeFiltersOpen((prev) => !prev)}>
+                                <button aria-expanded={nodeFiltersOpen} className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setNodeFiltersOpen((prev) => !prev)}>
                                     <span>Node Types</span>
                                     {nodeFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                 </button>
@@ -2596,7 +2599,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                             { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
                                             { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
                                         ].map((item) => (
-                                            <button key={item.key} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${item.on ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => item.setOn((prev: boolean) => !prev)}>
+                                            <button aria-pressed={item.on} key={item.key} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${item.on ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => item.setOn((prev: boolean) => !prev)}>
                                                 <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
                                                 <span className="flex-1 text-left text-slate-200">{item.label}</span>
                                                 <span className="text-slate-500">{item.count}</span>
@@ -2607,7 +2610,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
 
                             <div>
-                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setSymbolFiltersOpen((prev) => !prev)}>
+                                <button aria-expanded={symbolFiltersOpen} className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setSymbolFiltersOpen((prev) => !prev)}>
                                     <span>Symbol Types</span>
                                     {symbolFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                 </button>
@@ -2622,6 +2625,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                             return (
                                                 <button
                                                     key={kind}
+                                                    aria-pressed={active}
                                                     className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${active ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`}
                                                     onClick={() => setSymbolKindVisibility((prev) => ({ ...prev, [kind]: !prev[kind] }))}
                                                 >
@@ -2636,19 +2640,19 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                             </div>
 
                             <div>
-                                <button className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setEdgeFiltersOpen((prev) => !prev)}>
+                                <button aria-expanded={edgeFiltersOpen} className="w-full flex items-center justify-between rounded px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider hover:bg-slate-800/60" onClick={() => setEdgeFiltersOpen((prev) => !prev)}>
                                     <span>Edge Types</span>
                                     {edgeFiltersOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                 </button>
                                 {edgeFiltersOpen && (
                                     <div className="space-y-1.5 mt-1.5">
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowContainsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-emerald-400" /><span className="flex-1 text-left text-slate-200">Contains</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("contains") ?? 0}</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowDefinesEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-cyan-400" /><span className="flex-1 text-left text-slate-200">Defines</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("defines") ?? 0}</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImportsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-blue-500" /><span className="flex-1 text-left text-slate-200">Imports</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("imports") ?? 0}</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowCallsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-violet-500" /><span className="flex-1 text-left text-slate-200">Calls</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("calls") ?? 0}</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowExtendsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-fuchsia-500" /><span className="flex-1 text-left text-slate-200">Extends</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("extends") ?? 0}</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImplementsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-rose-500" /><span className="flex-1 text-left text-slate-200">Implements</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("implements") ?? 0}</span></button>
-                                        <button className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showFileImportEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowFileImportEdges((prev) => !prev)}>
+                                        <button aria-pressed={showContainsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowContainsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-emerald-400" /><span className="flex-1 text-left text-slate-200">Contains</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("contains") ?? 0}</span></button>
+                                        <button aria-pressed={showDefinesEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowDefinesEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-cyan-400" /><span className="flex-1 text-left text-slate-200">Defines</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("defines") ?? 0}</span></button>
+                                        <button aria-pressed={showImportsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImportsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-blue-500" /><span className="flex-1 text-left text-slate-200">Imports</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("imports") ?? 0}</span></button>
+                                        <button aria-pressed={showCallsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowCallsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-violet-500" /><span className="flex-1 text-left text-slate-200">Calls</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("calls") ?? 0}</span></button>
+                                        <button aria-pressed={showExtendsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowExtendsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-fuchsia-500" /><span className="flex-1 text-left text-slate-200">Extends</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("extends") ?? 0}</span></button>
+                                        <button aria-pressed={showImplementsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImplementsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-rose-500" /><span className="flex-1 text-left text-slate-200">Implements</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("implements") ?? 0}</span></button>
+                                        <button aria-pressed={showFileImportEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showFileImportEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowFileImportEdges((prev) => !prev)}>
                                             <span className="h-1.5 w-7 rounded-full" style={{ background: "repeating-linear-gradient(90deg,#fbbf24 0,#fbbf24 5px,transparent 5px,transparent 9px)" }} />
                                             <span className="flex-1 text-left text-slate-200">File Imports</span>
                                             <span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("fileImport") ?? 0}</span>
@@ -2662,9 +2666,9 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                 </motion.div>
 
                 {fileTypeLegend.length > 0 && (
-                    <div className="absolute bottom-2 right-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/55 backdrop-blur p-2">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1.5">File Types</div>
-                        <div className="space-y-1">
+                    <details className="graph-legend absolute bottom-2 right-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/55 backdrop-blur p-2">
+                        <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-slate-400 font-semibold">File Types</summary>
+                        <div className="space-y-1 mt-1.5 max-h-32 overflow-y-auto">
                             {fileTypeLegend.map(({ ext, count, color }) => (
                                 <div key={ext} className="flex items-center gap-1.5 text-[10px]">
                                     <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
@@ -2673,7 +2677,7 @@ export default function FileTreeGraph({ tree, owner, repo, fileTypeLegend = [] }
                                 </div>
                             ))}
                         </div>
-                    </div>
+                    </details>
                 )}
 
                 {totalFileCount > clusterInfo.files && (

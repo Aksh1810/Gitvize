@@ -568,7 +568,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                     ) : (
                         <Copy className="h-4 w-4 mr-1" />
                     )}
-                    {copied ? "Copied!" : "Code"}
+                    {copied ? "Copied!" : "Copy code"}
                 </Button>
             </div>
 
