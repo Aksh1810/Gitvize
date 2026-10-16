@@ -2,6 +2,7 @@
 // Gitvize — GitHub API Service
 // ============================================================================
 
+import { createHash } from "node:crypto";
 import { unstable_cache } from "next/cache";
 import type {
     RepoMetadata,
@@ -510,8 +511,8 @@ const FILE_CONTENT_MAX_ENTRIES = 100;
 const fileContentCache = new Map<string, { ts: number; content: string }>();
 
 function fileCacheKey(owner: string, repo: string, filePath: string, token?: string | null): string {
-    // Token bucket prevents one user's private content from leaking to another in dev.
-    const tokenBucket = token ? token.slice(0, 8) : "anon";
+    // Isolate credentials without retaining their plaintext in cache keys.
+    const tokenBucket = token == null ? "anon" : createHash("sha256").update(token).digest("hex");
     return `${tokenBucket}:${owner}/${repo}:${filePath}`;
 }
 
