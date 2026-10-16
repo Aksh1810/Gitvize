@@ -263,6 +263,7 @@ export default function BranchGraph({
                                 <div className="flex flex-wrap gap-2">
                                     <button
                                         onClick={() => setGraphBranch(graphBranch === defaultBranch ? null : defaultBranch)}
+                                        aria-pressed={graphBranch === defaultBranch}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
                                         style={{
                                             borderColor: graphBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-line)",
@@ -279,6 +280,7 @@ export default function BranchGraph({
                                         return (
                                             <button key={b.name}
                                                 onClick={() => setGraphBranch(isSelected ? null : b.name)}
+                                                aria-pressed={isSelected}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
                                                 style={{
                                                     borderColor: isSelected ? BRANCH_COLOR : "var(--atlas-line)",
@@ -381,6 +383,7 @@ export default function BranchGraph({
                                 <div className="flex flex-wrap gap-2">
                                     <button
                                         onClick={() => fetchBranchCommits(defaultBranch)}
+                                        aria-pressed={selectedBranch === defaultBranch}
                                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
                                         style={{
                                             borderColor: selectedBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-line)",
@@ -401,6 +404,7 @@ export default function BranchGraph({
                                             <button
                                                 key={branch.name}
                                                 onClick={() => fetchBranchCommits(branch.name)}
+                                                aria-pressed={isSelected}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
                                                 style={{
                                                     borderColor: isSelected ? BRANCH_COLOR : "var(--atlas-line)",
@@ -534,7 +538,7 @@ export default function BranchGraph({
                                                         )}
 
                                                         <div className="flex-1 min-w-0">
-                                                            <p className="text-sm text-foreground leading-snug truncate group-hover:text-white transition-colors" title={commit.message}>
+                                                            <p className={`text-sm text-foreground leading-snug transition-colors ${selectedCommit?.sha === commit.sha ? "whitespace-pre-wrap break-words" : "truncate"}`} title={commit.message}>
                                                                 {commit.message}
                                                             </p>
                                                             <div className="flex items-center gap-2 mt-1">

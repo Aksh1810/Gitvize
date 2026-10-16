@@ -22,6 +22,14 @@ it("filters and sorts non-default branches without hiding the graph through an i
         ]} />);
         fireEvent.click(screen.getByRole("button", { name: "feature" }));
         await screen.findByText("2 commits loaded for feature");
+        expect(screen.getByRole("button", { name: "feature" })).toHaveAttribute("aria-pressed", "true");
+        const firstCommit = screen.getByRole("button", { name: /First change/ });
+        fireEvent.click(firstCommit);
+        expect(firstCommit).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByText("First change")).toHaveClass("whitespace-pre-wrap", "break-words");
+        expect(screen.getByText("First change")).not.toHaveClass("truncate");
+        fireEvent.click(firstCommit);
+        expect(screen.getByText("First change")).toHaveClass("truncate");
         fireEvent.change(screen.getByRole("combobox", { name: "Sort commits" }), { target: { value: "oldest" } });
         expect(screen.getAllByRole("button").filter((button) => button.textContent?.includes("change"))[0]).toHaveTextContent("First change");
         fireEvent.change(screen.getByRole("textbox", { name: "Search commits" }), { target: { value: "missing" } });

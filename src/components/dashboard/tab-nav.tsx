@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { DiagramTab } from "@/types";
 import { DIAGRAM_TABS } from "@/lib/constants";
 import {
@@ -27,6 +28,12 @@ interface TabNavProps {
 }
 
 export default function TabNav({ activeTab, onTabChange, rightAction }: TabNavProps) {
+    const activeButton = useRef<HTMLButtonElement>(null);
+
+    useEffect(() => {
+        activeButton.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }, [activeTab]);
+
     return (
         <aside className="workspace-nav">
             <p className="workspace-nav-label">EXPLORE</p>
@@ -36,6 +43,7 @@ export default function TabNav({ activeTab, onTabChange, rightAction }: TabNavPr
                     return (
                         <button
                             key={tab.id}
+                            ref={isActive ? activeButton : undefined}
                             type="button"
                             onClick={() => onTabChange(tab.id)}
                             aria-current={isActive ? "page" : undefined}
