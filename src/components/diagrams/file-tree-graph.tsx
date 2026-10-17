@@ -7,6 +7,7 @@ import Graph from "graphology";
 import type Sigma from "sigma";
 import { List, type RowComponentProps } from "react-window";
 import { getFileColor } from "@/lib/file-icons";
+import { fetchSourceFiles } from "@/lib/file-batch";
 import { searchFiles } from "@/lib/search-engine";
 import {
     settleMsForCount,
@@ -917,21 +918,12 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             if (uncachedPaths.length > 0 && !cancelled) {
                 fetchAttempted += uncachedPaths.length;
                 try {
-                    const res = await fetch("/api/github/repo/files", {
-                        method: "POST",
-                        headers: { ...githubHeaders, "Content-Type": "application/json" },
-                        body: JSON.stringify({ owner, repo, paths: uncachedPaths }),
-                    });
-                    if (res.ok) {
-                        const data: { files: Array<{ path: string; content: string }> } = await res.json();
-                        fetchSucceeded += data.files.length;
-                        fetchFailed += uncachedPaths.length - data.files.length;
-                        for (const file of data.files) {
-                            symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
-                            filePayload.push(file);
-                        }
-                    } else {
-                        fetchFailed += uncachedPaths.length;
+                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders);
+                    fetchSucceeded += files.length;
+                    fetchFailed += uncachedPaths.length - files.length;
+                    for (const file of files) {
+                        symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
+                        filePayload.push(file);
                     }
                 } catch {
                     fetchFailed += uncachedPaths.length;
@@ -1042,17 +1034,10 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
             if (uncachedPaths.length > 0 && !cancelled) {
                 try {
-                    const res = await fetch("/api/github/repo/files", {
-                        method: "POST",
-                        headers: { ...githubHeaders, "Content-Type": "application/json" },
-                        body: JSON.stringify({ owner, repo, paths: uncachedPaths }),
-                    });
-                    if (res.ok) {
-                        const data: { files: Array<{ path: string; content: string }> } = await res.json();
-                        for (const file of data.files) {
-                            symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
-                            filePayload.push(file);
-                        }
+                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders);
+                    for (const file of files) {
+                        symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
+                        filePayload.push(file);
                     }
                 } catch { /* ignore batch fetch failures */ }
             }
