@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
         return new NextResponse(content, {
             headers: {
                 "Content-Type": "text/plain; charset=utf-8",
-                "Cache-Control": "public, max-age=300, stale-while-revalidate=600",
+                "Cache-Control": "private, no-store",
             },
         });
     } catch (error) {

@@ -94,6 +94,21 @@ it("preserves caller-authorized private reads", async () => {
     await expect(fetchFileContent("example", "caller", "private.ts", "caller-test-only")).resolves.toBe("private-marker");
 });
 
+it.each([
+    ["private", true, "caller-test-only"],
+    ["public-anonymous", false, null],
+    ["public-authenticated", false, "caller-test-only"],
+])("prevents HTTP cache storage of %s file responses", async (label, privateRepo, token) => {
+    isPrivate = privateRepo;
+    const response = await getFile(new NextRequest(`http://localhost/api/test?owner=example&repo=cache-${label}&path=index.ts`, {
+        headers: token ? { "x-github-token": token } : {},
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(await response.text()).toBe("private-marker");
+});
+
 it("preserves server-token throughput for public repositories", async () => {
     isPrivate = false;
     await expect(fetchAllRepoData("example", "public")).resolves.toMatchObject({ metadata: { fullName: "example/repo" } });
