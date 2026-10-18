@@ -168,7 +168,7 @@ export async function fetchReadme(
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = await ghFetch<any>(`/repos/${owner}/${repo}/readme`, token);
-        return atob(data.content);
+        return Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf-8");
     } catch {
         return "";
     }
@@ -276,6 +276,9 @@ export async function fetchCommits(
         )
     );
 
+    const failedPage = pages.find((page) => page.status === "rejected");
+    if (failedPage?.status === "rejected") throw failedPage.reason;
+
     const seen = new Set<string>();
     const all: Commit[] = [];
 
@@ -305,7 +308,7 @@ async function fetchCommitsForDAG(
     defaultBranch: string,
     branches: Branch[],
     token?: string | null
-): Promise<Commit[]> {
+): Promise<{ commits: Commit[]; commitsFetchError: boolean }> {
     // Phase 1: fetch 5 pages from the default branch in parallel
     const base = `?sha=${defaultBranch}&per_page=100`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -319,6 +322,7 @@ async function fetchCommitsForDAG(
         )
     );
 
+    let commitsFetchError = defaultPages.some((page) => page.status === "rejected");
     const seen = new Set<string>();
     const all: Commit[] = [];
 
@@ -349,6 +353,7 @@ async function fetchCommitsForDAG(
             )
         );
 
+        commitsFetchError ||= branchPages.some((page) => page.status === "rejected");
         for (const result of branchPages) {
             if (result.status !== "fulfilled") continue;
             for (const c of result.value) {
@@ -359,9 +364,10 @@ async function fetchCommitsForDAG(
         }
     }
 
-    return all.sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+    return {
+        commits: all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+        commitsFetchError,
+    };
 }
 
 // --- Merged Pull Requests ---
@@ -633,13 +639,13 @@ async function _fetchAllRepoDataImpl(
         () => [] as Branch[],
     );
 
-    const [fileTree, branches, commits, readme, dependencyFiles, mergedPRs] =
+    const [fileTree, branches, history, readme, dependencyFiles, mergedPRs] =
         await Promise.all([
             fetchFileTree(owner, repo, metadata.defaultBranch, token),
             branchesP,
             branchesP.then((b) =>
                 fetchCommitsForDAG(owner, repo, metadata.defaultBranch, b, token).catch(
-                    () => []
+                    () => ({ commits: [] as Commit[], commitsFetchError: true })
                 ),
             ),
             fetchReadme(owner, repo, token).catch(() => ""),
@@ -654,7 +660,7 @@ async function _fetchAllRepoDataImpl(
         contributorsTruncated,
         contributorsFetchError,
         branches,
-        commits,
+        ...history,
         readme,
         languages,
         dependencyFiles,
@@ -681,7 +687,7 @@ function deduplicatedFetch(owner: string, repo: string) {
 // cache in dev). Each unique (owner, repo) pair gets its own cache entry.
 const cachedFetchAllRepoData = unstable_cache(
     deduplicatedFetch,
-    ["repo-data-v3"],
+    ["repo-data-v4"],
     { revalidate: 300 }
 );
 

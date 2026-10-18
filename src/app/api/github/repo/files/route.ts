@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { MAX_FILE_BATCH_PATHS } from "@/lib/file-batch";
 import { fetchFileContent } from "@/lib/github";
 import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
-const MAX_PATHS = 50;
 
 /**
  * POST /api/github/repo/files
@@ -42,8 +42,8 @@ export async function POST(request: NextRequest) {
     if (!OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
         return NextResponse.json({ error: "invalid owner or repo format" }, { status: 400 });
     }
-    if (paths.length > MAX_PATHS) {
-        return NextResponse.json({ error: `too many paths (max ${MAX_PATHS})` }, { status: 400 });
+    if (paths.length > MAX_FILE_BATCH_PATHS) {
+        return NextResponse.json({ error: `too many paths (max ${MAX_FILE_BATCH_PATHS})` }, { status: 400 });
     }
 
     const validPaths = paths.filter(

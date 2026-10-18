@@ -50,6 +50,7 @@ interface RepoData {
     contributorsFetchError?: string | null;
     branches: Branch[];
     commits: Commit[];
+    commitsFetchError?: boolean;
     readme: string;
     languages: LanguageStats;
     dependencyFiles: Array<{ filename: string; content: string }>;
@@ -630,6 +631,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 githubToken={githubToken}
                 branches={repoData.branches}
                 commits={repoData.commits}
+                commitsFetchError={repoData.commitsFetchError}
                 defaultBranch={repoData.metadata.defaultBranch}
                 owner={owner}
                 repo={repo}
