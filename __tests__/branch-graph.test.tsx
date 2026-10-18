@@ -58,3 +58,12 @@ it("uses the caller token to load private branch history", async () => {
         global.fetch = originalFetch;
     }
 });
+
+it.each([{ initial: [] }, { initial: commits }])("reports incomplete initial history without claiming it is complete", ({ initial }) => {
+    render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={initial} commitsFetchError branches={[]} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Commit history could not be fully loaded");
+    expect(screen.queryByText(/All \d+ commits loaded/)).not.toBeInTheDocument();
+    if (initial.length === 0) expect(screen.queryByText("No commits match your search.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+});

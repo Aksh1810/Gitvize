@@ -26,6 +26,7 @@ const BRANCH_COLOR = "var(--atlas-blue)";
 interface BranchGraphProps {
     branches: Branch[];
     commits: Commit[];
+    commitsFetchError?: boolean;
     defaultBranch: string;
     owner: string;
     repo: string;
@@ -63,6 +64,7 @@ function groupCommitsByDate(commits: Commit[]): Map<string, Commit[]> {
 export default function BranchGraph({
     branches,
     commits: initialCommits,
+    commitsFetchError = false,
     defaultBranch,
     owner,
     repo,
@@ -207,6 +209,11 @@ export default function BranchGraph({
 
     return (
         <div className="w-full h-full flex flex-col">
+            {commitsFetchError && (
+                <p role="alert" className="shrink-0 px-4 py-3 text-sm text-muted-foreground border-b border-border/20">
+                    Commit history could not be fully loaded. Available commits are shown; reload the repository to try again.
+                </p>
+            )}
             {/* View toggle */}
             <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-border/20">
                 <div className="flex items-center gap-2">
@@ -489,7 +496,7 @@ export default function BranchGraph({
                                     </div>
                                 ) : displayCommits.length === 0 ? (
                                     <div className="text-center py-12 text-sm text-muted-foreground">
-                                        No commits match your search.
+                                        {commitsFetchError && selectedBranch === defaultBranch && !searchQuery ? "Commit history is unavailable." : "No commits match your search."}
                                     </div>
                                 ) : (
                                     Array.from(groupedCommits.entries()).map(([date, dayCommits]) => (
@@ -597,7 +604,7 @@ export default function BranchGraph({
                                     <div className="flex items-center gap-3 ml-1 pt-4 pb-2">
                                         <div className="w-[10px] h-[10px] rounded-full bg-muted-foreground/20 border-2 border-background z-10" />
                                         <span className="text-[11px] text-muted-foreground/50">
-                                            {selectedBranch === defaultBranch ? `All ${allCommits.length} commits loaded` : `${branchCommits.length} commits loaded for ${selectedBranch}${branchCommits.length === 100 ? " (first 100)" : ""}`}
+                                            {selectedBranch === defaultBranch ? `${commitsFetchError ? "Available" : "All"} ${allCommits.length} commits loaded` : `${branchCommits.length} commits loaded for ${selectedBranch}${branchCommits.length === 100 ? " (first 100)" : ""}`}
                                         </span>
                                     </div>
                                 )}
