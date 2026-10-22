@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import TrafficAnalytics from "@/components/traffic-analytics";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import AppMotionProvider from "@/components/motion/app-motion-provider";
@@ -74,6 +75,7 @@ export default function RootLayout({
         />
         </ThemeProvider>
         <Analytics />
+        <TrafficAnalytics />
       </body>
     </html>
   );
