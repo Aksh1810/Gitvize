@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MAX_FILE_BATCH_PATHS } from "@/lib/file-batch";
 import { fetchFileContent } from "@/lib/github";
+import { FILE_BATCH_CONCURRENCY, MAX_BATCH_BYTES } from "@/lib/response-limits";
 import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
@@ -46,25 +47,34 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `too many paths (max ${MAX_FILE_BATCH_PATHS})` }, { status: 400 });
     }
 
-    const validPaths = paths.filter(
+    const validPaths = [...new Set(paths.filter(
         (p): p is string =>
             typeof p === "string" &&
             p.length > 0 &&
+            p.length <= 4096 &&
             !p.includes("..") &&
             !p.startsWith("/"),
-    );
+    ))];
 
-    const results = await Promise.all(
-        validPaths.map(async (filePath) => {
+    const files: Array<{ path: string; content: string }> = [];
+    let responseBytes = Buffer.byteLength(JSON.stringify({ files: [] }), "utf8");
+    for (let offset = 0; offset < validPaths.length; offset += FILE_BATCH_CONCURRENCY) {
+        const results = await Promise.all(validPaths.slice(offset, offset + FILE_BATCH_CONCURRENCY).map(async (filePath) => {
             try {
                 const content = await fetchFileContent(owner, repo, filePath, token);
                 return { path: filePath, content };
             } catch {
                 return null;
             }
-        }),
-    );
-
-    const files = results.filter((r): r is { path: string; content: string } => r !== null);
+        }));
+        for (const file of results) {
+            if (!file) continue;
+            responseBytes += Buffer.byteLength(JSON.stringify(file), "utf8") + (files.length ? 1 : 0);
+            if (responseBytes > MAX_BATCH_BYTES) {
+                return NextResponse.json({ error: "Batch exceeds maximum allowed size" }, { status: 413 });
+            }
+            files.push(file);
+        }
+    }
     return NextResponse.json({ files });
 }

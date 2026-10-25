@@ -61,9 +61,16 @@ For local server settings, create `.env.local` in the repository root and restar
 | `GEMINI_API_KEY` / `GEMINI_API_KEYS` | A Gemini key or comma-separated key pool for Premium AI generation. |
 | `AI_API_KEY`, `AI_PROVIDER`, `AI_MODEL` | Generic AI configuration. Supported providers are `openai`, `anthropic`, and `gemini`; dedicated Gemini keys take precedence over these defaults. |
 | `AI_BASE_URL` | Optional base URL for server-configured AI requests. |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Required for server-funded Premium AI: atomic shared admission allows at most 10 analyses per client and 100 total per UTC day. The token must permit `EVAL`, `GET`, `INCR` and `EXPIRE`. Also enables the existing request counters and graph-seed cache. |
 | `DATABASE_URL` | Optional PostgreSQL connection for the Drizzle client in `src/db/`. |
 
 You can also enter a GitHub token through **GitHub token** in the header. **AI settings** accepts Gemini, OpenAI, or Anthropic keys and selects the provider and model from the key prefix. AI settings are saved in the browser's session storage. GitHub and AI requests pass through Gitvize's server, including keys supplied for those requests.
+
+Server-funded AI fails closed with HTTP 503 if its shared budget store is missing or unavailable, and HTTP 429 when a daily budget is exhausted. Reserved attempts count even if the provider later fails. Smart diagrams and caller-supplied AI keys do not use that budget. These limits count analyses, not currency; configure spending limits with your AI provider as well.
+
+On Vercel, rate limits use its [protected client-address header](https://vercel.com/docs/headers/request-headers#x-vercel-forwarded-for). Direct hosting ignores caller forwarding headers and shares one rate-limit identity, including the 10-per-day server AI allowance. Do not set `VERCEL=1` manually on direct hosting.
+
+Source files and dependency manifests are limited to 512 KiB each. Oversized files return HTTP 413 from the single-file endpoint and are omitted from batch/manifest results. Batches deduplicate paths, fetch at most four files concurrently, and reject responses exceeding 2 MiB. The in-process file cache retains at most 8 MiB of UTF-8 content. GitHub API JSON responses are limited to 8 MiB before parsing.
 
 `.gitignore` excludes local environment files. A root `.env.example` is allowed as a shareable template; use placeholders rather than real credentials if you add one.
 
