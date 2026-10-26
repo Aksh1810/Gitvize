@@ -492,7 +492,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                         <Button
                             variant="outline"
                             onClick={onFallback}
-                            className="w-full mb-4 bg-slate-900 border-white/10 hover:bg-slate-800 text-white"
+                            className="w-full mb-4"
                         >
                             Show Smart Diagram Instead
                         </Button>

@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ============================================================================
-   Gitvize — Deep Space Theme
+   Gitvize — Workspace Theme
    ============================================================================ */
 
 @theme inline {
@@ -38,6 +38,9 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -61,10 +64,7 @@
   --color-space-lighter: #111827;
 }
 
-/* 
-  Gitvize is always dark — deep space.
-  We use .dark class from shadcn but set it as the default.
-*/
+/* Shared light and dark workspace tokens. */
 :root {
   --radius: 0.625rem;
   --motion-duration-fast: 180ms;
@@ -72,37 +72,41 @@
   --motion-duration-slow: 480ms;
   --motion-ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
-  --background: #0a0e1a;
-  --foreground: #e5e7eb;
-  --card: rgba(8, 12, 20, 0.72);
-  --card-foreground: #f1f5f9;
-  --popover: #0b111d;
-  --popover-foreground: #f1f5f9;
-  --primary: #64748b;
+  --background: #f7f7f8;
+  --foreground: #20252d;
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --primary: #2456d3;
+  --primary-hover: #1e46b2;
+  --primary-active: #193a95;
   --primary-foreground: #ffffff;
-  --secondary: #111827;
-  --secondary-foreground: #f1f5f9;
-  --muted: #111827;
-  --muted-foreground: #9ca3af;
-  --accent: #111827;
-  --accent-foreground: #f1f5f9;
-  --destructive: #ef4444;
-  --border: rgba(226, 232, 240, 0.16);
-  --input: rgba(226, 232, 240, 0.14);
-  --ring: #94a3b8;
+  --secondary: #eceef1;
+  --secondary-foreground: var(--foreground);
+  --muted: #e2e5e9;
+  --muted-foreground: #596273;
+  --accent: #e8efff;
+  --accent-foreground: #2456d3;
+  --destructive-foreground: #ffffff;
+  --destructive-surface: #fff1f2;
+  --destructive: #b4232b;
+  --border: #858d99;
+  --input: var(--border);
+  --ring: #2456d3;
   --chart-1: #94a3b8;
   --chart-2: #cbd5e1;
   --chart-3: #64748b;
   --chart-4: #9ca3af;
   --chart-5: #e5e7eb;
-  --sidebar: #0b111d;
-  --sidebar-foreground: #f1f5f9;
-  --sidebar-primary: #64748b;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #111827;
-  --sidebar-accent-foreground: #f1f5f9;
-  --sidebar-border: rgba(226, 232, 240, 0.16);
-  --sidebar-ring: #94a3b8;
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
   --glow-indigo: 99, 102, 241;
   --glow-cyan: 6, 182, 212;
   --glow-pink: 236, 72, 153;
@@ -110,39 +114,25 @@
   --grid-line: rgba(255, 255, 255, 0.06);
 }
 
-/* Keep dark variant identical (always dark) */
+/* Dark workspace */
 .dark {
-  --background: #0a0e1a;
-  --foreground: #f1f5f9;
-  --card: rgba(10, 14, 26, 0.6);
-  --card-foreground: #f1f5f9;
-  --popover: #0f1526;
-  --popover-foreground: #f1f5f9;
-  --primary: #64748b;
-  --primary-foreground: #ffffff;
-  --secondary: #141b2d;
-  --secondary-foreground: #f1f5f9;
-  --muted: #141b2d;
-  --muted-foreground: #aeb9ca;
-  --accent: #141b2d;
-  --accent-foreground: #f1f5f9;
-  --destructive: #ef4444;
-  --border: rgba(226, 232, 240, 0.16);
-  --input: rgba(226, 232, 240, 0.14);
-  --ring: #94a3b8;
-  --chart-1: #94a3b8;
+  --background: #111315;
+  --foreground: #e9edf2;
+  --card: #1b1e22;
+  --secondary: #2a2f36;
+  --muted: #353c45;
+  --muted-foreground: #a5adb9;
+  --accent: #243554;
+  --accent-foreground: #94b8ff;
+  --destructive-foreground: #23080a;
+  --destructive-surface: #3b2026;
+  --destructive: #ff8791;
+  --border: #6b7280;
+  --ring: #94b8ff;
   --chart-2: #06b6d4;
   --chart-3: #ec4899;
   --chart-4: #10b981;
   --chart-5: #f59e0b;
-  --sidebar: #0f1526;
-  --sidebar-foreground: #f1f5f9;
-  --sidebar-primary: #64748b;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #141b2d;
-  --sidebar-accent-foreground: #f1f5f9;
-  --sidebar-border: rgba(226, 232, 240, 0.16);
-  --sidebar-ring: #94a3b8;
 }
 
 @layer base {
@@ -235,48 +225,38 @@
 }
 
 .pro-control {
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-  color: rgba(241, 245, 249, 0.9);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 8px 20px rgba(1, 4, 14, 0.28);
-  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid var(--input);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: none;
+  transition: border-color 180ms, background-color 180ms, color 180ms;
 }
 
-.pro-control:hover {
-  transform: translateY(-1px);
-  border-color: rgba(255, 255, 255, 0.24);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05));
+.pro-control:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--ring);
+  background: var(--secondary);
+}
+
+.pro-control:active:not(:disabled):not([aria-disabled="true"]),
+.pro-pill-active {
+  border: 1px solid var(--ring);
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  box-shadow: none;
 }
 
 .pro-control:focus-visible,
 .pro-focus-ring:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px rgba(10, 14, 26, 1),
-    0 0 0 4px rgba(148, 163, 184, 0.48),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
-.pro-pill-active {
-  position: relative;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.08));
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 8px 18px rgba(0, 0, 0, 0.35);
-}
-
-.pro-pill-active::after {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 60%);
-  pointer-events: none;
+.pro-control[aria-invalid="true"] {
+  border-color: var(--destructive);
+  outline-color: var(--destructive);
 }
 
 .pro-muted-chip {

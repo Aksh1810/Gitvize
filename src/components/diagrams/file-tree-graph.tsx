@@ -2679,8 +2679,8 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
                 <div className="absolute bottom-2 left-2 z-10 flex flex-row items-end gap-2">
                     <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
-                        <Button variant="secondary" size="icon" aria-label="Zoom in" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
-                        <Button variant="secondary" size="icon" aria-label="Zoom out" className="w-8 h-8 rounded-md bg-slate-800/80 border border-slate-600 hover:bg-slate-700" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
+                        <Button variant="secondary" size="icon" aria-label="Zoom in" className="w-8 h-8" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
+                        <Button variant="secondary" size="icon" aria-label="Zoom out" className="w-8 h-8" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
                         <button
                             onClick={handleFit}
                             aria-label="Fit graph in view"
