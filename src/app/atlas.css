@@ -301,9 +301,15 @@
 .repository-workbench .panel-resizer:focus-visible { outline: 2px solid var(--atlas-blue); outline-offset: -2px; }
 .repository-workbench[data-inspector-overlay="true"] .workbench-inspector { position: absolute; right: 0; top: 0; box-shadow: -12px 0 32px #00000020; }
 .repository-workbench[data-explorer-overlay="true"] #file-explorer-panel { position: absolute; inset: 0 auto 0 0; }
-@media (max-height: 600px) {
-  .repository-workbench .graph-zoom-controls { flex-direction: row; }
-}
+.repository-workbench .graph-header { flex-shrink: 1; min-height: 48px; max-height: calc(100% - 80px); overflow: auto; }
+.repository-workbench .graph-header:focus-visible { outline: 2px solid var(--atlas-blue); outline-offset: -2px; }
+.repository-workbench .graph-controls { position: relative; min-height: 48px; flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; background: var(--atlas-surface); border-top: 1px solid var(--atlas-line); }
+.repository-workbench .graph-legend { min-width: 0; font-size: 12px; line-height: 18px; color: var(--atlas-muted); }
+.repository-workbench .graph-legend summary { cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 4px 0; list-style: none; }
+.repository-workbench .graph-legend summary::-webkit-details-marker { display: none; }
+.repository-workbench .graph-legend[open] summary svg { transform: rotate(90deg); }
+.repository-workbench .graph-legend summary:focus-visible { outline: 2px solid var(--atlas-blue); outline-offset: 2px; border-radius: 4px; }
+.repository-workbench .graph-legend-body { position: absolute; bottom: calc(100% + 8px); right: 8px; z-index: 60; width: 280px; max-width: calc(100vw - 64px); max-height: min(280px, 30vh); overflow: auto; padding: 12px; background: var(--atlas-surface); color: var(--atlas-ink); border: 1px solid var(--atlas-line); border-radius: 6px; box-shadow: 0 4px 16px #00000014; }
 @media (max-width: 767px) {
   :root { --atlas-gutter: 16px; --atlas-section-gap: 16px; }
   .atlas-workspace .workspace-layout { margin: 0 8px 8px; }

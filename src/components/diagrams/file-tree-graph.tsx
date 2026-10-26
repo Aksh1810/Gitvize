@@ -10,6 +10,8 @@ import { getFileColor } from "@/lib/file-icons";
 import { fetchSourceFiles } from "@/lib/file-batch";
 import { searchFiles } from "@/lib/search-engine";
 import { getWorkbenchPanelLayout } from "@/lib/workbench-layout";
+import { getGraphFit, hasGraphLabelPriority, showGraphLabel } from "@/lib/file-graph-presentation";
+import type { NodeLabelDrawingFunction } from "sigma/rendering";
 import {
     settleMsForCount,
     reheatSettleMsForCount,
@@ -172,13 +174,13 @@ const FILE_EXTENSION_SORT_PRIORITY: Record<string, number> = {
 const DEFAULT_FOLDER_SORT_PRIORITY = 50;
 const DEFAULT_FILE_EXTENSION_SORT_PRIORITY = 5;
 
-const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string; shape: string }> = {
-    class: { color: "#f59e0b", shape: "hexagon" },
-    function: { color: "#22c55e", shape: "ellipse" },
-    interface: { color: "#06b6d4", shape: "round-rectangle" },
-    type: { color: "#a855f7", shape: "diamond" },
-    method: { color: "#f97316", shape: "triangle" },
-    variable: { color: "#84cc16", shape: "pentagon" },
+const SYMBOL_KIND_STYLE: Record<SymbolKind, { color: string }> = {
+    class: { color: "#c89546" },
+    function: { color: "#519777" },
+    interface: { color: "#4f9ba5" },
+    type: { color: "#9676bd" },
+    method: { color: "#ba865a" },
+    variable: { color: "#82915a" },
 };
 
 const MAX_SYMBOL_FILE_BYTES = 120_000;
@@ -212,14 +214,13 @@ const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
 
 function edgeTypeColor(type: string): string {
     switch (type) {
-        case "fileImport":  return "rgba(251,191,36,0.45)";
-        case "defines":     return "rgba(34,211,238,0.55)";
-        case "imports":     return "rgba(59,130,246,0.55)";
-        case "calls":       return "rgba(139,92,246,0.55)";
-        case "extends":     return "rgba(249,115,22,0.6)";
-        case "implements":  return "rgba(236,72,153,0.6)";
-        case "contains":    return "rgba(52,211,153,0.45)";
-        default:            return "rgba(255,255,255,0.12)";
+        case "fileImport":  return "#a88c50";
+        case "defines":     return "#518c96";
+        case "imports":     return "#5e89b8";
+        case "calls":       return "#8b78ae";
+        case "extends":     return "#b38765";
+        case "implements":  return "#ad7893";
+        default:            return "#718096";
     }
 }
 
@@ -228,6 +229,26 @@ function edgeSizeFor(type: string): number {
 }
 
 const DIM_COLOR = "#ffffff14";
+
+function graphLabelBounds(...[context, data, settings]: Parameters<NodeLabelDrawingFunction>) {
+    context.font = `${data.highlighted ? 600 : settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`;
+    const width = context.measureText(data.label || "").width;
+    const canvasWidth = context.canvas.width / window.devicePixelRatio;
+    const left = Math.max(6, Math.min(data.x + data.size + 5, canvasWidth - width - 6));
+    return { left, right: left + width, top: data.y - settings.labelSize * 2 / 3, bottom: data.y + settings.labelSize / 3 };
+}
+
+const drawGraphLabel: NodeLabelDrawingFunction = (context, data, settings) => {
+    if (!data.label) return;
+    const dark = document.documentElement.classList.contains("dark");
+    const bounds = graphLabelBounds(context, data, settings);
+    context.lineWidth = 4;
+    context.lineJoin = "round";
+    context.strokeStyle = dark ? "#1c2025" : "#ffffff";
+    context.strokeText(data.label, bounds.left, bounds.bottom);
+    context.fillStyle = dark ? "#d4dbe5" : "#34445c";
+    context.fillText(data.label, bounds.left, bounds.bottom);
+};
 
 interface VisibilityState {
     showRoot: boolean;
@@ -1196,7 +1217,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 path: "",
                 type: "folder",
                 size: Math.min(80, 50 + rootChildren),
-                color: "#6366f1",
+                color: "#3b82f6",
                 showLabel: 1,
             },
         });
@@ -1229,7 +1250,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                     path: folderPath,
                     type: "folder",
                     size: folderSize,
-                    color: "#ec4899",
+                    color: "#8292a8",
                     childCount,
                     // In large repos, only keep labels always-on for root-level or high-fanout folders.
                     showLabel: folderPath.split("/").length === 1 || childCount >= 10 ? 1 : 0,
@@ -1483,7 +1504,10 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     const elementsRef = useRef(elements);
     useEffect(() => { elementsRef.current = elements; }, [elements]);
 
+    const presentationFocusRef = useRef<{ id: string | null; neighbors: Set<string> }>({ id: null, neighbors: new Set() });
+
     const restoreColors = useCallback(() => {
+        presentationFocusRef.current = { id: null, neighbors: new Set() };
         const graph = graphRef.current;
         if (!graph) return;
         graph.forEachNode((id, attrs) => {
@@ -1505,6 +1529,12 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
         const neighbors = new Set<string>();
         neighbors.add(hoveredId);
         graph.forEachNeighbor(hoveredId, (nb) => neighbors.add(nb));
+        const rank = (id: string) => graph.getNodeAttribute(id, "nodeType") === "folder" ? 0 : graph.getNodeAttribute(id, "nodeType") === "file" ? 1 : 2;
+        presentationFocusRef.current = {
+            id: hoveredId,
+            neighbors: new Set([...neighbors].filter(id => id !== hoveredId && !graph.getNodeAttribute(id, "hidden"))
+                .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).slice(0, 6)),
+        };
 
         graph.forEachNode((id, attrs) => {
             const next = neighbors.has(id) ? (attrs.baseColor as string) : DIM_COLOR;
@@ -1908,6 +1938,18 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 pathToIdRef.current = pathToId;
             }
 
+            const drawPrioritizedLabel: NodeLabelDrawingFunction = (context, data, settings) => {
+                const focusId = presentationFocusRef.current.id;
+                const renderer = sigmaRef.current;
+                const focus = focusId && renderer?.getNodeDisplayData(focusId);
+                if (focus && renderer && !focus.hidden) {
+                    const point = renderer.framedGraphToViewport(focus);
+                    const bounds = graphLabelBounds(context, data, settings);
+                    const focusBounds = graphLabelBounds(context, { ...focus, ...point, size: renderer.scaleSize(focus.size), highlighted: true }, settings);
+                    if (!hasGraphLabelPriority(bounds, focusBounds, Boolean(data.highlighted))) return;
+                }
+                drawGraphLabel(context, data, settings);
+            };
             const nodeCount = graph.order;
             const sigma = new SigmaClass(graph, containerRef.current!, {
                 allowInvalidContainer: true,
@@ -1918,26 +1960,53 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 hideLabelsOnMove: true,
                 minCameraRatio: 0.05,
                 maxCameraRatio: 10,
-                labelSize: 11,
-                labelFont: "monospace",
+                labelSize: 12,
+                labelWeight: "500",
+                labelFont: getComputedStyle(containerRef.current!).getPropertyValue("--font-jetbrains-mono") || "monospace",
                 labelColor: { color: document.documentElement.classList.contains("dark") ? "#c3cedd" : "#34445c" },
-                nodeReducer: (_node, attributes) => attributes.color === DIM_COLOR
-                    ? { ...attributes, color: document.documentElement.classList.contains("dark") ? "#3c4657" : "#d8dee8" }
-                    : attributes,
-                edgeReducer: (_edge, attributes) => {
-                    if (document.documentElement.classList.contains("dark")) return attributes;
-                    const lightColors: Record<string, string> = {
-                        contains: "#559c87", defines: "#0891b2", imports: "#2563eb",
-                        calls: "#7c3aed", extends: "#c2410c", implements: "#be185d", fileImport: "#a16207",
-                    };
-                    return { ...attributes, color: attributes.color === attributes.baseColor
-                        ? lightColors[attributes.edgeType] ?? "#aab7ca"
-                        : String(attributes.color).startsWith("rgba(255,255,255,") ? "#e4e9f0" : attributes.color };
+                defaultDrawNodeLabel: drawPrioritizedLabel,
+                defaultDrawNodeHover: (context, data, settings) => {
+                    context.beginPath();
+                    context.arc(data.x, data.y, data.size + 3, 0, Math.PI * 2);
+                    context.strokeStyle = "#3b82f6";
+                    context.lineWidth = 2;
+                    context.stroke();
+                    drawPrioritizedLabel(context, data, settings);
                 },
-                labelRenderedSizeThreshold: nodeCount > 3000 ? 12 : nodeCount > 1000 ? 9 : 6,
+                nodeReducer: (node, attributes) => {
+                    const focus = presentationFocusRef.current;
+                    const focused = focus.id === node;
+                    const neighbor = focus.neighbors.has(node);
+                    const dimmed = attributes.color === DIM_COLOR;
+                    const kind = node === "root" ? "root" : attributes.nodeType;
+                    const ratio = sigmaRef.current?.getCamera().ratio ?? 1;
+                    return {
+                        ...attributes,
+                        size: (kind === "root" ? 10 : kind === "folder" ? 6 : kind === "file" ? 3.5 : 2.5) + (focused ? 2 : neighbor ? 0.75 : 0),
+                        color: dimmed ? document.documentElement.classList.contains("dark") ? "#394351" : "#d8dee8" : attributes.color,
+                        label: !dimmed && showGraphLabel(kind, Boolean(attributes.showLabel), ratio, focused, neighbor) ? attributes.label : null,
+                        forceLabel: focused || (!focus.id && kind === "root"),
+                        highlighted: focused || attributes.highlighted,
+                        zIndex: focused ? 3 : kind === "root" ? 2 : kind === "folder" ? 1 : 0,
+                    };
+                },
+                edgeReducer: (_edge, attributes) => {
+                    const dimmed = String(attributes.color).startsWith("rgba(255,255,255,");
+                    const focused = presentationFocusRef.current.id !== null && !dimmed;
+                    return { ...attributes,
+                        color: dimmed ? document.documentElement.classList.contains("dark") ? "#28313e" : "#e6ebf1"
+                            : focused ? "#3b82f6" : attributes.color,
+                        size: focused ? 1.3 : 1,
+                    };
+                },
+                labelRenderedSizeThreshold: 0,
+                labelDensity: 0.45,
+                labelGridCellSize: 120,
                 zIndex: true,
             });
             sigmaRef.current = sigma;
+            const refreshLabels = () => sigma.scheduleRefresh();
+            sigma.getCamera().on("updated", refreshLabels);
 
             // Spawn the physics worker. All d3-force ticks now run off-thread —
             // main thread only writes positions back into Graphology and refreshes Sigma.
@@ -2195,7 +2264,30 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
         sigmaRef.current?.getCamera().animatedUnzoom({ duration: 200 });
     };
     const handleFit = () => {
-        sigmaRef.current?.getCamera().animatedReset({ duration: 300 });
+        const sigma = sigmaRef.current;
+        const graph = graphRef.current;
+        const canvas = containerRef.current;
+        if (!sigma || !graph || !canvas) return;
+        sigma.resize();
+        sigma.refresh();
+        const viewport = sigma.getDimensions();
+        const rect = canvas.getBoundingClientRect();
+        const usable = { left: 0, right: viewport.width, top: 0, bottom: viewport.height };
+        for (const id of ["file-explorer-panel", "inspector-panel-motion", "filter-panel-motion"]) {
+            const panel = document.getElementById(id)?.getBoundingClientRect();
+            if (!panel || panel.width < 1 || panel.right <= rect.left || panel.left >= rect.right) continue;
+            if (id === "file-explorer-panel") usable.left = Math.max(usable.left, panel.right - rect.left);
+            else usable.right = Math.min(usable.right, panel.left - rect.left);
+        }
+        const reference = { x: 0.5, y: 0.5, ratio: 1, angle: sigma.getCamera().angle };
+        const points = graph.nodes().map(id => {
+            const attrs = graph.getNodeAttributes(id);
+            return { ...sigma.graphToViewport({ x: attrs.x, y: attrs.y }, { cameraState: reference }), hidden: attrs.hidden };
+        });
+        const fit = getGraphFit(points, viewport, usable);
+        if (!fit) return;
+        const center = sigma.viewportToFramedGraph(fit, { cameraState: reference });
+        sigma.getCamera().animate({ ...center, ratio: fit.ratio }, { duration: 300 });
     };
 
 
@@ -2476,6 +2568,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 </motion.div>
 
             <div className="workbench-graph relative flex-1 min-w-0 h-full flex flex-col order-2">
+                <div className="graph-header" role="region" aria-label="Graph toolbar and status" tabIndex={0}>
                 <div className="graph-toolbar relative z-20 shrink-0 flex flex-wrap items-center gap-2">
                     {!showExplorer && (
                         <Button
@@ -2522,6 +2615,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                         Showing top {clusterInfo.files.toLocaleString()} of {totalFileCount.toLocaleString()} files (filtered by importance)
                     </div>
                 )}
+                </div>
 
                 <motion.div
                     id="filter-panel-motion"
@@ -2630,8 +2724,8 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                 {nodeFiltersOpen && (
                                     <div className="space-y-1.5 mt-1.5">
                                         {[
-                                            { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-indigo-500" },
-                                            { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-pink-500" },
+                                            { key: "root", label: "Root", count: 1, on: showRoot, setOn: setShowRoot, color: "bg-[#3b82f6]" },
+                                            { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-[#8292a8]" },
                                             { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
                                         ].map((item) => (
                                             <button aria-pressed={item.on} key={item.key} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${item.on ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => item.setOn((prev: boolean) => !prev)}>
@@ -2681,14 +2775,14 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                 </button>
                                 {edgeFiltersOpen && (
                                     <div className="space-y-1.5 mt-1.5">
-                                        <button aria-pressed={showContainsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowContainsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-emerald-400" /><span className="flex-1 text-left text-slate-200">Contains</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("contains") ?? 0}</span></button>
-                                        <button aria-pressed={showDefinesEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowDefinesEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-cyan-400" /><span className="flex-1 text-left text-slate-200">Defines</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("defines") ?? 0}</span></button>
-                                        <button aria-pressed={showImportsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImportsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-blue-500" /><span className="flex-1 text-left text-slate-200">Imports</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("imports") ?? 0}</span></button>
-                                        <button aria-pressed={showCallsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowCallsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-violet-500" /><span className="flex-1 text-left text-slate-200">Calls</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("calls") ?? 0}</span></button>
-                                        <button aria-pressed={showExtendsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowExtendsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-fuchsia-500" /><span className="flex-1 text-left text-slate-200">Extends</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("extends") ?? 0}</span></button>
-                                        <button aria-pressed={showImplementsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImplementsEdges((prev) => !prev)}><span className="h-1.5 w-7 rounded-full bg-rose-500" /><span className="flex-1 text-left text-slate-200">Implements</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("implements") ?? 0}</span></button>
+                                        <button aria-pressed={showContainsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showContainsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowContainsEdges((prev) => !prev)}><span className="h-px w-7" style={{ backgroundColor: edgeTypeColor("contains") }} /><span className="flex-1 text-left text-slate-200">Contains</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("contains") ?? 0}</span></button>
+                                        <button aria-pressed={showDefinesEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showDefinesEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowDefinesEdges((prev) => !prev)}><span className="h-px w-7" style={{ backgroundColor: edgeTypeColor("defines") }} /><span className="flex-1 text-left text-slate-200">Defines</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("defines") ?? 0}</span></button>
+                                        <button aria-pressed={showImportsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImportsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImportsEdges((prev) => !prev)}><span className="h-px w-7" style={{ backgroundColor: edgeTypeColor("imports") }} /><span className="flex-1 text-left text-slate-200">Imports</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("imports") ?? 0}</span></button>
+                                        <button aria-pressed={showCallsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showCallsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowCallsEdges((prev) => !prev)}><span className="h-px w-7" style={{ backgroundColor: edgeTypeColor("calls") }} /><span className="flex-1 text-left text-slate-200">Calls</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("calls") ?? 0}</span></button>
+                                        <button aria-pressed={showExtendsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showExtendsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowExtendsEdges((prev) => !prev)}><span className="h-px w-7" style={{ backgroundColor: edgeTypeColor("extends") }} /><span className="flex-1 text-left text-slate-200">Extends</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("extends") ?? 0}</span></button>
+                                        <button aria-pressed={showImplementsEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showImplementsEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowImplementsEdges((prev) => !prev)}><span className="h-px w-7" style={{ backgroundColor: edgeTypeColor("implements") }} /><span className="flex-1 text-left text-slate-200">Implements</span><span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("implements") ?? 0}</span></button>
                                         <button aria-pressed={showFileImportEdges} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${showFileImportEdges ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => setShowFileImportEdges((prev) => !prev)}>
-                                            <span className="h-1.5 w-7 rounded-full" style={{ background: "repeating-linear-gradient(90deg,#fbbf24 0,#fbbf24 5px,transparent 5px,transparent 9px)" }} />
+                                            <span className="h-px w-7" style={{ backgroundColor: edgeTypeColor("fileImport") }} />
                                             <span className="flex-1 text-left text-slate-200">File Imports</span>
                                             <span className="text-slate-500">{clusterInfo.edgeTypeCounts.get("fileImport") ?? 0}</span>
                                         </button>
@@ -2700,36 +2794,43 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                     </div>
                 </motion.div>
 
-                {fileTypeLegend.length > 0 && (
-                    <details className="graph-legend absolute bottom-2 right-2 z-20 w-32 rounded-md border border-slate-700 bg-slate-900/55 backdrop-blur p-2">
-                        <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-slate-400 font-semibold">File Types</summary>
-                        <div className="space-y-1 mt-1.5 max-h-32 overflow-y-auto">
-                            {fileTypeLegend.map(({ ext, count, color }) => (
-                                <div key={ext} className="flex items-center gap-1.5 text-[10px]">
-                                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-                                    <span className="text-slate-300 truncate">.{ext}</span>
-                                    <span className="ml-auto text-slate-500">{count}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </details>
-                )}
+                <div ref={containerRef} className="graph-canvas w-full flex-1 min-h-0 bg-[#0d1729]" />
 
-                <div ref={containerRef} className="w-full flex-1 min-h-0 bg-[#0d1729]" />
-
-                <div className="absolute bottom-2 left-2 z-10 flex flex-row items-end gap-2">
-                    <div className="graph-zoom-controls rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
+                <div className="graph-controls" style={showExplorerInspector && panelLayout.inspectorOverlay && panelLayout.inspectorWidth <= workbenchWidth - (showExplorer && !panelLayout.explorerOverlay ? panelLayout.explorerWidth : 0) - 48
+                    ? { width: `calc(100% - ${panelLayout.inspectorWidth}px)` } : undefined}>
+                    <div className="graph-zoom-controls flex flex-wrap items-center gap-1">
                         <Button variant="secondary" size="icon" aria-label="Zoom in" className="w-8 h-8" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
                         <Button variant="secondary" size="icon" aria-label="Zoom out" className="w-8 h-8" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
-                        <button
-                            onClick={handleFit}
-                            aria-label="Fit graph in view"
-                            className="w-8 h-8 rounded-md text-xs font-medium bg-slate-800/80 text-slate-300 border border-slate-600 hover:bg-slate-700 transition-colors flex flex-col items-center justify-center gap-0.5"
-                        >
-                            <Maximize2 className="w-3 h-3" />
-                            
-                        </button>
+                        <Button variant="secondary" size="icon" aria-label="Fit graph in view" className="w-8 h-8" onClick={handleFit}><Maximize2 className="w-4 h-4" /></Button>
                     </div>
+                    <details className="graph-legend">
+                        <summary aria-label="Graph key"><ChevronRight className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />Key</summary>
+                        <div className="graph-legend-body space-y-2">
+                            <p>Larger nodes are repositories and folders. Files use extension colors; smaller nodes are symbols.</p>
+                            <p>Blue ring: focused node. Zoom or hover to reveal detail.</p>
+                            {showRoot && <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: "#3b82f6" }} />Repository</div>}
+                            {showFolders && <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "#8292a8" }} />Folder</div>}
+                            {showFiles && fileTypeLegend.map(({ ext, count, color }) => (
+                                <div key={ext} className="flex items-center gap-2">
+                                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                                    <span className="truncate">.{ext}</span><span className="ml-auto">{count}</span>
+                                </div>
+                            ))}
+                            {showFiles && SYMBOL_KIND_ORDER.filter(kind => symbolKindVisibility[kind]).map(kind => (
+                                <div key={kind} className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: SYMBOL_KIND_STYLE[kind].color }} /><span className="capitalize">{kind}</span></div>
+                            ))}
+                            {([
+                                ["Contains", "contains", showContainsEdges], ["Defines", "defines", showDefinesEdges],
+                                ["Imports", "imports", showImportsEdges], ["Calls", "calls", showCallsEdges],
+                                ["Extends", "extends", showExtendsEdges], ["Implements", "implements", showImplementsEdges],
+                                ["File imports", "fileImport", showFileImportEdges],
+                            ] as const).filter(([, , visible]) => visible).map(([label, type]) => (
+                                <div key={type} className="flex items-center gap-2"><span className="h-px w-4" style={{ backgroundColor: edgeTypeColor(type) }} />{label}</div>
+                            ))}
+                            {showCriticalFiles && <p>Impact mode: red marks critical files; amber marks high-impact files.</p>}
+                            {blastRadiusActive && <p>Blast radius: red marks the source; amber marks affected files.</p>}
+                        </div>
+                    </details>
                 </div>
             </div>
         </div>
