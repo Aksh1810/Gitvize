@@ -413,11 +413,19 @@ export async function fetchLanguages(
 
 // --- Lightweight Access Check ---
 
+export class GitHubRateLimitError extends Error {
+    constructor(public readonly retryAfter?: number) {
+        super(`GitHub API rate limit reached. ${retryAfter !== undefined
+            ? `Try again after ${new Date(Date.now() + retryAfter * 1000).toUTCString()}.`
+            : "Please wait and try again."}`);
+    }
+}
+
 export async function checkRepoAccess(
     owner: string,
     repo: string,
     token?: string | null
-): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string }> {
+): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string; rateLimited?: boolean; retryAfter?: number }> {
     const url = `${GITHUB_API}/repos/${owner}/${repo}`;
 
     const callerToken = token?.trim();
@@ -437,10 +445,22 @@ export async function checkRepoAccess(
     }
 
     if (!res.ok) {
+        const rateLimited = res.status === 429 || (res.status === 403 && (
+            res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after")
+        ));
+        const delay = Number(res.headers.get("retry-after") ?? NaN);
+        const resetAt = Number(res.headers.get("x-ratelimit-reset") ?? NaN);
+        const retryAfter = Number.isFinite(delay) && delay >= 0
+            ? Math.max(1, Math.ceil(delay))
+            : Number.isFinite(resetAt) && resetAt > 0
+                ? Math.max(1, Math.ceil(resetAt - Date.now() / 1000))
+                : undefined;
         return {
             ok: false,
             status: res.status,
             isPrivate: false,
+            rateLimited,
+            retryAfter: rateLimited ? retryAfter : undefined,
         };
     }
 
@@ -459,6 +479,7 @@ export async function checkRepoAccess(
 async function requireRepoToken(owner: string, repo: string, token?: string | null): Promise<string | undefined> {
     const access = await checkRepoAccess(owner, repo, token);
     if (!access.ok) {
+        if (access.rateLimited) throw new GitHubRateLimitError(access.retryAfter);
         const message = access.status === 404 ? "Repository not found or access denied" : "Repository unavailable";
         throw new Error(`GitHub API error ${access.status} for /repos/${owner}/${repo}: ${message}`);
     }

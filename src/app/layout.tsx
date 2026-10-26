@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Geist, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import TrafficAnalytics from "@/components/traffic-analytics";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,8 +9,8 @@ import ThemeProvider from "@/components/ui/theme-provider";
 import "./globals.css";
 import "./atlas.css";
 
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
+const geistSans = Geist({
+  variable: "--font-geist-sans",
   subsets: ["latin"],
 });
 
@@ -54,7 +54,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
       <body
-        className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased h-screen bg-background relative overflow-hidden`}
+        className={`${geistSans.variable} ${jetBrainsMono.variable} antialiased h-screen bg-background relative overflow-hidden`}
       >
         <ThemeProvider>
         <TooltipProvider delayDuration={300}>

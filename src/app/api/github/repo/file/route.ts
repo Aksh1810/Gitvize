@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchFileContent } from "@/lib/github";
+import { fetchFileContent, GitHubRateLimitError } from "@/lib/github";
 import { ResponseTooLargeError } from "@/lib/response-limits";
 import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -45,6 +45,15 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         if (error instanceof ResponseTooLargeError) return NextResponse.json({ error: error.message }, { status: 413 });
         const message = scrubSecrets(error instanceof Error ? error.message : "Failed to read file");
+        if (error instanceof GitHubRateLimitError) {
+            return NextResponse.json({ error: message }, {
+                status: 429,
+                headers: {
+                    "Cache-Control": "private, no-store",
+                    ...(error.retryAfter !== undefined ? { "Retry-After": String(error.retryAfter) } : {}),
+                },
+            });
+        }
         const status = message.includes("not found") || message.includes("Not a file") ? 404 : 500;
         return NextResponse.json({ error: message }, { status });
     }

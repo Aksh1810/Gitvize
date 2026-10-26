@@ -757,11 +757,17 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
         try {
             const params = new URLSearchParams({ owner, repo, path: file.path });
             const res = await fetch(`/api/github/repo/file?${params}`, { headers: githubHeaders });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (!res.ok) {
+                const body = await res.json().catch(() => null);
+                setFileError(typeof body?.error === "string" && body.error.trim()
+                    ? body.error
+                    : `Could not load file (HTTP ${res.status}). Please try again.`);
+                return;
+            }
             const text = await res.text();
             setFileContent(text);
         } catch {
-            setFileError("Could not load file content");
+            setFileError("Could not reach the file service. Check your connection and try again.");
         } finally {
             setFileLoading(false);
         }
