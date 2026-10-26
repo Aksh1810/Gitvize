@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { toast } from "sonner";
 import Navbar from "@/components/dashboard/navbar";
 
@@ -19,6 +19,21 @@ afterEach(() => {
 function setClipboard(value: { writeText: jest.Mock } | undefined) {
   Object.defineProperty(navigator, "clipboard", { configurable: true, value });
 }
+
+it("keeps the grouped repository actions named and connected to their callbacks", () => {
+  const onGithubToken = jest.fn();
+  const onAISettings = jest.fn();
+  const onExport = jest.fn();
+  render(<Navbar owner="example" repo="repo" onGithubToken={onGithubToken} onAISettings={onAISettings} onExport={onExport} />);
+  const actions = within(screen.getByRole("group", { name: "Repository actions" }));
+  fireEvent.click(actions.getByRole("button", { name: "GitHub token" }));
+  fireEvent.click(actions.getByRole("button", { name: "AI settings" }));
+  fireEvent.click(actions.getByRole("button", { name: "Export repository data" }));
+  expect(actions.getByRole("button", { name: "Copy share link" })).toBeEnabled();
+  expect(onGithubToken).toHaveBeenCalledTimes(1);
+  expect(onAISettings).toHaveBeenCalledTimes(1);
+  expect(onExport).toHaveBeenCalledTimes(1);
+});
 
 it("copies the current repository URL and confirms success", async () => {
   const writeText = jest.fn().mockResolvedValue(undefined);

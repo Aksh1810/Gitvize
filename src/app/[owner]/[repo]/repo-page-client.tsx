@@ -716,9 +716,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
             <div className="workspace-layout">
                 <div className="workspace-heading">
-                    <div className="min-w-0">
-                        <p className="workspace-eyebrow">Repository workspace</p>
-                        <h1 className="font-semibold truncate"><span>{owner} / </span>{repo}</h1>
+                    <div className="workspace-identity min-w-0">
+                        <h1 className="font-semibold truncate" title={`${owner}/${repo}`}><span>{owner} / </span>{repo}</h1>
                         {repoData.metadata.description && <p className="workspace-description" title={repoData.metadata.description}>{repoData.metadata.description}</p>}
                     </div>
                     <div className="workspace-summary" aria-label="Repository summary">
@@ -735,7 +734,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         <button
                             type="button"
                             onClick={openOnboarding}
-                            className="inline-flex items-center gap-2 rounded-md border border-border/30 bg-slate-900/55 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800/70 shrink-0"
+                            className="pro-control pro-focus-ring inline-flex items-center justify-center gap-2 px-3 text-xs shrink-0"
                         >
                             <HelpCircle className="w-3.5 h-3.5" />
                             Help
@@ -745,14 +744,14 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                 <main className="workspace-canvas" aria-label={`${activeTab} view`}>
                     <header className="workspace-view-heading">
-                        <div>
+                        <div className="workspace-view-title">
                             <h2>{DIAGRAM_TABS.find((tab) => tab.id === activeTab)?.label}</h2>
                             <p>{{ files: "Explore the structure. Select a file to read its code.", architecture: "See how the modules connect, then explore their key files.", contributors: "Find the people behind the code and their contributions.", branches: "Follow a branch and explore its commit history.", dependencies: "Inspect the packages this repository builds on." }[activeTab]}</p>
                         </div>
                         <Link href="/" className="workspace-new-repo">Explore another repo <span aria-hidden="true">↗</span></Link>
                     </header>
                     {/* Main diagram area */}
-                    <div className="flex-1 min-h-0">
+                    <div className="flex-1 min-h-0 min-w-0">
                         <div className={`relative h-full diagram-shell overscroll-contain surface-neo ${activeTab === "files" || activeTab === "architecture" ? "workspace-code" : "workspace-data"} ${diagramBackground}`}>
                             {isTabMounted("architecture") && (
                                 <div

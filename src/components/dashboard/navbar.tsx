@@ -51,7 +51,7 @@ export default function Navbar({
             animate={{ y: 0, opacity: 1 }}
             transition={transitions.soft}
         >
-            <div className="max-w-[1800px] mx-auto flex items-center justify-between relative">
+            <div className="workspace-toolbar max-w-[1800px] mx-auto flex min-w-0 items-center justify-between gap-3 relative">
                 {/* Logo */}
                 <Link
                     href="/"
@@ -78,50 +78,51 @@ export default function Navbar({
                 {/* Actions */}
                 <div className="flex items-center gap-2">
                     <ThemeToggle />
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onGithubToken}
-                        aria-label="GitHub token"
-                        className="pro-control pro-focus-ring ui-micro"
-                    >
-                        <KeyRound className="w-4 h-4 mr-1.5 text-emerald-300" />
-                        <span className="hidden md:inline">GitHub token</span>
-                    </Button>
+                    <div role="group" aria-label="Repository actions" className="workspace-secondary-actions flex items-center gap-1">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={onGithubToken}
+                            aria-label="GitHub token"
+                            className="pro-control pro-focus-ring ui-micro"
+                        >
+                            <KeyRound className="w-4 h-4 mr-1.5 text-emerald-300" />
+                            <span className="hidden md:inline">GitHub token</span>
+                        </Button>
 
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onAISettings}
-                        aria-label="AI settings"
-                        className="pro-control pro-focus-ring ui-micro"
-                    >
-                        <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
-                        <span className="hidden md:inline">AI settings</span>
-                    </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={onAISettings}
+                            aria-label="AI settings"
+                            className="pro-control pro-focus-ring ui-micro"
+                        >
+                            <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
+                            <span className="hidden md:inline">AI settings</span>
+                        </Button>
 
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onExport}
-                        aria-label="Export repository data"
-                        className="pro-control pro-focus-ring ui-micro"
-                    >
-                        <Download className="w-4 h-4 mr-1.5 text-white/80" />
-                        <span className="hidden md:inline">Export data</span>
-                    </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={onExport}
+                            aria-label="Export repository data"
+                            className="pro-control pro-focus-ring ui-micro"
+                        >
+                            <Download className="w-4 h-4 mr-1.5 text-white/80" />
+                            <span className="hidden md:inline">Export data</span>
+                        </Button>
 
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleShare}
-                        aria-label="Copy share link"
-                        className="pro-control pro-focus-ring ui-micro"
-                    >
-                        <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
-                        <span className="hidden md:inline">Share</span>
-                    </Button>
-
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleShare}
+                            aria-label="Copy share link"
+                            className="pro-control pro-focus-ring ui-micro"
+                        >
+                            <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
+                            <span className="hidden md:inline">Share</span>
+                        </Button>
+                    </div>
                 </div>
             </div>
         </motion.nav>

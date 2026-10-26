@@ -31,7 +31,10 @@ export default function TabNav({ activeTab, onTabChange, rightAction }: TabNavPr
     const activeButton = useRef<HTMLButtonElement>(null);
 
     useEffect(() => {
-        activeButton.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        const revealActiveView = () => activeButton.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        revealActiveView();
+        window.addEventListener("resize", revealActiveView);
+        return () => window.removeEventListener("resize", revealActiveView);
     }, [activeTab]);
 
     return (
