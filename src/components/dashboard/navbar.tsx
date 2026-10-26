@@ -86,7 +86,7 @@ export default function Navbar({
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <KeyRound className="w-4 h-4 mr-1.5 text-emerald-300" />
-                        <span className="hidden sm:inline">GitHub token</span>
+                        <span className="hidden md:inline">GitHub token</span>
                     </Button>
 
                     <Button
@@ -97,7 +97,7 @@ export default function Navbar({
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
-                        <span className="hidden sm:inline">AI settings</span>
+                        <span className="hidden md:inline">AI settings</span>
                     </Button>
 
                     <Button
@@ -108,7 +108,7 @@ export default function Navbar({
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <Download className="w-4 h-4 mr-1.5 text-white/80" />
-                        <span className="hidden sm:inline">Export data</span>
+                        <span className="hidden md:inline">Export data</span>
                     </Button>
 
                     <Button
@@ -119,7 +119,7 @@ export default function Navbar({
                         className="pro-control pro-focus-ring ui-micro"
                     >
                         <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
-                        <span className="hidden sm:inline">Share</span>
+                        <span className="hidden md:inline">Share</span>
                     </Button>
 
                 </div>
