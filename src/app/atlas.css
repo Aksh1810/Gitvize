@@ -260,11 +260,11 @@
 .atlas-preview { box-shadow: 0 18px 45px -30px #17234450; }
 .workspace-brand { color: var(--atlas-ink); }
 .workspace-navbar .pro-control svg { color: var(--atlas-muted); margin-right: 0; }
-.workspace-view-heading { flex-shrink: 0; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; color: var(--atlas-ink); }
-.workspace-view-title { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.workspace-view-heading { flex-shrink: 0; min-width: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 0; color: var(--atlas-ink); }
+.workspace-view-title { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .workspace-view-heading h2 { font-size: 20px; line-height: 1.4; font-weight: 600; letter-spacing: -.015em; }
-.workspace-view-heading p { font-size: 14px; line-height: 1.6; color: var(--atlas-muted); }
-.workspace-new-repo { display: flex; gap: 9px; align-items: center; white-space: nowrap; color: var(--atlas-muted); font-size: 14px; }
+.workspace-view-heading p { font-size: 14px; line-height: 20px; color: var(--atlas-muted); }
+.workspace-new-repo { display: flex; gap: 8px; align-items: center; padding: 4px 0; white-space: nowrap; color: var(--atlas-muted); font-size: 14px; line-height: 20px; }
 .workspace-new-repo:hover { color: var(--atlas-blue); }
 .workspace-canvas .diagram-shell { border-radius: 8px; }
 .atlas-data-page { max-width: none; padding: var(--atlas-gutter); }
@@ -285,14 +285,19 @@
 .workspace-data .atlas-branch-card button { border-radius: 6px; }
 .history-rail-canvas { background: var(--atlas-paper); }
 .atlas-workspace .workspace-layout { margin: 0 16px 16px; border-radius: 12px; background: var(--atlas-surface); overflow: hidden; box-shadow: 0 0 0 1px var(--atlas-line); }
-.workspace-canvas .repository-workbench { background: var(--atlas-surface); border-radius: 8px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--atlas-line); }
+.workspace-canvas .repository-workbench { background: var(--atlas-surface); border: 1px solid var(--atlas-line); border-radius: 8px; overflow: hidden; box-shadow: none; }
 .repository-workbench #file-explorer-inner { background: var(--atlas-paper); border-right: 1px solid var(--atlas-line); }
+.repository-workbench #file-explorer-panel[data-open="false"] #file-explorer-inner { border-right: 0; }
 .repository-workbench .explorer-heading, .repository-workbench .graph-toolbar, .repository-workbench .inspector-heading { height: 48px; min-height: 48px; flex-shrink: 0; background: var(--atlas-surface); border-bottom: 1px solid var(--atlas-line); }
-.repository-workbench .graph-toolbar { height: auto; padding: 6px 12px; gap: 8px; }
+.repository-workbench .graph-toolbar { height: auto; padding: 5px 12px; gap: 6px; }
 .repository-workbench .explorer-search { margin: 12px; }
 .repository-workbench .workbench-inspector { border-left: 1px solid var(--atlas-line); }
+.repository-workbench .workbench-inspector[inert] { border-left: 0; }
 .repository-workbench .inspector-surface { background: var(--atlas-surface); box-shadow: none; }
 .workbench-file-path { padding: 8px 12px; font-size: 12px; font-family: var(--font-jetbrains-mono), monospace; color: var(--atlas-muted); background: var(--atlas-paper); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+@media (max-height: 600px) {
+  .repository-workbench .graph-zoom-controls { flex-direction: row; }
+}
 @media (max-width: 1023px) {
   .repository-workbench .workbench-inspector { position: absolute; right: 0; top: 0; max-width: 100% !important; box-shadow: -12px 0 32px #00000020; }
 }
@@ -306,9 +311,6 @@
 .workspace-canvas .diagram-shell { border: 0; box-shadow: none; }
 .workspace-canvas .diagram-shell::before { display: none; }
 .workspace-canvas :is(.workspace-code, .workspace-data) > div > .shrink-0 { border-bottom: 0; }
-.workspace-code #file-explorer-inner { border-right: 0; }
-.workspace-code .inspector-surface { background: var(--atlas-paper); box-shadow: 8px 0 24px #0000000d; }
-.workspace-code .inspector-heading { background: var(--atlas-paper); }
 .atlas-header, .atlas-feature + .atlas-feature, .atlas-footer { border: 0; }
 .workspace-code { --foreground: var(--atlas-ink); --muted-foreground: var(--atlas-muted); --background: var(--atlas-surface); --border: var(--atlas-line); color: var(--atlas-ink); }
 .workspace-canvas .workspace-code { background: var(--atlas-surface); border-color: var(--atlas-line); }

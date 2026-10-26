@@ -2189,8 +2189,8 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 style={{ width: showExplorer ? explorerWidth : 0, willChange: 'width' }}
             >
                 <div id="file-explorer-inner" inert={!showExplorer} className="h-full w-full border-r border-slate-700/80 bg-[#121e33] flex flex-col overflow-hidden">
-                    <div className="explorer-heading flex items-center justify-between px-3 py-2">
-                        <span className="text-xs font-medium">Files</span>
+                    <div className="explorer-heading flex items-center justify-between px-3">
+                        <span className="text-sm font-medium">Files</span>
                         <div className="flex items-center gap-1">
                             <Button
                                 variant="ghost"
@@ -2199,19 +2199,19 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                     if (window.innerWidth < 768) setShowExplorer(false);
                                     setShowExplorerInspector((prev) => !prev);
                                 }}
-                                className="h-7 w-7 text-slate-400 hover:text-slate-200"
+                                className="text-slate-400 hover:text-slate-200"
                                 aria-label={showExplorerInspector ? "Hide inspector" : "Show inspector"}
                             >
-                                {showExplorerInspector ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
+                                {showExplorerInspector ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
                             </Button>
                             <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => startTransition(() => setShowExplorer(false))}
-                                className="h-7 w-7 text-slate-400 hover:text-slate-200"
+                                className="text-slate-400 hover:text-slate-200"
                                 aria-label="Collapse explorer"
                             >
-                                <ChevronDown className="w-3.5 h-3.5 rotate-90" />
+                                <ChevronDown className="w-4 h-4 rotate-90" />
                             </Button>
                         </div>
                     </div>
@@ -2352,11 +2352,11 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 text-slate-400 hover:text-slate-200"
+                                    className="text-slate-400 hover:text-slate-200"
                                     onClick={() => setShowExplorerInspector(false)}
                                     aria-label="Collapse inspector"
                                 >
-                                    <X className="w-3.5 h-3.5" />
+                                    <X className="w-4 h-4" />
                                 </Button>
                             </div>
                         </div>
@@ -2435,46 +2435,47 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 </motion.div>
 
             <div className="workbench-graph relative flex-1 min-w-0 h-full flex flex-col order-2">
-                <div className="graph-toolbar relative z-20 shrink-0 flex flex-wrap items-center gap-2 bg-[#131f34] p-3">
+                <div className="graph-toolbar relative z-20 shrink-0 flex flex-wrap items-center gap-2">
                     {!showExplorer && (
-                        <button
+                        <Button
+                            type="button"
+                            variant="outline"
                             onClick={() => startTransition(() => {
                                 if (window.innerWidth < 768) setShowExplorerInspector(false);
                                 setShowExplorer(true);
                             })}
-                            className="flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur text-slate-300 hover:text-white hover:border-slate-500 text-xs"
                             aria-label="Show explorer"
                         >
-                            <ChevronRight className="w-3.5 h-3.5" />
+                            <ChevronRight className="w-4 h-4" />
                             Explorer
-                        </button>
+                        </Button>
                     )}
-                    <div className="hidden sm:flex items-center gap-1 px-3 h-9 text-xs text-slate-300">
+                    <div className="hidden sm:flex items-center gap-1 pr-2 h-9 text-xs text-slate-300">
                         <span><strong className="text-slate-100">{clusterInfo.files}</strong> files</span>
                         <span className="text-slate-600">|</span>
                         <span><strong className="text-slate-100">{clusterInfo.folders}</strong> folders</span>
                     </div>
-                    <button onClick={() => setShowRightFilters((prev) => !prev)} className={`flex items-center gap-2 px-3 h-9 rounded-md border text-sm ${showRightFilters ? "bg-sky-300/15 border-sky-300/50 text-white" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white focus-visible:outline-2 focus-visible:outline-sky-300`} aria-label="Toggle filters" aria-expanded={showRightFilters}><Filter className="w-4 h-4" /> Filters</button>
-                    <button
+                    <Button type="button" variant="outline" onClick={() => setShowRightFilters((prev) => !prev)} aria-label="Toggle filters" aria-expanded={showRightFilters} aria-pressed={showRightFilters}><Filter className="w-4 h-4" /> Filters</Button>
+                    <Button
                         type="button"
+                        variant="outline"
                         onClick={() => {
                             const anyActive = Object.values(symbolKindVisibility).some((v) => v);
                             const allKinds: SymbolKind[] = ["class", "function", "interface", "type", "method", "variable"];
                             setSymbolKindVisibility(Object.fromEntries(allKinds.map((k) => [k, !anyActive])) as Record<SymbolKind, boolean>);
                         }}
-                        className={`flex items-center gap-1 px-2.5 h-9 rounded-md border text-xs transition-colors ${Object.values(symbolKindVisibility).some((v) => v) ? "bg-cyan-900/50 border-cyan-700 text-cyan-300" : "bg-slate-900/90 border-slate-700 text-slate-300"} hover:text-white`}
                         title="Toggle symbol overlay (classes, functions, interfaces)"
                         aria-pressed={Object.values(symbolKindVisibility).some((value) => value)}
                     >
-                        <Braces className="w-3.5 h-3.5" />
+                        <Braces className="w-4 h-4" />
                         <span>Symbols</span>
-                    </button>
-                    {symbolDiagnostics.fetchFailed > 0 && (
-                        <span role="status" className="w-full text-[11px] text-amber-200/90">
-                            Partial symbol index: {symbolDiagnostics.fetchFailed} files unavailable. File browsing is still available.
-                        </span>
-                    )}
+                    </Button>
                 </div>
+                {symbolDiagnostics.fetchFailed > 0 && (
+                    <div role="status" className="shrink-0 border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                        Partial symbol index: {symbolDiagnostics.fetchFailed} files unavailable. File browsing is still available.
+                    </div>
+                )}
 
                 <motion.div
                     id="filter-panel-motion"
@@ -2678,7 +2679,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 <div ref={containerRef} className="w-full flex-1 min-h-0 bg-[#0d1729]" />
 
                 <div className="absolute bottom-2 left-2 z-10 flex flex-row items-end gap-2">
-                    <div className="rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
+                    <div className="graph-zoom-controls rounded-md border border-slate-700 bg-slate-900/90 backdrop-blur p-1.5 flex flex-col gap-1.5">
                         <Button variant="secondary" size="icon" aria-label="Zoom in" className="w-8 h-8" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></Button>
                         <Button variant="secondary" size="icon" aria-label="Zoom out" className="w-8 h-8" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></Button>
                         <button

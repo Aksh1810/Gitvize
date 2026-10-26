@@ -734,7 +734,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         <button
                             type="button"
                             onClick={openOnboarding}
-                            className="pro-control pro-focus-ring inline-flex items-center justify-center gap-2 px-3 text-xs shrink-0"
+                            className="pro-control pro-focus-ring inline-flex items-center justify-center gap-2 px-3 text-sm shrink-0"
                         >
                             <HelpCircle className="w-3.5 h-3.5" />
                             Help

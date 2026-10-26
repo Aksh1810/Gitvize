@@ -51,11 +51,11 @@ export default function Navbar({
             animate={{ y: 0, opacity: 1 }}
             transition={transitions.soft}
         >
-            <div className="workspace-toolbar max-w-[1800px] mx-auto flex min-w-0 items-center justify-between gap-3 relative">
+            <div className="workspace-toolbar flex min-w-0 items-center gap-4 relative">
                 {/* Logo */}
                 <Link
                     href="/"
-                    className="atlas-brand workspace-brand"
+                    className="atlas-brand workspace-brand shrink-0 md:min-w-[168px]"
                     aria-label="Gitvize home"
                 >
                     <BrandLogo size={32} />
@@ -69,14 +69,14 @@ export default function Navbar({
                         href={`https://github.com/${owner}/${repo}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="workspace-repo-link inline-flex items-center gap-1.5 text-slate-300 hover:text-white pro-focus-ring rounded px-2 py-1"
+                        className="workspace-repo-link inline-flex items-center gap-1.5 text-slate-300 hover:text-white pro-focus-ring rounded py-1"
                     >
                         View on GitHub <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                     <ThemeToggle />
                     <div role="group" aria-label="Repository actions" className="workspace-secondary-actions flex items-center gap-1">
                         <Button
@@ -84,7 +84,7 @@ export default function Navbar({
                             size="sm"
                             onClick={onGithubToken}
                             aria-label="GitHub token"
-                            className="pro-control pro-focus-ring ui-micro"
+                            className="pro-control pro-focus-ring ui-body"
                         >
                             <KeyRound className="w-4 h-4 mr-1.5 text-emerald-300" />
                             <span className="hidden md:inline">GitHub token</span>
@@ -95,7 +95,7 @@ export default function Navbar({
                             size="sm"
                             onClick={onAISettings}
                             aria-label="AI settings"
-                            className="pro-control pro-focus-ring ui-micro"
+                            className="pro-control pro-focus-ring ui-body"
                         >
                             <Sparkles className="w-4 h-4 mr-1.5 text-cyan-200" />
                             <span className="hidden md:inline">AI settings</span>
@@ -106,7 +106,7 @@ export default function Navbar({
                             size="sm"
                             onClick={onExport}
                             aria-label="Export repository data"
-                            className="pro-control pro-focus-ring ui-micro"
+                            className="pro-control pro-focus-ring ui-body"
                         >
                             <Download className="w-4 h-4 mr-1.5 text-white/80" />
                             <span className="hidden md:inline">Export data</span>
@@ -117,7 +117,7 @@ export default function Navbar({
                             size="sm"
                             onClick={handleShare}
                             aria-label="Copy share link"
-                            className="pro-control pro-focus-ring ui-micro"
+                            className="pro-control pro-focus-ring ui-body"
                         >
                             <Share2 className="w-4 h-4 mr-1.5 text-white/80" />
                             <span className="hidden md:inline">Share</span>
