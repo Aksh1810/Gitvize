@@ -46,3 +46,31 @@ it("keeps the server limit enforced for direct oversized requests", async () => 
     expect(response.status).toBe(400);
     expect(fetchFileContent).not.toHaveBeenCalled();
 });
+
+it("deduplicates paths and limits concurrent reads while preserving order", async () => {
+    let active = 0;
+    let peak = 0;
+    jest.mocked(fetchFileContent).mockImplementation(async (_owner, _repo, path) => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise(resolve => setTimeout(resolve, 1));
+        active--;
+        return path;
+    });
+    const paths = Array.from({ length: 12 }, (_, i) => `${i}.ts`);
+    const response = await POST(new NextRequest("http://localhost/api/test", { method: "POST",
+        body: JSON.stringify({ owner: "example", repo: "repo", paths: [...paths, paths[0]] }),
+    }));
+    expect((await response.json()).files.map((file: { path: string }) => file.path)).toEqual(paths);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(fetchFileContent).toHaveBeenCalledTimes(paths.length);
+});
+
+it("rejects a batch exceeding the serialized byte budget without fetching remaining chunks", async () => {
+    jest.mocked(fetchFileContent).mockResolvedValue("a".repeat(512 * 1024));
+    const response = await POST(new NextRequest("http://localhost/api/test", { method: "POST",
+        body: JSON.stringify({ owner: "example", repo: "repo", paths: Array.from({ length: 12 }, (_, i) => `${i}.ts`) }),
+    }));
+    expect(response.status).toBe(413);
+    expect(fetchFileContent).toHaveBeenCalledTimes(4);
+});

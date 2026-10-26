@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { unstable_cache } from "next/cache";
+import { MAX_FILE_BYTES, readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
 import type {
     RepoMetadata,
     FileTreeResponse,
@@ -81,7 +82,7 @@ async function ghFetch<T>(
     }
 
     if (!res.ok) {
-        const body = await res.text().catch(() => "");
+        const body = await readBoundedText(res, 64 * 1024).catch(() => "");
         throw new Error(`GitHub API error ${res.status} for ${path}: ${body}`);
     }
 
@@ -91,7 +92,7 @@ async function ghFetch<T>(
         console.warn(`[github] Rate limit low: ${remaining}/${limit} remaining for ${path}`);
     }
 
-    return res.json();
+    return JSON.parse(await readBoundedText(res, 8 * 1024 * 1024));
 }
 
 // --- Repository Metadata ---
@@ -132,7 +133,7 @@ export async function fetchFileTree(
     const ref = branch ?? "HEAD";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await ghFetch<any>(
-        `/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`,
+        `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
         token,
         { revalidate: 120 }
     );
@@ -263,7 +264,7 @@ export async function fetchCommits(
     token?: string | null
 ): Promise<Commit[]> {
     // Fetch up to 5 pages (500 commits) in parallel for a richer DAG
-    const base = branch ? `?sha=${branch}&per_page=100` : `?per_page=100`;
+    const base = branch ? `?sha=${encodeURIComponent(branch)}&per_page=100` : `?per_page=100`;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pages = await Promise.allSettled<any[]>(
@@ -310,7 +311,7 @@ async function fetchCommitsForDAG(
     token?: string | null
 ): Promise<{ commits: Commit[]; commitsFetchError: boolean }> {
     // Phase 1: fetch 5 pages from the default branch in parallel
-    const base = `?sha=${defaultBranch}&per_page=100`;
+    const base = `?sha=${encodeURIComponent(defaultBranch)}&per_page=100`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const defaultPages = await Promise.allSettled<any[]>(
         [1, 2, 3, 4, 5].map((page) =>
@@ -486,10 +487,10 @@ export async function fetchDependencyFiles(
         MANIFEST_FILES.map(async (filename) => {
             const res = await fetch(
                 `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${filename}`,
-                { headers: headers(token) }
+                { headers: headers(token), cache: "no-store" }
             );
             if (!res.ok) throw new Error("Not found");
-            const content = await res.text();
+            const content = await readBoundedText(res, MAX_FILE_BYTES);
             return { filename, content };
         })
     );
@@ -529,7 +530,15 @@ export async function fetchCommitsPage(
 // re-downloads the blob.
 const FILE_CONTENT_TTL_MS = 5 * 60 * 1000;
 const FILE_CONTENT_MAX_ENTRIES = 100;
-const fileContentCache = new Map<string, { ts: number; content: string }>();
+const FILE_CONTENT_MAX_BYTES = 8 * 1024 * 1024;
+const fileContentCache = new Map<string, { ts: number; content: string; bytes: number }>();
+let fileContentCacheBytes = 0;
+
+function fileCacheDelete(key: string): void {
+    const hit = fileContentCache.get(key);
+    if (hit) fileContentCacheBytes -= hit.bytes;
+    fileContentCache.delete(key);
+}
 
 function fileCacheKey(owner: string, repo: string, filePath: string, token?: string | null): string {
     // Isolate credentials without retaining their plaintext in cache keys.
@@ -541,7 +550,7 @@ function fileCacheGet(key: string): string | null {
     const hit = fileContentCache.get(key);
     if (!hit) return null;
     if (Date.now() - hit.ts > FILE_CONTENT_TTL_MS) {
-        fileContentCache.delete(key);
+        fileCacheDelete(key);
         return null;
     }
     // LRU touch.
@@ -551,11 +560,16 @@ function fileCacheGet(key: string): string | null {
 }
 
 function fileCacheSet(key: string, content: string): void {
-    if (fileContentCache.size >= FILE_CONTENT_MAX_ENTRIES) {
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > MAX_FILE_BYTES) throw new ResponseTooLargeError();
+    fileCacheDelete(key);
+    while (fileContentCache.size >= FILE_CONTENT_MAX_ENTRIES || fileContentCacheBytes + bytes > FILE_CONTENT_MAX_BYTES) {
         const oldest = fileContentCache.keys().next().value;
-        if (oldest !== undefined) fileContentCache.delete(oldest);
+        if (oldest === undefined) break;
+        fileCacheDelete(oldest);
     }
-    fileContentCache.set(key, { ts: Date.now(), content });
+    fileContentCache.set(key, { ts: Date.now(), content, bytes });
+    fileContentCacheBytes += bytes;
 }
 
 export async function fetchFileContent(
@@ -564,7 +578,7 @@ export async function fetchFileContent(
     filePath: string,
     token?: string | null,
 ): Promise<string> {
-    if (filePath.includes("..") || filePath.startsWith("/")) throw new Error("File path not found");
+    if (filePath.length > 4096 || filePath.includes("..") || filePath.startsWith("/")) throw new Error("File path not found");
     const effectiveToken = await requireRepoToken(owner, repo, token);
     const cacheKey = fileCacheKey(owner, repo, filePath, token);
     const cached = fileCacheGet(cacheKey);
@@ -579,31 +593,35 @@ export async function fetchFileContent(
             effectiveToken,
             { noStore: true },
         );
-    } catch {
+    } catch (error) {
+        if (error instanceof ResponseTooLargeError) throw error;
         // GitHub returns 403/404 for blobs > 1 MB — fall back to raw content.
         const rawRes = await fetch(
             `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${encodedPath}`,
-            { headers: headers(effectiveToken) },
+            { headers: headers(effectiveToken), cache: "no-store" },
         );
         if (!rawRes.ok) throw new Error(`File not found: ${filePath}`);
-        const text = await rawRes.text();
+        const text = await readBoundedText(rawRes, MAX_FILE_BYTES);
         fileCacheSet(cacheKey, text);
         return text;
     }
 
     if (data.type !== "file") throw new Error("Not a file");
+    if (typeof data.size === "number" && data.size > MAX_FILE_BYTES) throw new ResponseTooLargeError();
 
     if (data.encoding === "base64" && typeof data.content === "string") {
-        const decoded = Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf-8");
+        const encoded = data.content.replace(/\s/g, "");
+        if (Buffer.byteLength(encoded, "base64") > MAX_FILE_BYTES) throw new ResponseTooLargeError();
+        const decoded = Buffer.from(encoded, "base64").toString("utf-8");
         fileCacheSet(cacheKey, decoded);
         return decoded;
     }
 
     // GitHub provides download_url for files it can't inline (e.g. large blobs).
     if (typeof data.download_url === "string") {
-        const rawRes = await fetch(data.download_url);
+        const rawRes = await fetch(data.download_url, { cache: "no-store" });
         if (!rawRes.ok) throw new Error("Failed to download file");
-        const text = await rawRes.text();
+        const text = await readBoundedText(rawRes, MAX_FILE_BYTES);
         fileCacheSet(cacheKey, text);
         return text;
     }
@@ -687,7 +705,7 @@ function deduplicatedFetch(owner: string, repo: string) {
 // cache in dev). Each unique (owner, repo) pair gets its own cache entry.
 const cachedFetchAllRepoData = unstable_cache(
     deduplicatedFetch,
-    ["repo-data-v4"],
+    ["repo-data-v5"],
     { revalidate: 300 }
 );
 

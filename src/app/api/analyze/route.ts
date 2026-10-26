@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMockAnalysis } from "@/lib/ai";
+import { reserveServerAIAnalysis } from "@/lib/ai-budget";
 import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 import type { AIConfig } from "@/lib/ai";
 import type { TreeItem } from "@/types";
@@ -9,20 +10,6 @@ const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
 const ALLOWED_PROVIDERS = new Set(["gemini", "anthropic", "openai"]);
 const MAX_README_LEN = 50_000;
 const MAX_TREE_ITEMS = 5_000;
-
-// Server-side daily AI premium usage counter (per-instance; resets at midnight).
-// This supplements the client-side localStorage cap and prevents bypass via curl.
-const dailyAIPremium = new Map<string, { date: string; count: number }>();
-const DAILY_PREMIUM_LIMIT = 10;
-
-function checkDailyPremium(ip: string): boolean {
-    const today = new Date().toISOString().slice(0, 10);
-    const e = dailyAIPremium.get(ip);
-    if (!e || e.date !== today) { dailyAIPremium.set(ip, { date: today, count: 1 }); return true; }
-    if (e.count >= DAILY_PREMIUM_LIMIT) return false;
-    e.count++;
-    return true;
-}
 
 export async function POST(request: NextRequest) {
     const ip = getClientIp(request);
@@ -44,14 +31,6 @@ export async function POST(request: NextRequest) {
 
         const forceFallback = Boolean((body as { forceFallback?: boolean }).forceFallback);
         const requestedMode = mode ?? "smart";
-
-        // Server-side daily cap for premium AI calls (supplements client-side localStorage)
-        if (requestedMode === "premium" && !checkDailyPremium(ip)) {
-            return NextResponse.json(
-                { error: "Daily AI analysis limit reached. Try again tomorrow." },
-                { status: 429 }
-            );
-        }
 
         if (!owner || !repo || !tree) {
             return NextResponse.json(
@@ -115,6 +94,17 @@ export async function POST(request: NextRequest) {
         }
 
         if (requestedMode === "premium" && hasAI) {
+            if (!clientKey) {
+                const quota = await reserveServerAIAnalysis(ip);
+                if (quota !== "allowed") {
+                    return NextResponse.json(
+                        { error: quota === "exhausted"
+                            ? "Daily server AI budget reached. Try tomorrow or supply your own AI key."
+                            : "Server AI budget unavailable. Supply your own AI key or try again later." },
+                        { status: quota === "exhausted" ? 429 : 503 },
+                    );
+                }
+            }
             // Build AI config from client settings (preferred) or env vars
             const aiConfig: AIConfig | undefined = clientKey
                 ? {

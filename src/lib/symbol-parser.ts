@@ -219,7 +219,7 @@ function extractDeclarations(filePath: string, stripped: string): ExtractedSymbo
         if (!maybeFunction) add("variable", name);
     });
 
-    forEachMatch(/^\s*(?:public|private|protected|static|async|get|set|readonly|\s)+\s*([A-Za-z_][A-Za-z0-9_]*)\s*\([^\n;)]*\)\s*\{/gm, stripped, (name) => {
+    forEachMatch(/^[^\S\r\n]*(?:(?:public|private|protected|static|async|get|set|readonly)[^\S\r\n]+)*([A-Za-z_][A-Za-z0-9_]*)\s*\([^\n;)]*\)\s*\{/gm, stripped, (name) => {
         if (name !== "constructor") add("method", name);
     });
 

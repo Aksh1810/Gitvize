@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isIP } from "node:net";
 
 // ── In-process fallback store ──────────────────────────────────────────────
 // Effective per Lambda instance. For multi-instance deployments, set
@@ -99,9 +100,10 @@ export function checkRateLimit(key: string, limit: number, windowMs: number): Ra
 }
 
 export function getClientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
-  return request.headers.get("x-real-ip") ?? "unknown";
+  // Only Vercel's ingress supplies this protected header; direct hosting shares a bucket.
+  if (process.env.VERCEL !== "1") return "unknown";
+  const ip = request.headers.get("x-vercel-forwarded-for")?.split(",")[0].trim();
+  return ip && isIP(ip) ? ip : "unknown";
 }
 
 /** Remove known token patterns before returning errors to clients or logging. */
