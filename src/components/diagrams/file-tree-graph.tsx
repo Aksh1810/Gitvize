@@ -9,6 +9,7 @@ import { List, type RowComponentProps } from "react-window";
 import { getFileColor } from "@/lib/file-icons";
 import { fetchSourceFiles } from "@/lib/file-batch";
 import { searchFiles } from "@/lib/search-engine";
+import { getWorkbenchPanelLayout } from "@/lib/workbench-layout";
 import {
     settleMsForCount,
     reheatSettleMsForCount,
@@ -417,16 +418,19 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     const [showExplorer, setShowExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const [explorerWidth, setExplorerWidth] = useState(260);
-    const [explorerViewportHeight, setExplorerViewportHeight] = useState(560);
+    const [explorerViewportHeight, setExplorerViewportHeight] = useState(0);
     const [showRightFilters, setShowRightFilters] = useState(false);
+    const workbenchRef = useRef<HTMLDivElement>(null);
+    const [workbenchWidth, setWorkbenchWidth] = useState(0);
 
     useEffect(() => {
-        const collapseOnNarrowScreen = () => {
-            if (window.innerWidth < 768) setShowExplorer(false);
-        };
-        collapseOnNarrowScreen();
-        window.addEventListener("resize", collapseOnNarrowScreen);
-        return () => window.removeEventListener("resize", collapseOnNarrowScreen);
+        const workbench = workbenchRef.current;
+        if (!workbench) return;
+        if (workbench.clientWidth < 640) setShowExplorer(false);
+        const observer = new ResizeObserver(() => setWorkbenchWidth(workbench.clientWidth));
+        setWorkbenchWidth(workbench.clientWidth);
+        observer.observe(workbench);
+        return () => observer.disconnect();
     }, []);
     const [nodeFiltersOpen, setNodeFiltersOpen] = useState(true);
     const [symbolFiltersOpen, setSymbolFiltersOpen] = useState(false);
@@ -479,6 +483,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
         references: [],
     });
     const [inspectorWidth, setInspectorWidth] = useState(440);
+    const panelLayout = getWorkbenchPanelLayout(workbenchWidth, showExplorer, explorerWidth, inspectorWidth);
     const [filterPanelWidth, setFilterPanelWidth] = useState(FILTER_PANEL_WIDTH);
     const visibilityRef = useRef<VisibilityState>({
         showRoot: true,
@@ -656,7 +661,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
         const observer = new ResizeObserver((entries) => {
             const [entry] = entries;
             if (!entry) return;
-            const nextHeight = Math.max(180, Math.floor(entry.contentRect.height));
+            const nextHeight = Math.max(0, Math.floor(entry.contentRect.height));
             if (nextHeight !== lastHeight) {
                 lastHeight = nextHeight;
                 setExplorerViewportHeight(nextHeight);
@@ -678,20 +683,22 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     }, [explorerWidth]);
 
     useEffect(() => {
-        const handleMouseMove = (event: MouseEvent) => {
+        inspectorWidthRef.current = inspectorWidth;
+    }, [inspectorWidth]);
+
+    useEffect(() => {
+        const handlePointerMove = (event: PointerEvent) => {
+            const width = workbenchRef.current?.clientWidth ?? 0;
             if (resizingRef.current) {
                 const delta = event.clientX - dragStartXRef.current;
-                const nextWidth = Math.min(360, Math.max(180, dragStartWidthRef.current + delta));
+                const nextWidth = getWorkbenchPanelLayout(width, showExplorer, dragStartWidthRef.current + delta, inspectorWidthRef.current).explorerWidth;
                 explorerWidthRef.current = nextWidth;
-                const el = document.getElementById("file-explorer-panel");
-                if (el) { el.style.transition = "none"; el.style.width = `${nextWidth}px`; }
+                setExplorerWidth(nextWidth);
             } else if (inspectorResizingRef.current) {
                 const delta = inspectorDragStartXRef.current - event.clientX;
-                const explorerPixels = document.getElementById("file-explorer-panel")?.clientWidth ?? 0;
-                const nextWidth = Math.min(700, window.innerWidth - explorerPixels - 24, Math.max(280, inspectorDragStartWidthRef.current + delta));
+                const nextWidth = getWorkbenchPanelLayout(width, showExplorer, explorerWidthRef.current, inspectorDragStartWidthRef.current + delta).inspectorWidth;
                 inspectorWidthRef.current = nextWidth;
-                const motion = document.getElementById("inspector-panel-motion");
-                if (motion) { motion.style.transition = "none"; motion.style.width = `${nextWidth}px`; }
+                setInspectorWidth(nextWidth);
             } else if (filterResizingRef.current) {
                 // Filters panel is on the right; dragging left expands it
                 const delta = filterDragStartXRef.current - event.clientX;
@@ -702,16 +709,12 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             }
         };
 
-        const handleMouseUp = () => {
+        const handlePointerUp = () => {
             if (resizingRef.current) {
                 resizingRef.current = false;
-                const el = document.getElementById("file-explorer-panel");
-                if (el) el.style.transition = "";
                 setExplorerWidth(explorerWidthRef.current);
             } else if (inspectorResizingRef.current) {
                 inspectorResizingRef.current = false;
-                const motion = document.getElementById("inspector-panel-motion");
-                if (motion) motion.style.transition = "";
                 setInspectorWidth(inspectorWidthRef.current);
             } else if (filterResizingRef.current) {
                 filterResizingRef.current = false;
@@ -725,14 +728,30 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             document.body.style.cursor = "";
         };
 
-        window.addEventListener("mousemove", handleMouseMove);
-        window.addEventListener("mouseup", handleMouseUp);
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", handlePointerUp);
+        window.addEventListener("pointercancel", handlePointerUp);
 
         return () => {
-            window.removeEventListener("mousemove", handleMouseMove);
-            window.removeEventListener("mouseup", handleMouseUp);
+            window.removeEventListener("pointermove", handlePointerMove);
+            window.removeEventListener("pointerup", handlePointerUp);
+            window.removeEventListener("pointercancel", handlePointerUp);
         };
-    }, []);
+    }, [showExplorer]);
+
+    const handlePanelResizeKey = (event: ReactKeyboardEvent<HTMLDivElement>, panel: "explorer" | "inspector") => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const isExplorer = panel === "explorer";
+        const min = isExplorer ? panelLayout.explorerMin : panelLayout.inspectorMin;
+        const max = isExplorer ? panelLayout.explorerMax : panelLayout.inspectorMax;
+        const current = isExplorer ? panelLayout.explorerWidth : panelLayout.inspectorWidth;
+        const delta = (event.key === "ArrowRight" ? 20 : -20) * (isExplorer ? 1 : -1);
+        const width = event.key === "Home" ? min : event.key === "End" ? max : Math.min(max, Math.max(min, current + delta));
+        if (isExplorer) setExplorerWidth(width);
+        else setInspectorWidth(width);
+    };
 
     const MAX_FILE_SIZE = 500_000; // 500KB limit for preview
 
@@ -2181,12 +2200,12 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
 
     return (
-        <div className="repository-workbench relative w-full h-full flex bg-[#080d18] diagram-grid">
+        <div ref={workbenchRef} data-explorer-overlay={panelLayout.explorerOverlay} data-inspector-overlay={panelLayout.inspectorOverlay} className="repository-workbench relative w-full h-full flex bg-[#080d18] diagram-grid">
             <div
                 id="file-explorer-panel"
                 data-open={showExplorer}
-                className="relative z-30 overflow-visible h-full shrink-0 flex transition-[width] duration-200 ease-in-out"
-                style={{ width: showExplorer ? explorerWidth : 0, willChange: 'width' }}
+                className="relative z-30 overflow-visible h-full shrink-0 flex"
+                style={{ width: showExplorer ? panelLayout.explorerWidth : 0, willChange: 'width' }}
             >
                 <div id="file-explorer-inner" inert={!showExplorer} className="h-full w-full border-r border-slate-700/80 bg-[#121e33] flex flex-col overflow-hidden">
                     <div className="explorer-heading flex items-center justify-between px-3">
@@ -2235,7 +2254,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                             className="h-9 w-full rounded-md border border-slate-600 bg-slate-900/95 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/60"
                         />
                         {searchOpen && searchQuery.trim() && (
-                            <div className="absolute top-11 left-0 right-0 z-40 max-h-80 overflow-y-auto rounded-lg border border-slate-600 bg-[#111a2b] p-1 shadow-2xl" role="status">
+                            <div className="absolute top-11 left-0 right-0 z-40 max-h-80 overflow-y-auto rounded-lg border border-slate-600 bg-[#111a2b] p-1 shadow-2xl" style={{ maxHeight: explorerViewportHeight }} role="status">
                                 <p className="px-2 py-1 text-xs text-slate-400">{searchResults.length ? `Top ${searchResults.length} matches` : "No files found"}</p>
                                 {searchResults.map((result) => (
                                     <button key={result.path} type="button" onClick={() => { handleSearch(""); handleExplorerFileSelect({ name: result.filename, path: result.path, extension: result.extension }); setSearchOpen(false); }} className="w-full rounded px-2 py-2 text-left hover:bg-sky-300/10 focus-visible:bg-sky-300/10 focus-visible:outline-none">
@@ -2246,7 +2265,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                             </div>
                         )}
                     </div>
-                    <div className="explorer-tree relative flex-1 overflow-x-hidden overflow-y-hidden ui-body text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
+                    <div className="explorer-tree relative flex-1 min-h-0 overflow-x-hidden overflow-y-hidden ui-body text-slate-200" ref={explorerBodyRef} tabIndex={0} onKeyDown={handleExplorerKeyboard}>
                         <List
                             listRef={explorerListRef}
                             style={{ height: explorerViewportHeight, width: "100%" }}
@@ -2260,14 +2279,14 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                 const isFocused = treeFocusPath === row.path;
                                 const iconColor = isFolder ? "var(--atlas-muted)" : getFileColor(row.name);
                                 return (
-                                    <div style={style} key={row.path || "root"} className="px-1.5 py-0.5" {...ariaAttributes}>
+                                    <div style={style} key={row.path || "root"} className="px-1.5 py-px" {...ariaAttributes}>
                                         <button
                                             data-selected={isSelected}
                                             aria-expanded={isFolder ? row.isExpanded : undefined}
                                             aria-current={isSelected ? "true" : undefined}
                                             data-focused={isFocused}
                                             className="explorer-row group relative w-full h-[28px] flex items-center gap-1.5 rounded-sm border border-transparent transition-colors duration-150"
-                                            style={{ paddingLeft: 6 + row.depth * 14 }}
+                                            style={{ paddingLeft: 6 + row.depth * 16 }}
                                             onClick={() => {
                                                 setTreeFocusPath(row.path);
                                                 if (isFolder) {
@@ -2279,11 +2298,11 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                             }}
                                         >
                                             {Array.from({ length: row.depth }).map((_, guideIdx) => (
-                                                <span key={`${row.path}-guide-${guideIdx}`} aria-hidden="true" className="explorer-guide absolute -top-0.5 -bottom-0.5" style={{ left: 12 + guideIdx * 14, width: 1 }} />
+                                                <span key={`${row.path}-guide-${guideIdx}`} aria-hidden="true" className="explorer-guide absolute -top-px -bottom-px" style={{ left: 15 + guideIdx * 16, width: 1 }} />
                                             ))}
                                             {isFolder ? (
-                                                row.hasChildren ? <span className={`shrink-0 transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}><ChevronRight className="shrink-0 w-3 h-3 text-slate-400" /></span> : <span className="shrink-0 w-3 h-3" />
-                                            ) : <span className="shrink-0 w-3 h-3" />}
+                                                row.hasChildren ? <span className={`shrink-0 w-4 h-4 flex items-center justify-center transition-transform duration-150 ${row.isExpanded ? "rotate-90" : "rotate-0"}`}><ChevronRight className="shrink-0 w-3 h-3 text-slate-400" /></span> : <span className="shrink-0 w-4 h-4" />
+                                            ) : <span className="shrink-0 w-4 h-4" />}
                                             <div className="explorer-icon shrink-0 flex items-center justify-center" aria-hidden="true">
                                                 {isFolder ? (row.isExpanded ? <FolderOpen className="w-3.5 h-3.5" style={{ color: iconColor }} /> : <Folder className="w-3.5 h-3.5" style={{ color: iconColor }} />) : getExplorerFileIcon(row.name)}
                                             </div>
@@ -2293,7 +2312,6 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                 );
                             }}
                             rowProps={{ rows: explorerRows }}
-                            onResize={(size) => setExplorerViewportHeight(Math.max(180, Math.floor(size.height)))}
                             onScroll={(event) => {
                                 const target = event.currentTarget;
                                 if (target instanceof HTMLDivElement) setExplorerScrollOffset(target.scrollTop);
@@ -2302,16 +2320,28 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                     </div>
                 </div>
 
-                {showExplorer && <div
-                    className="absolute top-0 right-0 h-full w-2 cursor-col-resize z-20 group"
-                    onMouseDown={(e) => {
+                {showExplorer && !panelLayout.explorerOverlay && <div
+                    className="panel-resizer absolute top-0 right-0 h-full w-2 z-20"
+                    role="separator"
+                    aria-label="Resize file explorer"
+                    aria-orientation="vertical"
+                    aria-controls="file-explorer-inner"
+                    aria-valuemin={panelLayout.explorerMin}
+                    aria-valuemax={panelLayout.explorerMax}
+                    aria-valuenow={panelLayout.explorerWidth}
+                    tabIndex={0}
+                    onKeyDown={(event) => handlePanelResizeKey(event, "explorer")}
+                    onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.focus();
+                        e.currentTarget.setPointerCapture(e.pointerId);
                         resizingRef.current = true;
                         dragStartXRef.current = e.clientX;
-                        dragStartWidthRef.current = explorerWidthRef.current;
+                        dragStartWidthRef.current = panelLayout.explorerWidth;
                         document.body.style.userSelect = "none";
                         document.body.style.cursor = "col-resize";
                     }}
-                ><span className="absolute top-0 bottom-0 right-0 w-px bg-transparent group-hover:bg-slate-400 transition-colors" /></div>}
+                ><span aria-hidden="true" /></div>}
 
             </div>
                 <motion.div
@@ -2320,27 +2350,38 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                     className="workbench-inspector h-full z-40 overflow-hidden shrink-0 order-3"
                     initial={false}
                     animate={{
-                        width: showExplorerInspector ? inspectorWidth : 0,
+                        width: showExplorerInspector ? panelLayout.inspectorWidth : 0,
                         opacity: showExplorerInspector ? 1 : 0,
                     }}
-                    style={{ maxWidth: "42%" }}
                     transition={{
-                        width: { type: "spring", stiffness: 300, damping: 30 },
+                        width: { duration: 0 },
                         opacity: { duration: 0.5, ease: "easeInOut" },
                     }}
                 >
                     <div id="inspector-panel-inner" style={{ width: "100%" }} className="h-full relative">
                     {showExplorerInspector && (
                         <div
-                            className="hidden md:block absolute top-0 left-0 h-full w-2 cursor-col-resize z-50 group"
-                            onMouseDown={(e) => {
+                            className="panel-resizer absolute top-0 left-0 h-full w-2 z-50"
+                            role="separator"
+                            aria-label="Resize file inspector"
+                            aria-orientation="vertical"
+                            aria-controls="inspector-panel-inner"
+                            aria-valuemin={panelLayout.inspectorMin}
+                            aria-valuemax={panelLayout.inspectorMax}
+                            aria-valuenow={panelLayout.inspectorWidth}
+                            tabIndex={0}
+                            onKeyDown={(event) => handlePanelResizeKey(event, "inspector")}
+                            onPointerDown={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.focus();
+                                e.currentTarget.setPointerCapture(e.pointerId);
                                 inspectorResizingRef.current = true;
                                 inspectorDragStartXRef.current = e.clientX;
-                                inspectorDragStartWidthRef.current = inspectorWidthRef.current;
+                                inspectorDragStartWidthRef.current = panelLayout.inspectorWidth;
                                 document.body.style.userSelect = "none";
                                 document.body.style.cursor = "col-resize";
                             }}
-                        ><span className="absolute top-0 bottom-0 right-0 w-px bg-transparent group-hover:bg-slate-400 transition-colors" /></div>
+                        ><span aria-hidden="true" /></div>
                     )}
                     <div className="inspector-surface h-full flex flex-col overflow-hidden">
                         <div className="inspector-heading sticky top-0 z-20">
@@ -2361,7 +2402,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                             </div>
                         </div>
 
-                        {selectedFile && <div className="workbench-file-path" title={selectedFile.path}>{selectedFile.path}</div>}
+                        {selectedFile && <div className="workbench-file-path" role="region" aria-label="Selected file path" tabIndex={0}>{selectedFile.path}</div>}
                         {(() => {
                             const nodeId = selectedFile ? pathToIdRef.current.get(selectedFile.path) : null;
                             const attrs = nodeId ? graphRef.current?.getNodeAttributes(nodeId) : null;
@@ -2474,6 +2515,11 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                 {symbolDiagnostics.fetchFailed > 0 && (
                     <div role="status" className="shrink-0 border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
                         Partial symbol index: {symbolDiagnostics.fetchFailed} files unavailable. File browsing is still available.
+                    </div>
+                )}
+                {totalFileCount > clusterInfo.files && (
+                    <div role="status" className="shrink-0 border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                        Showing top {clusterInfo.files.toLocaleString()} of {totalFileCount.toLocaleString()} files (filtered by importance)
                     </div>
                 )}
 
@@ -2667,13 +2713,6 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                             ))}
                         </div>
                     </details>
-                )}
-
-                {totalFileCount > clusterInfo.files && (
-                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-950/70 backdrop-blur text-[11px] text-amber-200/90">
-                        <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-amber-400" />
-                        Showing top {clusterInfo.files.toLocaleString()} of {totalFileCount.toLocaleString()} files (filtered by importance)
-                    </div>
                 )}
 
                 <div ref={containerRef} className="w-full flex-1 min-h-0 bg-[#0d1729]" />
