@@ -20,6 +20,7 @@ import { getFileColor } from "@/lib/file-icons";
 import GitHubTokenModal, { consumeOneTimeGitHubToken, setOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import CloneProgressScreen, { type CloneStep } from "@/components/dashboard/clone-progress-screen";
 import BrandLogo from "@/components/ui/brand-logo";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { getCachedDiagram, cacheDiagram, hashToken } from "@/lib/diagram-cache";
 import type {
@@ -570,14 +571,14 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         // dangling internal mermaid render races with the real one and causes an infinite spinner.
         if (isAnalyzing || repoData?.fileTree) {
             return (
-                <div className="flex items-center justify-center h-full">
+                <div className="architecture-state">
                     <PipelineStatusDisplay steps={pipelineSteps} />
                 </div>
             );
         }
 
         return (
-            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+            <div className="architecture-state text-muted-foreground text-sm">
                 No data available for this view.
             </div>
         );
@@ -755,20 +756,20 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         <div className={`relative h-full diagram-shell overscroll-contain surface-neo ${activeTab === "files" || activeTab === "architecture" ? "workspace-code" : "workspace-data"} ${diagramBackground}`}>
                             {isTabMounted("architecture") && (
                                 <div
-                                    className={`absolute inset-0 ${activeTab === "architecture" ? "pointer-events-auto" : "hidden pointer-events-none"}`}
+                                    className={`architecture-tab absolute inset-0 ${activeTab === "architecture" ? "pointer-events-auto" : "hidden pointer-events-none"}`}
                                     aria-hidden={activeTab !== "architecture"}
                                 >
+                                    <div className="architecture-content">{architectureTabContent}</div>
                                     {activeTab === "architecture" && !isAnalyzing && (
-                                        <div className="absolute bottom-4 right-4 z-20 flex flex-wrap justify-end items-center gap-2 max-w-[calc(100%-6rem)]">
+                                        <div className="architecture-actions" role="group" aria-label="Architecture generation">
                                             {analysis?.source === "ai" && (
-                                                <button
+                                                <Button variant="outline"
                                                     onClick={() => setAnalysis(null)}
-                                                    className="ui-micro px-3 py-2 pro-control pro-focus-ring bg-slate-800 text-white border border-slate-700 hover:bg-slate-700 font-medium shadow-sm transition-all"
                                                 >
                                                     Show Normal Diagram
-                                                </button>
+                                                </Button>
                                             )}
-                                            <button
+                                            <Button variant="outline"
                                                 onClick={() => {
                                                     if (!hasUserAIKey) {
                                                         setAISettingsOpen(true);
@@ -777,14 +778,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                                     }
                                                     runAnalysis("premium");
                                                 }}
-                                                className="ui-micro px-3 py-2 pro-control pro-focus-ring"
                                             >
                                                 Generate Premium Diagram
-                                            </button>
+                                            </Button>
                                         </div>
                                     )}
-
-                                    {architectureTabContent}
                                 </div>
                             )}
 

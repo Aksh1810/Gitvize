@@ -6,14 +6,16 @@
 // Renders Mermaid.js SVG with click-to-navigate (GitDiagram-style).
 // Features: pan/zoom, dark theme, export PNG, copy Mermaid code.
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import { Download, Copy, Check, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getMermaidFitTransform } from "@/lib/mermaid-fit";
 
 interface MermaidDiagramProps {
     code: string;
     onNodeClick?: (path: string) => void;
     onFallback?: () => void;
+    viewControls?: ReactNode;
 }
 
 function sanitizeMermaidForRender(raw: string): string {
@@ -34,7 +36,7 @@ function sanitizeMermaidForRender(raw: string): string {
         .join("\n");
 }
 
-export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFallback }: MermaidDiagramProps) {
+export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFallback, viewControls }: MermaidDiagramProps) {
     void _onNodeClick;
     const containerRef = useRef<HTMLDivElement>(null);
     const [svgContent, setSvgContent] = useState<string>("");
@@ -48,7 +50,8 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     const [retryKey, setRetryKey] = useState(0);
     const panStartRef = useRef({ x: 0, y: 0 });
     const panOriginRef = useRef({ x: 0, y: 0 });
-    const fitRafRef = useRef<number[]>([]);
+    const fitRafRef = useRef<number | null>(null);
+    const manualViewRef = useRef(false);
     const lastGoodSvgRef = useRef<string>("");
     const viewTransformRef = useRef(viewTransform);
     const panOffsetRef = useRef(panOffset);
@@ -68,48 +71,45 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
 
     const computeFitTransform = useCallback(() => {
         const container = containerRef.current;
-        if (!container) return { scale: 1, x: 0, y: 0 };
+        if (!container) return null;
 
         const svgEl = container.querySelector("svg") as SVGSVGElement | null;
-        if (!svgEl) return { scale: 1, x: 0, y: 0 };
-
-        const containerWidth = container.clientWidth;
-        const containerHeight = container.clientHeight;
-        if (!containerWidth || !containerHeight) return { scale: 1, x: 0, y: 0 };
-
-        // Measure the SVG's natural CSS pixel size by un-applying our own scale transform.
-        // getBoundingClientRect() returns post-transform screen pixels; dividing by the
-        // current scale recovers the natural (unscaled) rendered pixel dimensions.
-        // This is in the same unit space as containerWidth/containerHeight, unlike getBBox()
-        // which returns SVG user-coordinate units that differ from CSS pixels.
-        const currentScale = viewTransformRef.current.scale || 1;
-        const rect = svgEl.getBoundingClientRect();
-        const svgW = rect.width / currentScale;
-        const svgH = rect.height / currentScale;
-
-        if (!svgW || !svgH) return { scale: 1, x: 0, y: 0 };
-
-        const paddingFactor = 0.92;
-        const fitScale = Math.min(containerWidth / svgW, containerHeight / svgH) * paddingFactor;
-        const clampedScale = Math.max(0.1, Math.min(1, fitScale));
-
-        return {
-            scale: clampedScale,
-            x: containerWidth / 2 - (svgW * clampedScale) / 2,
-            y: containerHeight / 2 - (svgH * clampedScale) / 2,
-        };
+        if (!svgEl || !container.clientWidth || !container.clientHeight) return null;
+        const matrix = svgEl.getScreenCTM();
+        if (!matrix) return null;
+        const content = svgEl.parentElement!;
+        const origin = content.getBoundingClientRect();
+        const scale = new DOMMatrix(getComputedStyle(content).transform).a;
+        if (!scale) return null;
+        const box = svgEl.getBBox();
+        // Screen CTM includes viewBox origins, letterboxing and CSS sizing; remove only our outer transform.
+        const corners = [
+            new DOMPoint(box.x, box.y), new DOMPoint(box.x + box.width, box.y),
+            new DOMPoint(box.x, box.y + box.height), new DOMPoint(box.x + box.width, box.y + box.height),
+        ].map(point => point.matrixTransform(matrix));
+        const left = Math.min(...corners.map(point => point.x));
+        const top = Math.min(...corners.map(point => point.y));
+        const viewport = container.getBoundingClientRect();
+        return getMermaidFitTransform({
+            x: (left - origin.left) / scale,
+            y: (top - origin.top) / scale,
+            width: (Math.max(...corners.map(point => point.x)) - left) / scale,
+            height: (Math.max(...corners.map(point => point.y)) - top) / scale,
+        }, { width: viewport.width, height: viewport.height });
     }, []);
 
     const centerInitialView = useCallback(() => {
-        setViewTransform(computeFitTransform());
+        const fit = computeFitTransform();
+        if (!fit) return;
+        viewTransformRef.current = fit;
+        panOffsetRef.current = { x: 0, y: 0 };
+        setViewTransform(fit);
         setPanOffset({ x: 0, y: 0 });
     }, [computeFitTransform]);
 
     const clearPendingFitFrames = useCallback(() => {
-        for (const rafId of fitRafRef.current) {
-            cancelAnimationFrame(rafId);
-        }
-        fitRafRef.current = [];
+        if (fitRafRef.current !== null) cancelAnimationFrame(fitRafRef.current);
+        fitRafRef.current = null;
     }, []);
 
 
@@ -217,56 +217,32 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     }, [code, retryKey]);
 
     useEffect(() => {
-        if (!svgContent) return;
-        let raf2: number | null = null;
-        const raf1 = requestAnimationFrame(() => {
-            raf2 = requestAnimationFrame(() => {
-                centerInitialView();
-            });
-        });
-
-        // A second pass catches late font/layout settling from Mermaid SVG.
-        const timeoutId = window.setTimeout(() => {
-            centerInitialView();
-        }, 180);
-
-        return () => {
-            cancelAnimationFrame(raf1);
-            if (typeof raf2 === "number") {
-                cancelAnimationFrame(raf2);
-            }
-            window.clearTimeout(timeoutId);
-        };
-    }, [svgContent, centerInitialView]);
+        manualViewRef.current = false;
+    }, [svgContent]);
 
     useEffect(() => {
-        if (!svgContent || !containerRef.current) return;
+        if (isRendering || !svgContent || !containerRef.current) return;
         const container = containerRef.current;
-        // Track whether the container was previously dimensionless (e.g. hidden tab).
-        let wasDimensionless = container.clientWidth === 0 || container.clientHeight === 0;
-
-        const observer = new ResizeObserver(() => {
-            const w = container.clientWidth;
-            const h = container.clientHeight;
-            if (w === 0 || h === 0) {
-                wasDimensionless = true;
-                return;
-            }
-            if (wasDimensionless) {
-                // Tab just became visible — always fit.
-                wasDimensionless = false;
-                setViewTransform(computeFitTransform());
-                setPanOffset({ x: 0, y: 0 });
-                panOriginRef.current = { x: 0, y: 0 };
-            } else if (Math.abs(panOffsetRef.current.x) < 1 && Math.abs(panOffsetRef.current.y) < 1) {
-                // Window resize while visible and user hasn't panned away.
-                setViewTransform(computeFitTransform());
-                setPanOffset({ x: 0, y: 0 });
-            }
-        });
+        let cancelled = false;
+        const scheduleFit = () => {
+            if (manualViewRef.current || fitRafRef.current !== null) return;
+            fitRafRef.current = requestAnimationFrame(() => {
+                fitRafRef.current = null;
+                if (!manualViewRef.current) centerInitialView();
+            });
+        };
+        const observer = new ResizeObserver(scheduleFit);
         observer.observe(container);
-        return () => observer.disconnect();
-    }, [svgContent, computeFitTransform]);
+        const svg = container.querySelector("svg");
+        if (svg) observer.observe(svg);
+        scheduleFit();
+        document.fonts.ready.then(() => { if (!cancelled) scheduleFit(); });
+        return () => {
+            cancelled = true;
+            observer.disconnect();
+            clearPendingFitFrames();
+        };
+    }, [svgContent, isRendering, centerInitialView, clearPendingFitFrames]);
 
     useEffect(() => {
         return () => {
@@ -279,22 +255,27 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const handleMouseDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (e.button !== 0) return;
         setIsPanning(true);
         panStartRef.current = { x: e.clientX, y: e.clientY };
         panOriginRef.current = panOffset;
     }, [panOffset]);
 
-    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const handleMouseMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (!isPanning) return;
         const dx = e.clientX - panStartRef.current.x;
         const dy = e.clientY - panStartRef.current.y;
+        if (Math.abs(dx) + Math.abs(dy) > 2) {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            manualViewRef.current = true;
+            clearPendingFitFrames();
+        }
         setPanOffset({
             x: panOriginRef.current.x + dx,
             y: panOriginRef.current.y + dy,
         });
-    }, [isPanning]);
+    }, [isPanning, clearPendingFitFrames]);
 
     const handleMouseUp = useCallback(() => {
         setIsPanning(false);
@@ -307,9 +288,11 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
         const currentView = viewTransformRef.current;
         const currentPan = panOffsetRef.current;
 
-        const prevScale = Math.max(0.1, currentView.scale);
-        const nextScale = Math.max(0.1, Math.min(3, nextScaleInput));
+        const prevScale = currentView.scale;
+        const nextScale = Math.max(0.01, Math.min(3, nextScaleInput));
         if (Math.abs(nextScale - prevScale) < 0.0001) return;
+        manualViewRef.current = true;
+        clearPendingFitFrames();
 
         const anchorX = container.clientWidth / 2;
         const anchorY = container.clientHeight / 2;
@@ -328,13 +311,16 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
             x: newTotalX - currentView.x,
             y: newTotalY - currentView.y,
         });
-    }, []);
+    }, [clearPendingFitFrames]);
 
     // Zoom handlers — accumulate wheel deltas in a ref and flush once per frame.
     const wheelAccumRef = useRef(0);
     const wheelRafRef = useRef<number | null>(null);
-    const handleWheel = useCallback((e: React.WheelEvent) => {
+    const handleWheel = useCallback((e: WheelEvent) => {
         e.preventDefault();
+        if (e.deltaY === 0) return;
+        manualViewRef.current = true;
+        clearPendingFitFrames();
         wheelAccumRef.current += e.deltaY > 0 ? -0.07 : 0.07;
         if (wheelRafRef.current !== null) return;
         wheelRafRef.current = requestAnimationFrame(() => {
@@ -344,7 +330,14 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
             if (delta === 0) return;
             applyCenteredZoom(viewTransformRef.current.scale + delta);
         });
-    }, [applyCenteredZoom]);
+    }, [applyCenteredZoom, clearPendingFitFrames]);
+
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+        container.addEventListener("wheel", handleWheel, { passive: false });
+        return () => container.removeEventListener("wheel", handleWheel);
+    }, [handleWheel, svgContent, isRendering, error]);
 
     const zoomIn = () => {
         applyCenteredZoom(viewTransformRef.current.scale + 0.12);
@@ -355,28 +348,15 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
 
     const resetView = useCallback(() => {
         clearPendingFitFrames();
+        if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current);
+        wheelRafRef.current = null;
+        wheelAccumRef.current = 0;
+        manualViewRef.current = false;
         setIsPanning(false);
-        const applyFit = () => {
-            setViewTransform(computeFitTransform());
-            setPanOffset({ x: 0, y: 0 });
-        };
-
-        applyFit();
-
-        // Run a couple of post-layout passes to match late SVG/font settling.
-        const raf1 = requestAnimationFrame(() => {
-            applyFit();
-            const raf2 = requestAnimationFrame(() => {
-                applyFit();
-            });
-            fitRafRef.current.push(raf2);
-        });
-        fitRafRef.current.push(raf1);
-
-        setPanOffset({ x: 0, y: 0 });
+        centerInitialView();
         panOriginRef.current = { x: 0, y: 0 };
         panStartRef.current = { x: 0, y: 0 };
-    }, [clearPendingFitFrames, computeFitTransform]);
+    }, [clearPendingFitFrames, centerInitialView]);
 
     // Export SVG
     const exportSVG = useCallback(async () => {
@@ -425,7 +405,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
             svg .cluster rect { fill: ${surface} !important; stroke: ${muted} !important; }
             svg :is(.flowchart-link, .edgePath path) { stroke: ${muted} !important; }
             svg marker path { fill: ${muted} !important; stroke: ${muted} !important; }
-            svg :is(.edgeLabel, .edgeLabel p, .labelBkg) { background: ${surface} !important; fill: ${surface} !important; }
+            svg :is(.edgeLabel, .edgeLabel p, .labelBkg, .edgeLabel .background) { background: ${surface} !important; fill: ${surface} !important; }
         `;
         styleEl.textContent = styleEl.textContent.replaceAll("svg ", `svg#${CSS.escape(svgEl.id)}#${CSS.escape(svgEl.id)} `);
         svgEl.appendChild(styleEl);
@@ -454,7 +434,9 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
     // Loading state
     if (isRendering) {
         return (
-            <div className="flex items-center justify-center h-full">
+            <div className="atlas-architecture flex h-full min-h-0 flex-col overflow-hidden">
+            {viewControls && <div className="architecture-toolbar">{viewControls}</div>}
+            <div className="architecture-state" role="status">
                 <div className="flex flex-col items-center gap-4">
                     <div className="loading-orbit" />
                     <p className="text-sm text-muted-foreground">
@@ -462,19 +444,22 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                     </p>
                 </div>
             </div>
+            </div>
         );
     }
 
     // Error state
     if (error) {
         return (
-            <div className="flex items-center justify-center h-full">
+            <div className="atlas-architecture flex h-full min-h-0 flex-col overflow-hidden">
+            {viewControls && <div className="architecture-toolbar">{viewControls}</div>}
+            <div className="architecture-state" role="alert">
                 <div className="text-center max-w-md">
                     <div className="text-4xl mb-4">⚠️</div>
-                    <h3 className="text-lg font-medium text-white mb-2">
+                    <h3 className="text-lg font-medium text-foreground mb-2">
                         Diagram Render Error
                     </h3>
-                    <p className="text-sm text-gray-400 mb-4">{error}</p>
+                    <p className="text-sm text-muted-foreground mb-4">{error}</p>
 
                     <Button
                         variant="outline"
@@ -483,7 +468,7 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                             setIsRendering(true);
                             setRetryKey((k) => k + 1);
                         }}
-                        className="w-full mb-2 bg-indigo-900/40 border-indigo-500/30 hover:bg-indigo-800/50 text-white"
+                        className="w-full mb-2"
                     >
                         Try Again
                     </Button>
@@ -499,101 +484,93 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                     )}
 
                     <details className="text-left">
-                        <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
+                        <summary className="text-xs text-muted-foreground cursor-pointer">
                             View Mermaid Code
                         </summary>
-                        <pre className="mt-2 p-3 bg-gray-900 rounded-lg text-xs text-gray-400 overflow-auto max-h-40">
+                        <pre className="architecture-source mt-2 p-3 rounded-md text-xs overflow-auto max-h-40">
                             {code}
                         </pre>
                     </details>
                 </div>
+            </div>
             </div>
         );
     }
 
     return (
         <div className="atlas-architecture relative flex h-full min-h-0 w-full flex-col overflow-hidden diagram-dot-field">
-            {showStaleWarning && (
-                <div className="absolute top-4 right-4 z-20 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 backdrop-blur-sm">
-                    Showing last valid diagram. Current Mermaid output has syntax issues.
-                </div>
-            )}
-            {/* Controls — positioned on the LEFT to avoid overlap with parent's "Generate Premium Diagram" button on the right */}
-            <div className="relative z-10 flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 p-3">
+            <div className="architecture-toolbar" role="toolbar" aria-label="Architecture controls">
+                {viewControls}
+                <div className="architecture-control-group" role="group" aria-label="Diagram view">
                 <Button
                     aria-label="Zoom in on architecture"
                     variant="outline"
-                    size="sm"
+                    size="icon"
                     onClick={zoomIn}
-                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <ZoomIn className="h-4 w-4" />
                 </Button>
                 <Button
                     aria-label="Zoom out of architecture"
                     variant="outline"
-                    size="sm"
+                    size="icon"
                     onClick={zoomOut}
-                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <ZoomOut className="h-4 w-4" />
                 </Button>
                 <Button
                     aria-label="Fit architecture in view"
                     variant="outline"
-                    size="sm"
+                    size="icon"
                     onClick={resetView}
-                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     <Maximize2 className="h-4 w-4" />
                 </Button>
-                <div className="w-px h-6 bg-white/10" />
+                </div>
+                <div className="architecture-control-group" role="group" aria-label="Diagram export">
                 <Button
                     variant="outline"
-                    size="sm"
                     onClick={exportSVG}
-                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
-                    <Download className="h-4 w-4 mr-1" />
+                    <Download className="h-4 w-4" />
                     SVG
                 </Button>
                 <Button
                     variant="outline"
-                    size="sm"
                     onClick={copyMermaidCode}
-                    className="bg-white/5 border-white/10 hover:bg-white/10 backdrop-blur-sm"
                 >
                     {copied ? (
-                        <Check className="h-4 w-4 mr-1 text-green-400" />
+                        <Check className="h-4 w-4" />
                     ) : (
-                        <Copy className="h-4 w-4 mr-1" />
+                        <Copy className="h-4 w-4" />
                     )}
                     {copied ? "Copied!" : "Copy code"}
                 </Button>
-            </div>
-
-            {/* Scale indicator */}
-            <div className="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-sm">
-                <span className="text-xs text-muted-foreground">
+                </div>
+                <output className="architecture-scale" aria-label="Architecture zoom level">
                     {Math.round(viewTransform.scale * 100)}%
-                </span>
+                </output>
             </div>
+            {showStaleWarning && (
+                <div role="status" className="architecture-notice border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                    Showing last valid diagram. Current Mermaid output has syntax issues.
+                </div>
+            )}
 
             {/* SVG Container */}
             <div
                 ref={containerRef}
-                className={`relative min-h-0 flex-1 w-full ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-                onWheel={handleWheel}
+                className={`architecture-canvas relative min-h-0 flex-1 w-full ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+                onPointerDown={handleMouseDown}
+                onPointerMove={handleMouseMove}
+                onPointerUp={handleMouseUp}
+                onPointerCancel={handleMouseUp}
+                onPointerLeave={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) handleMouseUp(); }}
             >
                 <div
                     className="absolute top-0 left-0"
                     style={{
                         transform: `translate(${viewTransform.x + panOffset.x}px, ${viewTransform.y + panOffset.y}px)`,
-                        transition: isPanning ? "none" : "transform 0.25s ease-out",
                         willChange: "transform",
                     }}
                 >
@@ -602,7 +579,6 @@ export default function MermaidDiagram({ code, onNodeClick: _onNodeClick, onFall
                         style={{
                             transform: `scale(${viewTransform.scale})`,
                             transformOrigin: "0 0",
-                            transition: isPanning ? "none" : "transform 0.25s ease-out",
                             willChange: "transform",
                         }}
                         dangerouslySetInnerHTML={{ __html: svgContent }}
