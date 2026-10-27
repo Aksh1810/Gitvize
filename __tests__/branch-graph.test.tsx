@@ -4,7 +4,7 @@ import type { Commit } from "@/types";
 
 jest.mock("@/components/diagrams/commit-history-rail", () => ({
     __esModule: true,
-    default: ({ commits }: { commits: Commit[] }) => <div>Graph commits: {commits.length}</div>,
+    default: ({ commits, selectedBranchOverride }: { commits: Commit[]; selectedBranchOverride?: string | null }) => <div><span>Graph commits: {commits.length}</span><span>Graph filter: {selectedBranchOverride ?? "all"}</span></div>,
 }));
 
 const commits: Commit[] = [
@@ -38,6 +38,57 @@ it("filters and sorts non-default branches without hiding the graph through an i
         expect(screen.getByText("Graph commits: 2")).toBeInTheDocument();
     } finally {
         global.fetch = originalFetch;
+    }
+});
+
+it.each([true, false])("counts the pinned default exactly once when included in the source list: %s", async (includeDefault) => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => commits });
+    const others = Array.from({ length: 7 }, (_, index) => ({ name: `feature-${index + 1}`, sha: "second", isDefault: false }));
+    try {
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={includeDefault ? [{ name: "main", sha: "first", isDefault: false }, ...others] : others} />);
+        const counts = () => screen.getByRole("status", { name: "Branch counts" });
+        const loaded = includeDefault ? "8 loaded" : "7 loaded + default";
+        expect(counts()).toHaveTextContent(`7 shown · ${loaded}`);
+        expect(screen.getAllByRole("button", { name: "main default" })).toHaveLength(1);
+        fireEvent.click(screen.getByRole("button", { name: /1 more/ }));
+        expect(counts()).toHaveTextContent(`8 shown · ${loaded}`);
+        fireEvent.change(screen.getByRole("textbox", { name: "Search other branches" }), { target: { value: "feature-7" } });
+        expect(counts()).toHaveTextContent(`2 shown · ${loaded}`);
+        fireEvent.click(screen.getByRole("button", { name: "feature-7" }));
+        await screen.findByText("2 commits loaded for feature-7");
+        fireEvent.change(screen.getByRole("textbox", { name: "Search other branches" }), { target: { value: "no-such-branch" } });
+        expect(counts()).toHaveTextContent(`1 shown · ${loaded}`);
+        expect(screen.getByText("No other branches match your search.")).toBeInTheDocument();
+        expect(screen.getByText("2 commits loaded for feature-7")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Clear branch search" }));
+        expect(counts()).toHaveTextContent(`8 shown · ${loaded}`);
+        fireEvent.click(screen.getByRole("button", { name: "Graph" }));
+        expect(counts()).toHaveTextContent(`7 shown · ${loaded}`);
+        fireEvent.change(screen.getByRole("textbox", { name: "Search other branches" }), { target: { value: "feature-7" } });
+        fireEvent.click(screen.getByRole("button", { name: "feature-7" }));
+        expect(screen.getByText("Graph filter: feature-7")).toBeInTheDocument();
+        expect(screen.getByText("Graph commits: 2")).toBeInTheDocument();
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+it("keeps failed pagination counts neutral rather than claiming complete history", async () => {
+    const originalFetch = global.fetch;
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 503 });
+    global.fetch = fetchMock;
+    try {
+        const initial = Array.from({ length: 500 }, (_, index) => ({ ...commits[0], sha: `sha-${index}`, shortSha: String(index) }));
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={initial} branches={[]} />);
+        fireEvent.click(screen.getByRole("button", { name: "+100" }));
+        await screen.findByText("500 commits loaded");
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("sha=main&per_page=100&page=6"), { headers: {} });
+        expect(screen.queryByText(/All \d+ commits loaded/)).not.toBeInTheDocument();
+    } finally {
+        global.fetch = originalFetch;
+        errorLog.mockRestore();
     }
 });
 

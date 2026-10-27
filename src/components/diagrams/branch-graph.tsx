@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import CommitHistoryRail from "./commit-history-rail";
 import type { Branch, Commit } from "@/types";
 
@@ -61,6 +62,61 @@ function groupCommitsByDate(commits: Commit[]): Map<string, Commit[]> {
     return groups;
 }
 
+function BranchPicker({ branches, defaultBranch, selectedBranch, query, onQueryChange, expanded, onToggleExpanded, onSelect }: {
+    branches: Branch[];
+    defaultBranch: string;
+    selectedBranch: string | null;
+    query: string;
+    onQueryChange: (query: string) => void;
+    expanded: boolean;
+    onToggleExpanded: () => void;
+    onSelect: (branch: string) => void;
+}) {
+    const defaultIsLoaded = branches.some(branch => branch.name === defaultBranch);
+    const otherBranches = branches.filter(branch => branch.name !== defaultBranch);
+    const matches = otherBranches.filter(branch => branch.name.toLowerCase().includes(query.trim().toLowerCase()));
+    const displayed = expanded ? matches : matches.slice(0, 6);
+
+    return (
+        <section className="atlas-branch-card" aria-label="Branch picker">
+            <div className="branch-picker-controls">
+                <div className="flex items-center gap-2">
+                    <GitBranch className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
+                    <h3 className="text-sm font-semibold">Branches</h3>
+                </div>
+                <div className="branch-search">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" aria-hidden="true" />
+                    <Input aria-label="Search other branches" placeholder="Search other branches..." value={query} onChange={event => onQueryChange(event.target.value)} className="pl-9 pr-10" />
+                    {query && <Button variant="ghost" size="icon" aria-label="Clear branch search" className="absolute right-0.5 top-1/2 -translate-y-1/2 h-8 w-8" onClick={() => onQueryChange("")}><X className="w-4 h-4" /></Button>}
+                </div>
+                {matches.length > 6 && (
+                    <Button variant="ghost" size="sm" onClick={onToggleExpanded}>
+                        {expanded ? <>Show less <ChevronUp className="w-4 h-4" /></> : <>+{matches.length - 6} more <ChevronDown className="w-4 h-4" /></>}
+                    </Button>
+                )}
+            </div>
+            <p className="branch-counts" role="status" aria-label="Branch counts">
+                {displayed.length + 1} shown · {branches.length} loaded{!defaultIsLoaded && " + default"}
+            </p>
+            <p className="branch-count-note">Default branch stays available. The repository may have additional branches.</p>
+            <div className="branch-options" role="group" aria-label="Choose branch">
+                <Button variant="outline" className="branch-option" aria-pressed={selectedBranch === defaultBranch} onClick={() => onSelect(defaultBranch)}>
+                    <GitBranch className="w-4 h-4 shrink-0" aria-hidden="true" />
+                    <span className="branch-name">{defaultBranch}</span>
+                    <Badge variant="secondary" className="text-xs">default</Badge>
+                </Button>
+                {displayed.map(branch => (
+                    <Button key={branch.name} variant="outline" className="branch-option" aria-pressed={selectedBranch === branch.name} onClick={() => onSelect(branch.name)}>
+                        <GitBranch className="w-4 h-4 shrink-0" aria-hidden="true" />
+                        <span className="branch-name">{branch.name}</span>
+                    </Button>
+                ))}
+            </div>
+            {query.trim() && matches.length === 0 && <p role="status" className="branch-picker-empty">No other branches match your search.</p>}
+        </section>
+    );
+}
+
 export default function BranchGraph({
     branches,
     commits: initialCommits,
@@ -77,6 +133,7 @@ export default function BranchGraph({
     const [showAllGraphBranches, setShowAllGraphBranches] = useState(false);
     const [selectedCommit, setSelectedCommit] = useState<Commit | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [branchQuery, setBranchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"newest" | "oldest" | "author">("newest");
 
     const [selectedBranch, setSelectedBranch] = useState<string>(defaultBranch);
@@ -90,11 +147,6 @@ export default function BranchGraph({
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(initialCommits.length >= 500);
     const [isLoadingAll, setIsLoadingAll] = useState(false);
-
-    const nonDefaultBranches = branches.filter((b) => !b.isDefault);
-    const visibleBranches = showAllBranches
-        ? nonDefaultBranches
-        : nonDefaultBranches.slice(0, 6);
 
     const loadMoreCommits = useCallback(async () => {
         setIsLoadingMore(true);
@@ -208,118 +260,47 @@ export default function BranchGraph({
     );
 
     return (
-        <div className="w-full h-full flex flex-col">
+        <div className="branch-history">
             {commitsFetchError && (
-                <p role="alert" className="shrink-0 px-4 py-3 text-sm text-muted-foreground border-b border-border/20">
+                <p role="alert" className="branch-history-alert text-sm text-muted-foreground">
                     Commit history could not be fully loaded. Available commits are shown; reload the repository to try again.
                 </p>
             )}
-            {/* View toggle */}
-            <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-border/20">
+            <div className="branch-history-toolbar">
                 <div className="flex items-center gap-2">
-                    <GitBranch className="w-4 h-4 text-slate-300" />
+                    <GitBranch className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
                     <span className="text-sm font-semibold">History</span>
                 </div>
-                <div className="flex items-center gap-1 bg-secondary/30 rounded-lg p-0.5 border border-border/20">
-                    <button
-                        type="button"
-                        aria-pressed={view === "timeline"}
-                        onClick={() => setView("timeline")}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "timeline"
-                            ? "bg-white/8 text-slate-200 border border-white/15"
-                            : "text-muted-foreground hover:text-foreground border border-transparent"
-                            }`}
-                    >
-                        <List className="w-3 h-3" />
-                        Commits
-                    </button>
-                    <button
-                        type="button"
-                        aria-pressed={view === "history"}
-                        onClick={() => setView("history")}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "history"
-                            ? "bg-white/8 text-slate-200 border border-white/15"
-                            : "text-muted-foreground hover:text-foreground border border-transparent"
-                            }`}
-                    >
-                        <History className="w-3 h-3" />
-                        Graph
-                    </button>
+                <div className="flex items-center gap-1" role="group" aria-label="History view">
+                    <Button type="button" variant="outline" aria-pressed={view === "timeline"} onClick={() => setView("timeline")}><List className="w-4 h-4" />Commits</Button>
+                    <Button type="button" variant="outline" aria-pressed={view === "history"} onClick={() => setView("history")}><History className="w-4 h-4" />Graph</Button>
                 </div>
             </div>
 
             {view === "history" ? (
                 <>
-                    <div className="flex-1 overflow-auto custom-scrollbar">
-                        <div className="atlas-data-page space-y-6">
+                    <div className="branch-history-scroll custom-scrollbar">
+                        <div className="branch-history-content">
 
                             {/* Branches Section */}
-                            <div className="atlas-branch-card p-5">
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-2">
-                                        <GitBranch className="w-4 h-4 text-slate-300" />
-                                        <h3 className="text-sm font-semibold">Branches</h3>
-                                        <Badge variant="secondary" className="text-[10px]">{branches.length}</Badge>
-                                    </div>
-                                    {nonDefaultBranches.length > 6 && (
-                                        <Button variant="ghost" size="sm" className="text-xs h-7"
-                                            onClick={() => setShowAllGraphBranches(!showAllGraphBranches)}>
-                                            {showAllGraphBranches
-                                                ? <>Show less <ChevronUp className="w-3 h-3 ml-1" /></>
-                                                : <>+{nonDefaultBranches.length - 6} more <ChevronDown className="w-3 h-3 ml-1" /></>}
-                                        </Button>
-                                    )}
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                    <button
-                                        onClick={() => setGraphBranch(graphBranch === defaultBranch ? null : defaultBranch)}
-                                        aria-pressed={graphBranch === defaultBranch}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
-                                        style={{
-                                            borderColor: graphBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-line)",
-                                            background: graphBranch === defaultBranch ? "var(--atlas-selected)" : "transparent",
-                                            color: graphBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-muted)",
-                                        }}
-                                    >
-                                        <GitBranch className="w-3 h-3" />
-                                        {defaultBranch}
-                                        <Badge variant="outline" className="text-[9px] ml-1 border-current px-1 py-0">default</Badge>
-                                    </button>
-                                    {(showAllGraphBranches ? nonDefaultBranches : nonDefaultBranches.slice(0, 6)).map((b) => {
-                                        const isSelected = graphBranch === b.name;
-                                        return (
-                                            <button key={b.name}
-                                                onClick={() => setGraphBranch(isSelected ? null : b.name)}
-                                                aria-pressed={isSelected}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
-                                                style={{
-                                                    borderColor: isSelected ? BRANCH_COLOR : "var(--atlas-line)",
-                                                    background: isSelected ? "var(--atlas-selected)" : "transparent",
-                                                    color: isSelected ? BRANCH_COLOR : "var(--atlas-muted)",
-                                                }}
-                                            >
-                                                <GitBranch className="w-3 h-3" />
-                                                {b.name}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
+                            <BranchPicker branches={branches} defaultBranch={defaultBranch} selectedBranch={graphBranch} query={branchQuery} onQueryChange={setBranchQuery}
+                                expanded={showAllGraphBranches} onToggleExpanded={() => setShowAllGraphBranches(!showAllGraphBranches)}
+                                onSelect={branch => setGraphBranch(graphBranch === branch ? null : branch)} />
 
                             <CommitHistoryRail commits={allCommits} defaultBranch={defaultBranch} branches={branches} selectedBranchOverride={graphBranch} />
                         </div>
                     </div>
 
                     {hasMore && (
-                        <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
+                        <div className="branch-history-pagination">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+                                <div className="branch-pagination-count text-xs text-muted-foreground">
                                     <GitCommit className="w-3.5 h-3.5" />
-                                    <span>{allCommits.length} loaded</span>
+                                    <span>{allCommits.length} loaded on <span className="branch-name">{defaultBranch}</span></span>
                                     <span className="text-muted-foreground/50">• more available</span>
                                 </div>
 
-                                <div className="flex items-center gap-2 shrink-0">
+                                <div className="branch-pagination-actions">
                                     {isLoadingAll ? (
                                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                             <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
@@ -332,7 +313,6 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadMoreCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-secondary/30 border-border/30 hover:bg-secondary/50 hover:border-white/20"
                                             >
                                                 {isLoadingMore ? (
                                                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -346,7 +326,6 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadAllCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-white/5 border-white/15 hover:bg-white/10 text-slate-300"
                                             >
                                                 <GitCommit className="w-3 h-3" />
                                                 Load all
@@ -361,100 +340,38 @@ export default function BranchGraph({
             ) : (
                 <>
                     {/* Scrollable content */}
-                    <div className="flex-1 overflow-auto custom-scrollbar">
-                        <div className="atlas-data-page space-y-6">
+                    <div className="branch-history-scroll custom-scrollbar">
+                        <div className="branch-history-content">
 
                             {/* Branches Section */}
-                            <div className="atlas-branch-card p-5">
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-2">
-                                        <GitBranch className="w-4 h-4 text-slate-300" />
-                                        <h3 className="text-sm font-semibold">Branches</h3>
-                                        <Badge variant="secondary" className="text-[10px]">
-                                            {branches.length}
-                                        </Badge>
-                                    </div>
-                                    {nonDefaultBranches.length > 6 && (
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="text-xs h-7"
-                                            onClick={() => setShowAllBranches(!showAllBranches)}
-                                        >
-                                            {showAllBranches ? (
-                                                <>Show less <ChevronUp className="w-3 h-3 ml-1" /></>
-                                            ) : (
-                                                <>+{nonDefaultBranches.length - 6} more <ChevronDown className="w-3 h-3 ml-1" /></>
-                                            )}
-                                        </Button>
-                                    )}
-                                </div>
-
-                                <div className="flex flex-wrap gap-2">
-                                    <button
-                                        onClick={() => fetchBranchCommits(defaultBranch)}
-                                        aria-pressed={selectedBranch === defaultBranch}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-colors"
-                                        style={{
-                                            borderColor: selectedBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-line)",
-                                            background: selectedBranch === defaultBranch ? "var(--atlas-selected)" : "transparent",
-                                            color: selectedBranch === defaultBranch ? BRANCH_COLOR : "var(--atlas-muted)",
-                                        }}
-                                    >
-                                        <GitBranch className="w-3 h-3" />
-                                        {defaultBranch}
-                                        <Badge variant="outline" className="text-[9px] ml-1 border-current px-1 py-0">
-                                            default
-                                        </Badge>
-                                    </button>
-
-                                    {visibleBranches.map((branch) => {
-                                        const isSelected = selectedBranch === branch.name;
-                                        return (
-                                            <button
-                                                key={branch.name}
-                                                onClick={() => fetchBranchCommits(branch.name)}
-                                                aria-pressed={isSelected}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors"
-                                                style={{
-                                                    borderColor: isSelected ? BRANCH_COLOR : "var(--atlas-line)",
-                                                    background: isSelected ? "var(--atlas-selected)" : "transparent",
-                                                    color: isSelected ? BRANCH_COLOR : "var(--atlas-muted)",
-                                                }}
-                                            >
-                                                <GitBranch className="w-3 h-3" />
-                                                {branch.name}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
+                            <BranchPicker branches={branches} defaultBranch={defaultBranch} selectedBranch={selectedBranch} query={branchQuery} onQueryChange={setBranchQuery}
+                                expanded={showAllBranches} onToggleExpanded={() => setShowAllBranches(!showAllBranches)} onSelect={fetchBranchCommits} />
 
                             {/* Commits Header */}
-                            <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="branch-commits-controls">
                                 <div className="flex flex-wrap items-center gap-2">
                                     <GitCommit className="w-4 h-4 text-muted-foreground" />
                                     <h3 className="text-sm font-semibold">Commits</h3>
                                     {isBranchLoading ? (
                                         <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
                                     ) : (
-                                        <Badge variant="secondary" className="text-[10px]">
+                                        <Badge variant="secondary" className="text-xs">
                                             {selectedBranch === defaultBranch ? `${allCommits.length}${hasMore ? "+" : ""}` : branchCommits.length}
                                         </Badge>
                                     )}
                                     {selectedBranch !== defaultBranch && (
-                                        <span className="text-[10px] text-muted-foreground">on <span className="text-slate-300">{selectedBranch}</span></span>
+                                        <span className="text-xs text-muted-foreground">on <span className="branch-name">{selectedBranch}</span></span>
                                     )}
                                 </div>
 
-                                <div className="flex items-center gap-2">
+                                <div className="branch-commit-actions">
                                     <div className="relative flex items-center">
                                         <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
                                         <select
                                             aria-label="Sort commits"
                                             value={sortBy}
                                             onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "author")}
-                                            className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-slate-400/40 focus:outline-none focus:ring-1 focus:ring-slate-400/15 transition-colors appearance-none cursor-pointer text-foreground"
+                                            className="branch-sort"
                                         >
                                             <option value="newest">Newest first</option>
                                             <option value="oldest">Oldest first</option>
@@ -462,24 +379,24 @@ export default function BranchGraph({
                                         </select>
                                     </div>
 
-                                    <div className="relative">
-                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                                        <input
+                                    <div className="branch-search">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                                        <Input
                                             type="text"
                                             placeholder="Search commits..."
                                             aria-label="Search commits"
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
-                                            className="h-8 w-[200px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-slate-400/40 focus:outline-none focus:ring-1 focus:ring-slate-400/15 transition-colors"
+                                            className="pl-9 pr-10"
                                         />
                                         {searchQuery && (
-                                            <button
+                                            <Button variant="ghost" size="icon"
                                                 aria-label="Clear commit search"
                                                 onClick={() => setSearchQuery("")}
-                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                                className="absolute right-0.5 top-1/2 -translate-y-1/2 h-8 w-8 text-muted-foreground"
                                             >
-                                                <X className="w-3.5 h-3.5" />
-                                            </button>
+                                                <X className="w-4 h-4" />
+                                            </Button>
                                         )}
                                     </div>
                                 </div>
@@ -516,10 +433,7 @@ export default function BranchGraph({
                                                         aria-expanded={selectedCommit?.sha === commit.sha}
                                                         initial={{ opacity: 0, x: -8 }}
                                                         animate={{ opacity: 1, x: 0 }}
-                                                        className={`group relative flex w-full text-left items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 ${selectedCommit?.sha === commit.sha
-                                                            ? "bg-white/6 border border-white/15"
-                                                            : "hover:bg-secondary/30 border border-transparent"
-                                                            }`}
+                                                        className="branch-commit group relative flex w-full text-left items-start gap-3 p-3 cursor-pointer transition-colors"
                                                         onClick={() =>
                                                             setSelectedCommit(
                                                                 selectedCommit?.sha === commit.sha ? null : commit
@@ -531,7 +445,7 @@ export default function BranchGraph({
                                                             className="absolute -left-[34px] top-[12px] w-[8px] h-[8px] rounded-full border-2 z-10"
                                                             style={{
                                                                 borderColor: BRANCH_COLOR,
-                                                                background: selectedCommit?.sha === commit.sha ? BRANCH_COLOR : "#0a0e1a",
+                                                                background: selectedCommit?.sha === commit.sha ? BRANCH_COLOR : "var(--atlas-surface)",
                                                             }}
                                                         />
 
@@ -551,12 +465,12 @@ export default function BranchGraph({
                                                             <p className={`text-sm text-foreground leading-snug transition-colors ${selectedCommit?.sha === commit.sha ? "whitespace-pre-wrap break-words" : "truncate"}`} title={commit.message}>
                                                                 {commit.message}
                                                             </p>
-                                                            <div className="flex items-center gap-2 mt-1">
-                                                                <span className="text-[11px] text-muted-foreground">
+                                                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                                                                <span className="branch-commit-meta text-xs text-muted-foreground">
                                                                     {commit.authorName}
                                                                 </span>
                                                                 <span className="text-[10px] text-muted-foreground/50">•</span>
-                                                                <span className="text-[11px] text-muted-foreground/70">
+                                                                <span className="text-xs text-muted-foreground">
                                                                     {timeAgo(commit.date)}
                                                                 </span>
                                                             </div>
@@ -573,13 +487,13 @@ export default function BranchGraph({
                                                                         <div className="mt-2 pt-2 border-t border-border/20 space-y-1.5">
                                                                             <div className="flex items-center gap-2">
                                                                                 <Calendar className="w-3 h-3 text-muted-foreground" />
-                                                                                <span className="text-[11px] text-muted-foreground">
+                                                                                <span className="branch-commit-meta text-xs text-muted-foreground">
                                                                                     {new Date(commit.date).toLocaleString()}
                                                                                 </span>
                                                                             </div>
                                                                             <div className="flex items-center gap-2">
                                                                                 <GitBranch className="w-3 h-3 text-muted-foreground" />
-                                                                                <Badge variant="outline" className="text-[9px]">
+                                                                                <Badge variant="outline" className="branch-name text-xs">
                                                                                     {selectedBranch}
                                                                                 </Badge>
                                                                             </div>
@@ -589,7 +503,7 @@ export default function BranchGraph({
                                                             </AnimatePresence>
                                                         </div>
 
-                                                        <code className="text-[10px] text-slate-400/70 bg-white/5 px-1.5 py-0.5 rounded font-mono shrink-0 mt-1">
+                                                        <code className="text-xs text-muted-foreground px-1.5 py-0.5 rounded font-mono shrink-0 mt-1">
                                                             {commit.shortSha}
                                                         </code>
                                                     </motion.button>
@@ -603,8 +517,8 @@ export default function BranchGraph({
                                 {!isBranchLoading && !searchQuery && displayCommits.length > 0 && (selectedBranch !== defaultBranch || !hasMore) && (
                                     <div className="flex items-center gap-3 ml-1 pt-4 pb-2">
                                         <div className="w-[10px] h-[10px] rounded-full bg-muted-foreground/20 border-2 border-background z-10" />
-                                        <span className="text-[11px] text-muted-foreground/50">
-                                            {selectedBranch === defaultBranch ? `${commitsFetchError ? "Available" : "All"} ${allCommits.length} commits loaded` : `${branchCommits.length} commits loaded for ${selectedBranch}${branchCommits.length === 100 ? " (first 100)" : ""}`}
+                                        <span className="text-xs text-muted-foreground">
+                                            {selectedBranch === defaultBranch ? `${commitsFetchError ? "Available " : ""}${allCommits.length} commits loaded` : `${branchCommits.length} commits loaded for ${selectedBranch}${branchCommits.length === 100 ? " (first 100)" : ""}`}
                                         </span>
                                     </div>
                                 )}
@@ -614,15 +528,15 @@ export default function BranchGraph({
 
                     {/* Sticky Bottom Bar — always visible, no scrolling needed */}
                     {hasMore && (
-                        <div className="shrink-0 border-t border-border/20 bg-[#0a0e1a]/95 backdrop-blur-xl px-6 py-3">
+                        <div className="branch-history-pagination">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+                                <div className="branch-pagination-count text-xs text-muted-foreground">
                                     <GitCommit className="w-3.5 h-3.5" />
-                                    <span>{allCommits.length} loaded</span>
+                                    <span>{allCommits.length} loaded on <span className="branch-name">{defaultBranch}</span></span>
                                     <span className="text-muted-foreground/50">• more available</span>
                                 </div>
 
-                                <div className="flex items-center gap-2 shrink-0">
+                                <div className="branch-pagination-actions">
                                     {isLoadingAll ? (
                                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                             <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
@@ -635,7 +549,6 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadMoreCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-secondary/30 border-border/30 hover:bg-secondary/50 hover:border-white/20"
                                             >
                                                 {isLoadingMore ? (
                                                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -649,7 +562,6 @@ export default function BranchGraph({
                                                 size="sm"
                                                 onClick={loadAllCommits}
                                                 disabled={isLoadingMore}
-                                                className="h-7 text-xs gap-1.5 bg-white/5 border-white/15 hover:bg-white/10 text-slate-300"
                                             >
                                                 <GitCommit className="w-3 h-3" />
                                                 Load all

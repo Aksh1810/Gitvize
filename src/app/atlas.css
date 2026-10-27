@@ -186,7 +186,26 @@
 .atlas-package-description { line-height: 20px; }
 .atlas-package-meta { min-width: 0; display: flex; flex-wrap: wrap; align-content: center; align-items: center; gap: 6px 8px; font-size: 12px; line-height: 18px; color: var(--atlas-muted); }
 .atlas-package-actions { display: flex; flex-wrap: wrap; align-items: center; align-self: center; justify-content: flex-end; gap: 4px; max-width: 210px; }
-.atlas-branch-card { background: #152139; border: 1px solid #2e3f5b; border-radius: 10px; }
+.branch-history { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--atlas-surface); border: 1px solid var(--atlas-line); border-radius: 8px; }
+.branch-history-toolbar { display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; min-height: 48px; padding: 5px 12px; border-bottom: 1px solid var(--atlas-line); }
+.branch-history-alert { flex-shrink: 1; max-height: 30%; overflow: auto; padding: 8px 12px; border-bottom: 1px solid var(--atlas-line); }
+.branch-history-scroll { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
+.branch-history-content { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.atlas-branch-card { min-width: 0; background: var(--atlas-paper); border: 1px solid var(--atlas-line); border-radius: 6px; padding: 12px; }
+.branch-picker-controls, .branch-commits-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.branch-search { position: relative; flex: 1 1 240px; min-width: 0; max-width: 380px; }
+.branch-counts, .branch-count-note, .branch-picker-empty { font-size: 12px; line-height: 18px; color: var(--atlas-muted); margin-top: 8px; }
+.branch-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.branch-options .branch-option { max-width: 100%; min-height: 36px; height: auto; white-space: normal; }
+.branch-name { min-width: 0; font-family: var(--font-jetbrains-mono), monospace; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; text-align: left; }
+.branch-commit-actions { display: flex; flex: 1; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.branch-sort { height: 36px; padding: 0 12px 0 28px; font-size: 14px; color: var(--foreground); background: var(--card); border: 1px solid var(--input); border-radius: 6px; appearance: none; cursor: pointer; }
+.branch-commit { min-width: 0; border: 1px solid transparent; border-radius: 6px; background: var(--atlas-surface); }
+.branch-commit:hover { background: var(--atlas-paper); }
+.branch-commit[aria-expanded="true"] { background: var(--atlas-selected); border-color: var(--atlas-line); }
+.branch-commit-meta { overflow-wrap: anywhere; }
+.branch-history-pagination { flex-shrink: 0; min-width: 0; padding: 6px 12px; border-top: 1px solid var(--atlas-line); background: var(--atlas-surface); }
+.branch-pagination-count, .branch-pagination-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .atlas-architecture.diagram-dot-field { background-color: var(--atlas-surface); background-image: radial-gradient(var(--atlas-line) 0.7px, transparent 0.7px); background-size: 24px 24px; }
 .architecture-tab { min-width: 0; min-height: 0; overflow: auto; border: 1px solid var(--atlas-line); border-radius: 8px; background: var(--atlas-surface); }
 .architecture-tab[aria-hidden="false"] { display: flex; flex-direction: column; }
@@ -306,12 +325,10 @@
 .atlas-data-summary { font-size: 14px; color: var(--atlas-muted); margin-bottom: 24px; }
 .workspace-data { --foreground: var(--atlas-ink); --muted-foreground: var(--atlas-muted); --border: var(--atlas-line); --background: var(--atlas-surface); --accent: var(--atlas-selected); color: var(--atlas-ink); }
 .workspace-canvas .workspace-data { background: var(--atlas-surface); border-color: var(--atlas-line); }
-.workspace-data .atlas-branch-card { background: var(--atlas-paper); border: 0; border-radius: 7px; }
 .workspace-data :is(.text-slate-200, .text-slate-300, .text-white) { color: var(--atlas-ink); }
 .workspace-data :is(.text-slate-400, .text-cyan-400, .text-indigo-400) { color: var(--atlas-muted); }
 .workspace-data button[aria-pressed="true"] { background: var(--atlas-selected); color: var(--atlas-blue); border-color: var(--atlas-line); }
-.workspace-data :is(input:not([data-slot="input"]), select:not(.atlas-list-sort)) { background: var(--atlas-paper); color: var(--atlas-ink); border: 1px solid var(--atlas-line); border-radius: 6px; min-height: 36px; }
-.workspace-data .atlas-branch-card button { border-radius: 6px; }
+.workspace-data :is(input:not([data-slot="input"]), select:not(.atlas-list-sort, .branch-sort)) { background: var(--atlas-paper); color: var(--atlas-ink); border: 1px solid var(--atlas-line); border-radius: 6px; min-height: 36px; }
 .history-rail-canvas { background: var(--atlas-paper); }
 .atlas-workspace .workspace-layout { margin: 0 16px 16px; border-radius: 12px; background: var(--atlas-surface); overflow: hidden; box-shadow: 0 0 0 1px var(--atlas-line); }
 .workspace-canvas .repository-workbench { background: var(--atlas-surface); border: 1px solid var(--atlas-line); border-radius: 8px; overflow: hidden; box-shadow: none; }
