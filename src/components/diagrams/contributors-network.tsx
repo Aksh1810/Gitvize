@@ -12,13 +12,15 @@ import {
     GitCommit,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { Contributor } from "@/types";
 
 function AvatarWithFallback({ src, alt, className }: { src?: string; alt: string; className: string }) {
     const [error, setError] = useState(false);
     if (!src || error) {
         return (
-            <div className={`${className} flex items-center justify-center bg-white/10`}>
+            <div className={`${className} atlas-avatar-fallback flex items-center justify-center`}>
                 <User className="w-4 h-4 text-muted-foreground" />
             </div>
         );
@@ -48,12 +50,12 @@ export default function ContributorsNetwork({
                 ? "Failed to load contributor data. Try adding a GitHub token."
                 : "No contributors found for this repository.";
         return (
-            <div className="flex items-center justify-center h-full">
+            <div className="atlas-list-view atlas-list-state" role={fetchError ? "alert" : "status"}>
                 <div className="text-center">
                     <div className="text-4xl mb-4">👥</div>
-                    <p className="text-sm text-gray-400">{emptyMsg}</p>
+                    <p className="text-sm text-muted-foreground">{emptyMsg}</p>
                     {fetchError && (
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-muted-foreground mt-1">
                             Add a GitHub Personal Access Token to increase rate limits.
                         </p>
                     )}
@@ -63,18 +65,34 @@ export default function ContributorsNetwork({
     }
 
     return (
-        <div className="w-full h-full flex flex-col">
+        <div className="atlas-list-view">
             {/* Header bar */}
-            <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-border/20">
-                <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-cyan-400" />
+            <div className="atlas-list-toolbar">
+                <div className="atlas-list-title">
+                    <Users className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
                     <span className="text-sm font-semibold">People</span>
-                    <Badge variant="secondary" className="text-[10px]">{contributors.length}</Badge>
+                    <Badge variant="secondary" className="text-xs">{contributors.length}</Badge>
+                </div>
+                <div className="relative flex items-center">
+                    <ArrowUpDown className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" aria-hidden="true" />
+                    <select aria-label="Sort contributors" value={sortBy} onChange={(e) => setSortBy(e.target.value as "commits" | "name")} className="atlas-list-sort">
+                        <option value="commits">Most commits</option>
+                        <option value="name">Name A–Z</option>
+                    </select>
+                </div>
+                <div className="atlas-list-search">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" aria-hidden="true" />
+                    <Input type="text" placeholder="Search contributors..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} aria-label="Search contributors" className="pl-9 pr-10" />
+                    {searchQuery && (
+                        <Button variant="ghost" size="icon" aria-label="Clear contributor search" onClick={() => setSearchQuery("")} className="absolute right-0.5 top-1/2 -translate-y-1/2 h-8 w-8 text-muted-foreground">
+                            <X className="w-4 h-4" />
+                        </Button>
+                    )}
                 </div>
             </div>
 
             {truncated && (
-                <div className="shrink-0 px-4 py-1 text-xs text-amber-400/80 bg-amber-500/5 border-b border-amber-500/20">
+                <div role="status" className="atlas-list-notice px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200 bg-amber-500/5 border-b border-border">
                     Showing top {contributors.length} contributors by commit count
                 </div>
             )}
@@ -84,9 +102,7 @@ export default function ContributorsNetwork({
                 <ListView
                     contributors={contributors}
                     searchQuery={searchQuery}
-                    setSearchQuery={setSearchQuery}
                     sortBy={sortBy}
-                    setSortBy={setSortBy}
                 />
             </div>
         </div>
@@ -98,12 +114,10 @@ export default function ContributorsNetwork({
 interface ListViewProps {
     contributors: Contributor[];
     searchQuery: string;
-    setSearchQuery: (q: string) => void;
     sortBy: "commits" | "name";
-    setSortBy: (s: "commits" | "name") => void;
 }
 
-function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy }: ListViewProps) {
+function ListView({ contributors, searchQuery, sortBy }: ListViewProps) {
     const maxContributions = contributors[0]?.contributions ?? 1;
 
     const filtered = useMemo(() => {
@@ -121,43 +135,11 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
     }, [contributors, searchQuery, sortBy]);
 
     return (
-        <div className="w-full h-full overflow-auto custom-scrollbar">
-            <div className="atlas-data-page space-y-5">
-                <div className="atlas-data-summary"><p>
+        <div className="atlas-list-scroll custom-scrollbar">
+            <div className="atlas-list-body">
+                <div className="atlas-list-summary"><p>
                     {contributors.reduce((total, contributor) => total + contributor.contributions, 0).toLocaleString()} commits across {contributors.length} contributors
                 </p></div>
-
-                {/* Controls */}
-                <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative flex items-center">
-                        <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
-                        <select
-                            aria-label="Sort contributors"
-                            value={sortBy}
-                            onChange={(e) => setSortBy(e.target.value as "commits" | "name")}
-                            className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/20 transition-colors appearance-none cursor-pointer text-foreground"
-                        >
-                            <option value="commits">Most commits</option>
-                            <option value="name">Name A–Z</option>
-                        </select>
-                    </div>
-                    <div className="relative">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                        <input
-                            type="text"
-                            placeholder="Search contributors..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            aria-label="Search contributors"
-                            className="h-9 w-[180px] pl-8 pr-8 text-sm rounded-lg bg-secondary/50 border border-border/30 focus:border-cyan-500/50 focus:outline-none focus:ring-1 focus:ring-cyan-500/20 transition-colors"
-                        />
-                        {searchQuery && (
-                            <button aria-label="Clear contributor search" onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                                <X className="w-3.5 h-3.5" />
-                            </button>
-                        )}
-                    </div>
-                </div>
 
                 {/* Contributors list */}
                 <div className="atlas-contributor-list">
@@ -174,46 +156,45 @@ function ListView({ contributors, searchQuery, setSearchQuery, sortBy, setSortBy
                                 initial={{ opacity: 0, x: -8 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ delay: Math.min(idx * 0.02, 0.5) }}
-                                className="atlas-contributor group flex items-center gap-3 sm:gap-4 px-3 sm:px-5 py-4 transition-colors cursor-pointer"
+                                className="atlas-contributor group"
                             >
-                                <span className="text-[11px] text-muted-foreground/50 w-6 text-right shrink-0 font-mono">
+                                <span className="text-xs text-muted-foreground text-right font-mono">
                                     #{rank}
                                 </span>
                                 <AvatarWithFallback
                                     src={contributor.avatarUrl}
                                     alt={contributor.login}
-                                    className="w-10 h-10 rounded-full shrink-0 ring-1 ring-border/20"
+                                    className="w-8 h-8 rounded-md shrink-0"
                                 />
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2">
-                                        <span className="text-base font-medium truncate group-hover:text-white transition-colors">
+                                        <span className="atlas-contributor-name text-sm font-medium">
                                             {contributor.login}
                                         </span>
-                                        <ExternalLink className="w-3 h-3 text-muted-foreground/0 group-hover:text-muted-foreground/50 transition-colors shrink-0" />
+                                        <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" aria-hidden="true" />
                                     </div>
-                                    <div className="flex items-center gap-2 mt-2">
-                                        <div className="flex-1 h-1.5 rounded-full bg-secondary/30 overflow-hidden">
+                                    <div className="flex items-center mt-1.5">
+                                        <div className="atlas-contribution-track flex-1 h-1 rounded-full overflow-hidden">
                                             <div
-                                                className="h-full rounded-full bg-blue-400/70 transition-all duration-500"
+                                                className="atlas-contribution-fill h-full rounded-full transition-all duration-500"
                                                 style={{ width: `${pct}%` }}
                                             />
                                         </div>
                                     </div>
                                 </div>
-                                <span className="text-sm text-muted-foreground shrink-0 tabular-nums flex items-center gap-1" aria-label={`${contributor.contributions.toLocaleString()} commits`}>
-                                    <GitCommit className="w-3 h-3" />
+                                <span className="text-xs text-muted-foreground tabular-nums flex items-center gap-1" aria-label={`${contributor.contributions.toLocaleString()} commits`}>
+                                    <GitCommit className="w-3 h-3" aria-hidden="true" />
                                     {contributor.contributions.toLocaleString()}
                                 </span>
                             </motion.a>
                         );
                     })}
+                    {filtered.length === 0 && (
+                        <div className="atlas-list-state text-sm text-muted-foreground" role="status">
+                            No contributors match your search.
+                        </div>
+                    )}
                 </div>
-
-                {filtered.length === 0 && (
-                    <div className="text-center py-12 text-sm text-muted-foreground">
-                        No contributors match your search.
-                    </div>
-                )}
             </div>
         </div>
     );

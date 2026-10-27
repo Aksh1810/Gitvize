@@ -12,6 +12,8 @@ import {
     Download,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { ParsedDependency } from "@/lib/dep-parser";
 
 /* ─── Known-package registry (static, no API calls needed) ─── */
@@ -348,13 +350,11 @@ export default function DependencyGraph({
 
     if (dependencies.length === 0) {
         return (
-            <div className="flex items-center justify-center h-full">
+            <div className="atlas-list-view atlas-list-state" role="status">
                 <div className="text-center">
                     <div className="text-4xl mb-4">📦</div>
-                    <p className="text-sm text-gray-400">
-                        No dependency data found.
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-sm text-muted-foreground">No dependency data found.</p>
+                    <p className="text-xs text-muted-foreground mt-1">
                         This repo may not have a recognized manifest file (package.json, requirements.txt, etc.)
                     </p>
                 </div>
@@ -363,152 +363,89 @@ export default function DependencyGraph({
     }
 
     return (
-        <div className="w-full h-full flex flex-col">
-            {/* Header */}
-            <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border/20">
-                <div className="flex flex-wrap items-center gap-2">
-                    <Package className="w-4 h-4 text-indigo-400" />
+        <div className="atlas-list-view">
+            <div className="atlas-list-toolbar">
+                <div className="atlas-list-title">
+                    <Package className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
                     <span className="text-sm font-semibold">Packages</span>
-                    <Badge variant="secondary" className="text-[10px]">{dependencies.length}</Badge>
+                    <Badge variant="secondary" className="text-xs">{dependencies.length}</Badge>
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative flex items-center">
-                        <ArrowUpDown className="absolute left-2.5 w-3 h-3 text-muted-foreground pointer-events-none" />
-                        <select
-                            aria-label="Sort dependencies"
-                            value={sortBy}
-                            onChange={(e) => setSortBy(e.target.value as "name" | "category" | "type")}
-                            className="h-8 pl-7 pr-3 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors appearance-none cursor-pointer text-foreground"
-                        >
-                            <option value="type">By type</option>
-                            <option value="name">Name A-Z</option>
-                            <option value="category">Category</option>
-                        </select>
-                    </div>
-                    <div className="relative">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                        <input
-                            type="text"
-                            placeholder="Search packages..."
-                            aria-label="Search dependencies"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="h-8 w-[180px] pl-8 pr-8 text-xs rounded-lg bg-secondary/50 border border-border/30 focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 transition-colors"
-                        />
-                        {searchQuery && (
-                            <button
-                                aria-label="Clear dependency search"
-                                onClick={() => setSearchQuery("")}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                            >
-                                <X className="w-3.5 h-3.5" />
-                            </button>
-                        )}
-                    </div>
+                <div className="relative flex items-center">
+                    <ArrowUpDown className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground pointer-events-none" aria-hidden="true" />
+                    <select aria-label="Sort dependencies" value={sortBy} onChange={(e) => setSortBy(e.target.value as "name" | "category" | "type")} className="atlas-list-sort">
+                        <option value="type">By type</option>
+                        <option value="name">Name A-Z</option>
+                        <option value="category">Category</option>
+                    </select>
+                </div>
+                <div className="atlas-list-search">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" aria-hidden="true" />
+                    <Input type="text" placeholder="Search packages..." aria-label="Search dependencies" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-10" />
+                    {searchQuery && (
+                        <Button variant="ghost" size="icon" aria-label="Clear dependency search" onClick={() => setSearchQuery("")} className="absolute right-0.5 top-1/2 -translate-y-1/2 h-8 w-8 text-muted-foreground">
+                            <X className="w-4 h-4" />
+                        </Button>
+                    )}
                 </div>
             </div>
 
-            {/* Cards */}
-            <div className="flex-1 overflow-auto custom-scrollbar">
-                <div className="atlas-data-page">
-                    <p className="text-sm text-muted-foreground mb-5">
-                        {directCount} direct · {devCount} development dependencies
-                    </p>
-                    <div className="atlas-package-grid">
+            <div className="atlas-list-scroll custom-scrollbar">
+                <div className="atlas-list-body">
+                    <p className="atlas-list-summary">{directCount} direct · {devCount} development dependencies</p>
+                    <div className="atlas-package-list">
                         {filtered.map((dep) => {
                             const catColor = CATEGORY_COLORS[dep.category] ?? CATEGORY_COLORS.Other;
 
                             return (
-                                <motion.div
-                                    key={`${dep.ecosystem}:${dep.name}`}
-                                    className="atlas-package group p-5 flex flex-col gap-3"
-                                >
-                                    {/* Top row: name + badges */}
-                                    <div className="flex items-start justify-between gap-2">
-                                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                                            <Package className="w-4 h-4 shrink-0" style={{ color: catColor }} />
-                                            <span className="text-sm font-semibold truncate text-foreground">
-                                                {dep.name}
-                                            </span>
+                                <motion.div key={`${dep.ecosystem}:${dep.name}`} className="atlas-package">
+                                    <div className="min-w-0">
+                                        <div className="flex items-start gap-2">
+                                            <Package className="w-4 h-4 shrink-0 mt-0.5" style={{ color: catColor }} aria-hidden="true" />
+                                            <span className="atlas-package-name text-sm font-semibold text-foreground">{dep.name}</span>
                                         </div>
-                                        <div className="flex items-center gap-1.5 shrink-0">
-                                            <span
-                                                className="text-[10px] font-medium px-2 py-0.5 rounded-full border"
-                                                style={{
-                                                    color: catColor,
-                                                    borderColor: `${catColor}40`,
-                                                    backgroundColor: `${catColor}15`,
-                                                }}
-                                            >
-                                                {dep.category}
-                                            </span>
-                                        </div>
+                                        {dep.description !== "A package used by this project." && (
+                                            <p className="atlas-package-description text-sm text-muted-foreground mt-1">{dep.description}</p>
+                                        )}
                                     </div>
-
-                                    {/* Description */}
-                                    {dep.description !== "A package used by this project." && (
-                                        <p className="text-sm text-muted-foreground leading-relaxed">{dep.description}</p>
-                                    )}
-
-                                    {/* Bottom row: version, type, downloads, links */}
-                                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/10">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            {dep.version && dep.version !== "*" && (
-                                                <span className="text-[10px] font-mono text-muted-foreground/80 bg-secondary/40 px-1.5 py-0.5 rounded">
-                                                    v{dep.version.replace(/^[\^~>=<]/, "")}
-                                                </span>
-                                            )}
-                                            <span
-                                                className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                                                    dep.isDirect
-                                                        ? "bg-indigo-500/10 text-indigo-400"
-                                                        : "bg-purple-500/10 text-purple-400"
-                                                }`}
-                                            >
-                                                {dep.isDirect ? "direct" : "dev"}
+                                    <div className="atlas-package-meta">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: catColor }} aria-hidden="true" />
+                                            {dep.category}
+                                        </span>
+                                        {dep.version && dep.version !== "*" && (
+                                            <span className="atlas-package-version font-mono">v{dep.version.replace(/^[\^~>=<]/, "")}</span>
+                                        )}
+                                        <Badge variant="secondary" className="text-xs rounded">{dep.isDirect ? "direct" : "dev"}</Badge>
+                                        {dep.downloads != null && (
+                                            <span className="inline-flex items-center gap-1">
+                                                <Download className="w-3 h-3" aria-hidden="true" />
+                                                {formatDownloads(dep.downloads)}/wk
                                             </span>
-                                            {dep.downloads != null && (
-                                                <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60">
-                                                    <Download className="w-2.5 h-2.5" />
-                                                    {formatDownloads(dep.downloads)}/wk
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        <div className="flex items-center gap-2 shrink-0">
-                                            <a
-                                                href={getPackageUrl(dep)}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-indigo-400 transition-colors"
-                                            >
-                                                <BookOpen className="w-3 h-3" />
+                                        )}
+                                    </div>
+                                    <div className="atlas-package-actions">
+                                        <Button asChild variant="ghost" size="sm">
+                                            <a href={getPackageUrl(dep)} target="_blank" rel="noopener noreferrer" aria-label={`View ${dep.name} on ${dep.ecosystem === "pypi" ? "PyPI" : dep.ecosystem === "go" ? "Go docs" : dep.ecosystem === "cargo" ? "crates.io" : "npm"}`}>
+                                                <BookOpen className="w-3.5 h-3.5" />
                                                 {dep.ecosystem === "pypi" ? "PyPI" : dep.ecosystem === "go" ? "Go docs" : dep.ecosystem === "cargo" ? "crates.io" : "npm"}
                                             </a>
-                                            {dep.homepage && (
-                                                <a
-                                                    href={dep.homepage}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-indigo-400 transition-colors"
-                                                >
-                                                    <ExternalLink className="w-3 h-3" />
+                                        </Button>
+                                        {dep.homepage && (
+                                            <Button asChild variant="ghost" size="sm">
+                                                <a href={dep.homepage} target="_blank" rel="noopener noreferrer" aria-label={`Homepage for ${dep.name}`}>
+                                                    <ExternalLink className="w-3.5 h-3.5" />
                                                     Homepage
                                                 </a>
-                                            )}
-                                        </div>
+                                            </Button>
+                                        )}
                                     </div>
                                 </motion.div>
                             );
                         })}
+                        {filtered.length === 0 && (
+                            <div className="atlas-list-state text-sm text-muted-foreground" role="status">No packages match your search.</div>
+                        )}
                     </div>
-
-                    {filtered.length === 0 && (
-                        <div className="text-center py-12 text-sm text-muted-foreground">
-                            No packages match your search.
-                        </div>
-                    )}
                 </div>
             </div>
         </div>
