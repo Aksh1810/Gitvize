@@ -655,15 +655,26 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
     // Loading state
     if (loading) {
-        // Cached repos already have data locally — show a thin progress bar instead
-        // of the full clone screen so the user isn't shown clone messaging on refresh.
+        // Cached repos already have data locally; avoid clone messaging on refresh.
         if (cachedLoad) {
             return (
-                <div className="h-screen w-full bg-[#0a0e1a] flex flex-col items-center justify-center gap-4">
-                    <BrandLogo size={40} />
-                    <p className="text-sm text-muted-foreground">{owner}/{repo}</p>
-                    <div className="w-48 h-0.5 bg-white/5 overflow-hidden rounded-full">
-                        <div className="h-full w-3/5 bg-indigo-500/70 animate-[loading-bar_1.4s_ease-in-out_infinite]" />
+                <div className="atlas-loading">
+                    <div className="atlas-loading-content">
+                        <div className="loading-repo-heading">
+                            <BrandLogo size={32} className="shrink-0" />
+                            <div className="min-w-0">
+                                <p className="text-xs text-muted-foreground">Gitvize</p>
+                                <p className="loading-repo-name">{owner}/{repo}</p>
+                            </div>
+                        </div>
+                        <div className="atlas-loading-card" aria-busy="true">
+                            <h1>Opening repository</h1>
+                            <p role="status" className="loading-cached-status">
+                                <span className="loading-spinner animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                                Opening cached repository data…
+                            </p>
+                        </div>
+                        <Button asChild variant="outline" className="atlas-return"><Link href="/">Explore another repository</Link></Button>
                     </div>
                 </div>
             );
