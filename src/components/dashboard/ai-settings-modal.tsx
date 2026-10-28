@@ -111,115 +111,62 @@ export default function AISettingsModal({ open, onOpenChange, onSave }: AISettin
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="bg-[#152139] border-slate-700 shadow-2xl sm:max-w-[560px]">
+            <DialogContent className="settings-dialog sm:max-w-[560px]">
                 <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2 text-lg">
-                        <Sparkles className="w-5 h-5 text-indigo-400" />
-                        Make room for more context
-                    </DialogTitle>
+                    <DialogTitle><Sparkles className="settings-heading-icon" aria-hidden="true" />AI settings</DialogTitle>
                     <DialogDescription>
-                        Smart architecture diagrams work by default without any key.
-                        Add your API key only if you want Premium AI diagram generation.
-                        Your key is stored locally in your browser only.
+                        Smart architecture diagrams work without a key. Add your own key for Premium AI diagram generation.
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-5 py-2">
-                    {/* API Key */}
-                    <div className="space-y-2 rounded-lg border border-border/50 bg-slate-900/70 p-3">
-                        <div className="flex items-center justify-between">
-                            <Label htmlFor="ai-api-key" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                                API Key
-                            </Label>
-                            <a
-                                href="https://aistudio.google.com/app/apikey"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[10px] text-indigo-400 hover:underline"
-                            >
-                                Get a key (Gemini) →
-                            </a>
+                <div className="settings-dialog-body">
+                    <section className="settings-section">
+                        <div className="settings-field-heading">
+                            <Label htmlFor="ai-api-key">API Key</Label>
+                            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="settings-link">Get a key (Gemini) →</a>
                         </div>
-                        <div className="relative">
+                        <div className="settings-secret-field">
                             <Input
                                 id="ai-api-key"
                                 autoComplete="off"
                                 type={showKey ? "text" : "password"}
                                 value={apiKey}
                                 onChange={(e) => setApiKey(e.target.value)}
-                                placeholder="Paste your API key (AIza... / sk-... / sk-ant-...)"
-                                className="pr-10 bg-slate-950/80 border-border/70 font-mono text-sm"
+                                placeholder="AIza... / sk-... / sk-ant-..."
+                                aria-invalid={!!apiKey.trim() && !isValid}
+                                aria-describedby="ai-key-help ai-detected"
+                                className="pr-10 font-mono text-sm"
                             />
-                            <button
-                                type="button"
-                                onClick={() => setShowKey(!showKey)}
-                                aria-label={showKey ? "Hide API key" : "Show API key"}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                            >
-                                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                            </button>
+                            <Button type="button" variant="ghost" size="icon" className="settings-reveal" onClick={() => setShowKey(!showKey)} aria-label={showKey ? "Hide API key" : "Show API key"} aria-pressed={showKey}>
+                                {showKey ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
+                            </Button>
                         </div>
-                        <p className="text-[11px] text-muted-foreground">
-                            Provider and model are auto-selected from your key prefix.
-                        </p>
-                    </div>
+                        <p id="ai-key-help" className="settings-field-help">Use a supported prefix and at least 12 characters. Provider and model are selected from the prefix; saving does not verify provider access.</p>
+                    </section>
 
-                    {/* Inferred Provider/Model */}
-                    <div className="space-y-2">
-                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            Auto-Detected
-                        </Label>
-                        {inferred ? (
-                            <div className="rounded-lg border border-border/60 bg-slate-900/80 px-3 py-2 text-xs">
-                                <div className="text-foreground font-medium">Provider: {inferred.provider}</div>
-                                <div className="text-muted-foreground mt-1">Model: {inferred.model}</div>
-                                <a
-                                    href={PROVIDER_DOCS[inferred.provider]}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="mt-1 inline-block text-[11px] text-indigo-400 hover:underline"
-                                >
-                                    Manage {inferred.provider} keys →
-                                </a>
-                            </div>
-                        ) : (
-                            <div className="rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 text-xs text-slate-300">
-                                {apiKey.trim() ? "Key prefix not recognized. Supported prefixes: AIza, sk-ant-, or sk-." : "Add a Gemini, Anthropic, or OpenAI key to detect your provider."}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Status */}
-                    {hasSavedSettings && (
-                        <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">
-                                ✓ Configured
-                            </Badge>
-                            <button
-                                onClick={() => {
-                                    clearAISettings();
-                                    setApiKey("");
-                                }}
-                                className="text-[10px] text-red-400 hover:underline"
-                            >
-                                Clear saved key
-                            </button>
+                    <section className="settings-section" aria-labelledby="ai-detected-title">
+                        <h3 id="ai-detected-title">Detected provider and model</h3>
+                        <div id="ai-detected" role="status">
+                            {inferred ? <>
+                                <dl className="settings-detected"><dt>Provider</dt><dd>{inferred.provider}</dd><dt>Model</dt><dd className="settings-value">{inferred.model}</dd></dl>
+                                <a href={PROVIDER_DOCS[inferred.provider]} target="_blank" rel="noopener noreferrer" className="settings-link">Manage {inferred.provider} keys →</a>
+                            </> : <p className="settings-note">{apiKey.trim() ? "Key prefix not recognized. Supported prefixes: AIza, sk-ant-, or sk-." : "Add a Gemini, Anthropic, or OpenAI key to detect your provider."}</p>}
                         </div>
-                    )}
+                    </section>
+
+                    <section className="settings-section" aria-labelledby="ai-storage-title">
+                        <h3 id="ai-storage-title">Key use and storage</h3>
+                        <p className="settings-note">Settings are saved for this browser tab in session storage, not local storage. Your key is sent to Gitvize’s server with analysis requests.</p>
+                        {hasSavedSettings && <div className="settings-saved-state">
+                            <Badge variant="secondary" className="text-xs">Saved for this tab</Badge>
+                            <Button type="button" variant="ghost" size="sm" className="settings-clear" onClick={() => { clearAISettings(); setApiKey(""); }}>Clear saved key</Button>
+                        </div>}
+                    </section>
                 </div>
 
                 <DialogFooter>
-                    <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                        Cancel
-                    </Button>
-                    <Button
-                        onClick={handleSave}
-                        disabled={!isValid}
-                        className="bg-blue-600 hover:bg-blue-500 text-white"
-                    >
-                        <Sparkles className="w-4 h-4 mr-1.5" />
-                        Save settings
-                    </Button>
+                    <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                    <Button onClick={handleSave} disabled={!isValid}><Sparkles className="w-4 h-4" aria-hidden="true" />Save settings</Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
