@@ -94,7 +94,7 @@ export default function GitHubTokenModal({ open, onOpenChange, onSave }: GitHubT
                             <li>Held in memory for the open repository. Session storage carries a one-time hand-off when opening a repository page.</li>
                             <li>Sent to Gitvize’s server to authenticate requests to GitHub.</li>
                             <li>Limit the token to the repositories you want to explore.</li>
-                            <li>Revoke it at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="settings-link">github.com/settings/tokens</a>.</li>
+                            <li>Revoke it at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="settings-link underline underline-offset-2">github.com/settings/tokens</a>.</li>
                         </ul>
                         <a href="https://github.com/Aksh1810/Gitvize" target="_blank" rel="noopener noreferrer" className="settings-link"><ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />Read Gitvize’s source</a>
                     </section>
