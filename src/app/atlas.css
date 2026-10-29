@@ -242,7 +242,7 @@
 .architecture-toolbar, .architecture-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; background: var(--atlas-surface); }
 .architecture-toolbar { min-height: 48px; border-bottom: 1px solid var(--atlas-line); }
 .architecture-actions { min-height: 48px; justify-content: flex-end; border-top: 1px solid var(--atlas-line); }
-.architecture-control-group { display: flex; align-items: center; gap: 4px; }
+.architecture-control-group { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; gap: 4px; }
 .architecture-scale { margin-left: auto; font: 12px/20px var(--font-jetbrains-mono), monospace; color: var(--atlas-muted); }
 .architecture-canvas { overflow: hidden; touch-action: none; }
 .architecture-notice { flex-shrink: 1; max-height: 35%; overflow: auto; }

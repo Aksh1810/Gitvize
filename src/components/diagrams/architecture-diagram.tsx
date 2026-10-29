@@ -12,6 +12,7 @@ import { generateArchitectureMermaid, generateArchitectureOverview } from "@/lib
 import type { ArchitectureAnalysis, TreeItem } from "@/types";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Check } from "lucide-react";
 
 interface ArchitectureDiagramProps {
     analysis: ArchitectureAnalysis | null;
@@ -67,8 +68,14 @@ export default function ArchitectureDiagram({
         <div className="architecture-frame h-full min-h-0 min-w-0">
             <MermaidDiagram code={mermaidCode} onNodeClick={handleNodeClick} onFallback={onFallback} viewControls={
                 <div className="architecture-control-group" role="group" aria-label="Architecture detail level">
-                    <Button variant="outline" onClick={() => setView("overview")} aria-pressed={view === "overview"}>Overview</Button>
-                    <Button variant="outline" onClick={() => setView("files")} aria-pressed={view === "files"}>Key files</Button>
+                    <Button variant="outline" onClick={() => setView("overview")} aria-pressed={view === "overview"}>
+                        Overview
+                        <span aria-hidden="true" className="inline-flex items-center gap-1" style={{ visibility: view === "overview" ? "visible" : "hidden" }}><Check className="size-4" aria-hidden="true" />Selected</span>
+                    </Button>
+                    <Button variant="outline" onClick={() => setView("files")} aria-pressed={view === "files"}>
+                        Key files
+                        <span aria-hidden="true" className="inline-flex items-center gap-1" style={{ visibility: view === "files" ? "visible" : "hidden" }}><Check className="size-4" aria-hidden="true" />Selected</span>
+                    </Button>
                 </div>
             } />
         </div>
