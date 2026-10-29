@@ -22,7 +22,7 @@ import {
 import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
 import type { TreeItem, FileNodeData } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen, SquareCheck, Square } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism-tomorrow.css";
 import "prismjs/components/prism-javascript";
@@ -2728,10 +2728,12 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
                                             { key: "folder", label: "Folder", count: clusterInfo.folders, on: showFolders, setOn: setShowFolders, color: "bg-[#8292a8]" },
                                             { key: "file", label: "File", count: clusterInfo.files, on: showFiles, setOn: setShowFiles, color: "bg-blue-500" },
                                         ].map((item) => (
-                                            <button aria-pressed={item.on} key={item.key} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${item.on ? "bg-indigo-500/20 border-indigo-400/60" : "bg-slate-900/70 border-slate-800 opacity-70"}`} onClick={() => item.setOn((prev: boolean) => !prev)}>
-                                                <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
-                                                <span className="flex-1 text-left text-slate-200">{item.label}</span>
-                                                <span className="text-slate-500">{item.count}</span>
+                                            <button aria-pressed={item.on} key={item.key} className="w-full min-h-9 flex items-center gap-1.5 px-2 py-1.5 rounded-md border text-sm" onClick={() => item.setOn((prev: boolean) => !prev)}>
+                                                {item.on ? <SquareCheck aria-hidden="true" className="size-4 shrink-0" /> : <Square aria-hidden="true" className="size-4 shrink-0" />}
+                                                <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.color}`} />
+                                                <span className="min-w-0 flex-1 text-left">{item.label}</span>
+                                                <span aria-hidden="true" className="w-6 shrink-0 text-left">{item.on ? "On" : "Off"}</span>
+                                                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{item.count}</span>
                                             </button>
                                         ))}
                                     </div>
