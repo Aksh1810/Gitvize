@@ -3,13 +3,12 @@ import { getMockAnalysis } from "@/lib/ai";
 import { reserveServerAIAnalysis } from "@/lib/ai-budget";
 import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 import type { AIConfig } from "@/lib/ai";
-import type { TreeItem } from "@/types";
+import { analysisTreeSchema, MAX_ANALYZE_README_CHARS, MAX_ANALYZE_REQUEST_BYTES } from "@/lib/analysis-contract";
+import { readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
 const ALLOWED_PROVIDERS = new Set(["gemini", "anthropic", "openai"]);
-const MAX_README_LEN = 50_000;
-const MAX_TREE_ITEMS = 5_000;
 
 export async function POST(request: NextRequest) {
     const ip = getClientIp(request);
@@ -18,57 +17,34 @@ export async function POST(request: NextRequest) {
     if (!rl.ok) return rateLimitResponse(rl.resetAt);
 
     try {
-        const body = await request.json();
-        const { owner, repo, tree, readme, aiSettings, mode } = body as {
-            owner: string;
-            repo: string;
-            tree: TreeItem[];
-            readme: string;
-            aiSettings?: { provider: string; apiKey: string; model?: string };
-            forceFallback?: boolean;
-            mode?: "smart" | "premium";
-        };
-
-        const forceFallback = Boolean((body as { forceFallback?: boolean }).forceFallback);
-        const requestedMode = mode ?? "smart";
-
-        if (!owner || !repo || !tree) {
-            return NextResponse.json(
-                { error: "owner, repo, and tree are required" },
-                { status: 400 }
-            );
+        let input: unknown;
+        try {
+            input = JSON.parse(await readBoundedText(request, MAX_ANALYZE_REQUEST_BYTES));
+        } catch (error) {
+            return NextResponse.json({ error: error instanceof ResponseTooLargeError ? "Analysis request exceeds the 2 MiB limit" : "Invalid JSON body" }, {
+                status: error instanceof ResponseTooLargeError ? 413 : 400,
+            });
         }
-
-        if (!OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
+        if (!input || typeof input !== "object" || Array.isArray(input)) {
+            return NextResponse.json({ error: "Analysis request must be an object" }, { status: 400 });
+        }
+        const body = input as Record<string, unknown>;
+        const { owner, repo } = body;
+        if (typeof owner !== "string" || typeof repo !== "string" || !OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
             return NextResponse.json({ error: "invalid owner or repo format" }, { status: 400 });
         }
-
-        if (!Array.isArray(tree) || tree.length > MAX_TREE_ITEMS) {
-            return NextResponse.json({ error: `tree must be an array with at most ${MAX_TREE_ITEMS} items` }, { status: 400 });
+        const treeResult = analysisTreeSchema.safeParse(body.tree);
+        if (!treeResult.success) {
+            return NextResponse.json({ error: "tree must contain at most 5000 valid path/type items (paths up to 4096 characters)" }, { status: 400 });
         }
-
-        if (typeof readme === "string" && readme.length > MAX_README_LEN) {
-            return NextResponse.json({ error: "readme exceeds maximum length" }, { status: 400 });
+        const tree = treeResult.data;
+        const requestedMode = body.mode === undefined ? "smart" : body.mode;
+        if (requestedMode !== "smart" && requestedMode !== "premium") {
+            return NextResponse.json({ error: "invalid analysis mode" }, { status: 400 });
         }
-
-        if (aiSettings) {
-            if (typeof aiSettings.provider !== "string" || !ALLOWED_PROVIDERS.has(aiSettings.provider)) {
-                return NextResponse.json({ error: "invalid AI provider" }, { status: 400 });
-            }
-            if (typeof aiSettings.apiKey !== "string" || aiSettings.apiKey.length > 300) {
-                return NextResponse.json({ error: "invalid apiKey" }, { status: 400 });
-            }
-            if (aiSettings.model !== undefined && (typeof aiSettings.model !== "string" || aiSettings.model.length > 100)) {
-                return NextResponse.json({ error: "invalid model" }, { status: 400 });
-            }
+        if (body.forceFallback !== undefined && typeof body.forceFallback !== "boolean") {
+            return NextResponse.json({ error: "invalid forceFallback flag" }, { status: 400 });
         }
-
-        // Check if AI is configured — via client settings, GEMINI key, or generic env var
-        const clientKey = aiSettings?.apiKey;
-        const geminiKey = process.env.GEMINI_API_KEY;
-        const geminiKeys = process.env.GEMINI_API_KEYS;
-        const envKey = process.env.AI_API_KEY;
-        const hasAI = !!(clientKey || geminiKey || geminiKeys || envKey);
 
         // Smart mode is deterministic and does not call external AI APIs.
         if (requestedMode === "smart") {
@@ -78,20 +54,53 @@ export async function POST(request: NextRequest) {
                 generatedAt: new Date().toISOString(),
                 mock: true,
                 source: "smart",
+                metadataSource: "deterministic",
                 mode: "smart",
             });
         }
 
-        if (forceFallback) {
+        if (body.forceFallback) {
             const result = getMockAnalysis(owner, repo, tree);
             return NextResponse.json({
                 ...result,
                 generatedAt: new Date().toISOString(),
                 mock: true,
                 source: "fallback",
+                metadataSource: "deterministic",
                 mode: "premium",
             });
         }
+
+        if (body.readme !== undefined && typeof body.readme !== "string") {
+            return NextResponse.json({ error: "readme must be a string" }, { status: 400 });
+        }
+        if (body.readmeTruncated !== undefined && typeof body.readmeTruncated !== "boolean") {
+            return NextResponse.json({ error: "invalid readmeTruncated flag" }, { status: 400 });
+        }
+        const fullReadme = (body.readme as string | undefined) ?? "";
+        const readme = fullReadme.slice(0, MAX_ANALYZE_README_CHARS);
+        const readmeTruncated = body.readmeTruncated === true || fullReadme.length > readme.length;
+        let aiSettings: { provider: string; apiKey: string; model?: string } | undefined;
+        if (body.aiSettings !== undefined) {
+            if (!body.aiSettings || typeof body.aiSettings !== "object" || Array.isArray(body.aiSettings)) {
+                return NextResponse.json({ error: "invalid AI settings" }, { status: 400 });
+            }
+            const settings = body.aiSettings as Record<string, unknown>;
+            if (typeof settings.provider !== "string" || !ALLOWED_PROVIDERS.has(settings.provider)) {
+                return NextResponse.json({ error: "invalid AI provider" }, { status: 400 });
+            }
+            if (typeof settings.apiKey !== "string" || !settings.apiKey.trim() || settings.apiKey.length > 300) {
+                return NextResponse.json({ error: "invalid apiKey" }, { status: 400 });
+            }
+            if (settings.model !== undefined && (typeof settings.model !== "string" || !settings.model.trim() || settings.model.length > 100)) {
+                return NextResponse.json({ error: "invalid model" }, { status: 400 });
+            }
+            aiSettings = { provider: settings.provider, apiKey: settings.apiKey.trim(), ...(typeof settings.model === "string" ? { model: settings.model.trim() } : {}) };
+        }
+
+        // Caller credentials never fall through to server-funded AI after validation failure.
+        const clientKey = aiSettings?.apiKey;
+        const hasAI = !!(clientKey || process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEYS || process.env.AI_API_KEY);
 
         if (requestedMode === "premium" && hasAI) {
             if (!clientKey) {
@@ -131,7 +140,7 @@ export async function POST(request: NextRequest) {
                                 `data: ${JSON.stringify({
                                     step: "ingest",
                                     status: "complete",
-                                    message: `Ingested ${tree.length} files`,
+                                    message: `Ingested ${tree.length} repository items${readmeTruncated ? "; using a README excerpt" : ""}`,
                                 })}\n\n`
                             )
                         );
@@ -161,10 +170,10 @@ export async function POST(request: NextRequest) {
                                 `data: ${JSON.stringify({
                                     step: "enrich",
                                     status: "complete",
-                                    message: result.source === "ai"
-                                        ? "Analysis complete"
+                                    message: result.source === "pending"
+                                        ? "AI diagram received; syntax validation pending"
                                         : `AI fallback: ${result.fallbackReason ?? "AI unavailable, using fallback diagram"}`,
-                                    data: { ...result, mode: "premium" },
+                                    data: { ...result, mode: "premium", readmeTruncated },
                                 })}\n\n`
                             )
                         );
@@ -182,7 +191,7 @@ export async function POST(request: NextRequest) {
                                         step: "enrich",
                                         status: "complete",
                                         message: "AI analysis failed, using fallback diagram",
-                                        data: fallback,
+                                        data: { ...fallback, source: "fallback", metadataSource: "deterministic", mode: "premium", readmeTruncated },
                                     })}\n\n`
                                 )
                             );
@@ -218,7 +227,9 @@ export async function POST(request: NextRequest) {
                 generatedAt: new Date().toISOString(),
                 mock: true,
                 source: "fallback",
+                metadataSource: "deterministic",
                 mode: "premium",
+                readmeTruncated,
                 reason: "No premium AI key configured; showing smart diagram",
             });
         }

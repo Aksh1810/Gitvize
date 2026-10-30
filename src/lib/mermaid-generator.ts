@@ -5,7 +5,7 @@
 // Robust character escaping, smart file selection for large repos, and
 // universal edge inference (not project-specific).
 
-import { TreeItem, ArchitectureAnalysis } from "@/types";
+import type { AnalysisTreeItem as TreeItem, ArchitectureAnalysis } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Safe string helpers                                                */

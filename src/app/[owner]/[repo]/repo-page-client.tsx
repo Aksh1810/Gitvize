@@ -23,6 +23,7 @@ import BrandLogo from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { getCachedDiagram, cacheDiagram, hashToken } from "@/lib/diagram-cache";
+import { buildAnalysisRequest, resolveAnalysisResponse } from "@/lib/analysis-client";
 import type {
     DiagramTab,
     RepoMetadata,
@@ -36,6 +37,7 @@ import type {
     FileAnnotation,
     PipelineStep,
     PipelineStatus as PipelineStatusType,
+    RepositoryAnalysisResult,
 } from "@/types";
 
 interface RepoPageClientProps {
@@ -279,18 +281,15 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 } catch { /* ignore */ }
             }
 
+            const payload = buildAnalysisRequest({ mode, owner, repo, tree: treeToSend, readme: repoData.readme, aiSettings });
+            const payloadMessage = `${payload.sampled ? `Analyzing ${payload.selectedCount} of ${treeToSend.length} selected repository items` : ingestMsg}${payload.readmeTruncated ? "; using a README excerpt" : ""}`;
+            setPipelineSteps((prev) => prev.map((step) => step.step === "ingest" ? { ...step, message: payloadMessage } : step));
+
             analyzeTimeoutId = setTimeout(() => analyzeAbort.abort(), 25_000);
             const res = await fetch("/api/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    mode,
-                    owner,
-                    repo,
-                    tree: treeToSend,
-                    readme: repoData.readme,
-                    aiSettings,
-                }),
+                body: payload.body,
                 signal: analyzeAbort.signal,
             });
             clearTimeout(analyzeTimeoutId);
@@ -311,19 +310,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             }
 
             const contentType = res.headers.get("content-type");
+            let analysisResult: RepositoryAnalysisResult | null = null;
 
             if (contentType?.includes("text/event-stream")) {
                 // Handle SSE streaming (premium AI mode)
                 const reader = res.body?.getReader();
                 const decoder = new TextDecoder();
-                let analysisResult: {
-                    architecture: ArchitectureAnalysis;
-                    annotations: FileAnnotation[];
-                    source?: "ai" | "fallback";
-                    fallbackReason?: string;
-                    mode?: "smart" | "premium";
-                } | null = null;
-
                 if (reader) {
                     let buffer = "";
                     while (true) {
@@ -336,56 +328,23 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                         for (const line of lines) {
                             if (line.startsWith("data: ")) {
+                                let event;
                                 try {
-                                    const event = JSON.parse(line.substring(6));
-                                    setPipelineSteps((prev) =>
-                                        prev.map((s) =>
-                                            s.step === event.step ? { ...s, ...event } : s
-                                        )
-                                    );
-
-                                    if (event.data) {
-                                        analysisResult = event.data;
-                                        setAnalysis({
-                                            ...event.data,
-                                            source: event.data.source ?? "ai"
-                                        });
-                                    }
+                                    event = JSON.parse(line.substring(6));
                                 } catch {
                                     // Skip malformed events
+                                    continue;
                                 }
+                                if (!event || typeof event !== "object") continue;
+                                if (event.data) analysisResult = await resolveAnalysisResponse(event.data);
+                                setPipelineSteps((prev) =>
+                                    prev.map((s) => s.step === event.step ? { ...s, ...event } : s)
+                                );
                             }
                         }
                     }
                 }
 
-                // Cache result for failure recovery and notify source.
-                if (analysisResult) {
-                    const source = analysisResult.source ?? "ai";
-                    if (source === "ai") {
-                        cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "ai", cacheOpts);
-                        toast.success("Premium AI diagram generated", {
-                            id: toastId,
-                            description: "Generated a fresh diagram for this repository",
-                        });
-                    } else {
-                        if (cached) {
-                            setAnalysis({ architecture: cached.architecture, annotations: cached.annotations, source: cached.source });
-                            toast.warning("Premium AI unavailable", {
-                                id: toastId,
-                                description: "Showing cached diagram",
-                            });
-                        } else {
-                            cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, "fallback", cacheOpts);
-                            toast.warning("Premium AI unavailable", {
-                                id: toastId,
-                                description: analysisResult.fallbackReason
-                                    ? analysisResult.fallbackReason.slice(0, 180)
-                                    : "Showing smart diagram",
-                            });
-                        }
-                    }
-                }
             } else {
                 // Handle JSON response (smart mode or premium fallback mode).
                 // Always check res.ok before parsing — a 413 or other infra error
@@ -393,7 +352,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 if (!res.ok) {
                     const bodyText = await res.text().catch(() => "");
                     if (res.status === 413)
-                        throw new Error("Repository is too large for full analysis. Showing architecture based on top-level structure.");
+                        throw new Error("Analysis request exceeds the size limit. Try a smaller selection.");
                     if (res.status === 408 || res.status === 504)
                         throw new Error("Analysis timed out. Try a smaller repo or add a GitHub token for faster access.");
                     let serverError = "";
@@ -408,30 +367,34 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }
                 if (data.error) throw new Error(data.error as string);
 
-                const result = {
-                    architecture: data.architecture as ArchitectureAnalysis,
-                    annotations: data.annotations as FileAnnotation[],
-                    source: data.mode === "smart" ? ("smart" as const) : (data.mock ? ("fallback" as const) : ("ai" as const)),
-                };
+                analysisResult = await resolveAnalysisResponse(data);
+            }
 
-                setPipelineSteps([
-                    { step: "ingest", status: "complete", message: "Data ingested" },
-                    { step: "understand", status: "complete", message: data.mode === "smart" ? "Smart analysis complete" : "Analysis complete" },
-                    { step: "enrich", status: "complete", message: data.mode === "smart" ? "Smart diagram ready" : (data.mock ? "Fallback diagram (no AI)" : "Enrichment complete") },
-                ]);
-                setAnalysis(result);
+            if (!analysisResult || (mode === "smart" && analysisResult.source !== "smart")) {
+                throw new Error("Analysis did not return a valid result for this mode.");
+            }
+            const premiumFallback = mode === "premium" && analysisResult.source !== "ai";
+            setPipelineSteps([
+                { step: "ingest", status: "complete", message: payloadMessage },
+                { step: "understand", status: "complete", message: analysisResult.source === "ai" ? "AI diagram syntax validated" : "Smart diagram ready" },
+                { step: "enrich", status: "complete", message: analysisResult.metadataSource === "ai" ? "AI project details ready" : "Deterministic project details ready" },
+            ]);
 
-                if (data.mode === "smart") {
-                    // Keep smart-mode generation silent on first load to avoid noisy UI.
-                } else {
-                    cacheDiagram(owner, repo, result, data.mock ? "fallback" : "ai", cacheOpts);
-                    if (!data.mock) {
+            if (premiumFallback && cached) {
+                setAnalysis({ architecture: cached.architecture, annotations: cached.annotations, source: cached.source });
+                toast.warning("Premium AI unavailable", { id: toastId, description: "Showing cached diagram" });
+            } else {
+                setAnalysis(analysisResult);
+                if (mode === "premium") {
+                    const source = analysisResult.source === "ai" ? "ai" : "fallback";
+                    cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, source, cacheOpts);
+                    if (source === "ai") {
                         toast.success("Premium AI diagram generated", {
                             id: toastId,
-                            description: "Generated a fresh diagram for this repository",
+                            description: analysisResult.metadataSource === "ai" ? "Diagram syntax validated; AI project details ready" : "Diagram syntax validated; project details use Smart analysis",
                         });
-                    } else if (toastId) {
-                        toast.dismiss(toastId);
+                    } else {
+                        toast.warning("Premium AI unavailable", { id: toastId, description: analysisResult.fallbackReason ?? "Showing a Smart diagram" });
                     }
                 }
             }

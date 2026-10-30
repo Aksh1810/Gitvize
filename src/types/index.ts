@@ -30,6 +30,9 @@ export interface TreeItem {
   url: string;
 }
 
+/** Architecture generation needs structure, not GitHub URLs or blob metadata. */
+export type AnalysisTreeItem = Pick<TreeItem, "path" | "type">;
+
 export interface FileTreeResponse {
   sha: string;
   tree: TreeItem[];
@@ -143,6 +146,20 @@ export interface AnalysisResult {
   generatedAt: string;
   commitSha: string;
 }
+
+export interface RepositoryAnalysisResult {
+  architecture: ArchitectureAnalysis;
+  annotations: FileAnnotation[];
+  source: "smart" | "ai" | "fallback";
+  metadataSource: "ai" | "deterministic";
+  fallbackReason?: string;
+  readmeTruncated?: boolean;
+}
+
+/** Provider output is not verified AI output until the browser parser accepts it. */
+export type RepositoryAnalysisResponse = Omit<RepositoryAnalysisResult, "source"> & {
+  source: "smart" | "pending" | "fallback";
+};
 
 // --- Pipeline Types ---
 

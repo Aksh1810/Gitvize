@@ -7,7 +7,7 @@ export class ResponseTooLargeError extends Error {
 }
 
 /** Count actual bytes: Content-Length can be missing or dishonest. */
-export async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+export async function readBoundedText(response: Pick<Response, "headers" | "body">, maxBytes: number): Promise<string> {
     if (Number(response.headers.get("content-length")) > maxBytes) {
         await response.body?.cancel();
         throw new ResponseTooLargeError();

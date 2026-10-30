@@ -2,8 +2,10 @@
 // Gitvize — AI Service Layer (Configurable Provider)
 // ============================================================================
 
-import { ArchitectureAnalysis, FileAnnotation, TreeItem } from "@/types";
+import type { ArchitectureAnalysis, FileAnnotation, AnalysisTreeItem as TreeItem, RepositoryAnalysisResponse } from "@/types";
 import { generateMermaidFromTree } from "@/lib/mermaid-generator";
+import { analysisMetadataSchema, MAX_MERMAID_OUTPUT_BYTES } from "@/lib/analysis-contract";
+import { readBoundedText } from "@/lib/response-limits";
 
 // --- Provider Configuration ---
 
@@ -197,11 +199,12 @@ async function aiCompletionInner(
         );
 
         if (!res.ok) {
-            const body = await res.text().catch(() => "");
+            const body = await readBoundedText(res, 64 * 1024).catch(() => "");
             throw new Error(`Gemini API error ${res.status}: ${body}`);
         }
 
-        const data = await res.json();
+        const data = JSON.parse(await readBoundedText(res, 512 * 1024));
+        if (data.candidates?.[0]?.finishReason === "MAX_TOKENS") throw new Error("AI output was truncated");
         return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     }
 
@@ -223,11 +226,12 @@ async function aiCompletionInner(
         });
 
         if (!res.ok) {
-            const body = await res.text().catch(() => "");
+            const body = await readBoundedText(res, 64 * 1024).catch(() => "");
             throw new Error(`Anthropic API error ${res.status}: ${body}`);
         }
 
-        const data = await res.json();
+        const data = JSON.parse(await readBoundedText(res, 512 * 1024));
+        if (data.stop_reason === "max_tokens") throw new Error("AI output was truncated");
         return data.content[0].text;
     }
 
@@ -251,11 +255,12 @@ async function aiCompletionInner(
     });
 
     if (!res.ok) {
-        const body = await res.text().catch(() => "");
+        const body = await readBoundedText(res, 64 * 1024).catch(() => "");
         throw new Error(`OpenAI API error ${res.status}: ${body}`);
     }
 
-    const data = await res.json();
+    const data = JSON.parse(await readBoundedText(res, 512 * 1024));
+    if (data.choices?.[0]?.finish_reason === "length") throw new Error("AI output was truncated");
     return data.choices[0].message.content;
 }
 
@@ -416,14 +421,15 @@ export async function analyzeRepository(
     readme: string,
     onProgress?: (step: string, message: string) => void,
     aiConfig?: AIConfig
-): Promise<{ architecture: ArchitectureAnalysis; annotations: FileAnnotation[]; source: "ai" | "fallback"; fallbackReason?: string }> {
+): Promise<RepositoryAnalysisResponse> {
     try {
         // ── Step 1: Generate Mermaid diagram directly ──────────────────
-        // This is the critical path — outputs raw Mermaid code, not JSON.
-        // No JSON parsing === no truncation failures.
+        // Provider text remains pending until the browser's DOM-backed syntax check.
         onProgress?.("understand", "Generating AI architecture diagram...");
 
         let mermaidCode: string;
+        let source: "pending" | "fallback" = "pending";
+        let fallbackReason: string | undefined;
         try {
             const mermaidRaw = await aiCompletion(
                 MERMAID_DIRECT_SYSTEM_PROMPT,
@@ -431,16 +437,20 @@ export async function analyzeRepository(
                 false, // NOT json mode — plain text output
                 aiConfig
             );
+            if (typeof mermaidRaw !== "string" || Buffer.byteLength(mermaidRaw, "utf8") > MAX_MERMAID_OUTPUT_BYTES) {
+                throw new Error("AI diagram exceeds the output limit");
+            }
             mermaidCode = stripMermaidFences(mermaidRaw);
             mermaidCode = sanitizeMermaidCode(mermaidCode);
 
-            // Basic validation: must start with "flowchart"
-            if (!mermaidCode.toLowerCase().startsWith("flowchart")) {
-                console.warn("AI Mermaid output doesn't start with 'flowchart', falling back");
-                mermaidCode = generateMermaidFromTree(tree, owner, repo);
+            // The DOM-backed browser parser performs syntax validation before promotion.
+            if (!/^flowchart\b/i.test(mermaidCode) || Buffer.byteLength(mermaidCode, "utf8") > MAX_MERMAID_OUTPUT_BYTES) {
+                throw new Error("AI did not return a bounded flowchart");
             }
-        } catch (err) {
-            console.error("AI Mermaid generation failed, using fallback:", err);
+        } catch {
+            console.warn("AI diagram generation failed; using a Smart diagram.");
+            source = "fallback";
+            fallbackReason = "AI diagram generation failed; showing a Smart diagram.";
             mermaidCode = generateMermaidFromTree(tree, owner, repo);
         }
 
@@ -449,6 +459,7 @@ export async function analyzeRepository(
         onProgress?.("enrich", "Generating project metadata...");
 
         let architecture: ArchitectureAnalysis;
+        let metadataSource: "ai" | "deterministic" = "deterministic";
         try {
             const metadataRaw = await aiCompletion(
                 METADATA_SYSTEM_PROMPT,
@@ -457,26 +468,18 @@ export async function analyzeRepository(
                 aiConfig
             );
 
+            if (typeof metadataRaw !== "string") throw new Error("Invalid metadata response");
             const cleaned = cleanJsonString(metadataRaw);
-            const metadata = JSON.parse(cleaned);
+            const metadata = analysisMetadataSchema.parse(JSON.parse(cleaned));
 
             architecture = {
-                techStack: metadata.techStack ?? [],
-                architecturePattern: metadata.architecturePattern ?? "Unknown",
-                description: metadata.description ?? `${owner}/${repo}`,
-                modules: (metadata.modules ?? []).map((m: Record<string, unknown>) => ({
-                    name: m.name ?? "Unknown",
-                    type: m.type ?? "other",
-                    description: m.description ?? "",
-                    files: (m.files as string[]) ?? [],
-                    dependencies: (m.dependencies as string[]) ?? [],
-                })),
-                entryPoints: metadata.entryPoints ?? [],
+                ...metadata,
                 dataFlow: [],
                 mermaidDiagram: mermaidCode,
             };
-        } catch (err) {
-            console.warn("Metadata generation failed, using minimal metadata:", err);
+            metadataSource = "ai";
+        } catch {
+            console.warn("AI metadata generation failed; using deterministic metadata.");
             // Metadata failed but Mermaid succeeded — still a win, use mock metadata
             const mock = getMockAnalysis(owner, repo, tree);
             architecture = {
@@ -485,15 +488,16 @@ export async function analyzeRepository(
             };
         }
 
-        return { architecture, annotations: [], source: "ai" };
-    } catch (err) {
+        return { architecture, annotations: [], source, metadataSource, ...(fallbackReason ? { fallbackReason } : {}) };
+    } catch {
         // ALL AI failed — fall back to mock analysis entirely
-        console.error("AI pipeline failed entirely, using mock analysis:", err);
+        console.warn("AI pipeline failed; using a Smart diagram.");
         onProgress?.("enrich", "AI unavailable, generating fallback diagram...");
         return {
             ...getMockAnalysis(owner, repo, tree),
             source: "fallback",
-            fallbackReason: err instanceof Error ? err.message : String(err),
+            metadataSource: "deterministic",
+            fallbackReason: "AI analysis failed; showing a Smart diagram.",
         };
     }
 }
