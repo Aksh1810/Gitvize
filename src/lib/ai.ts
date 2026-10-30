@@ -6,6 +6,8 @@ import type { ArchitectureAnalysis, FileAnnotation, AnalysisTreeItem as TreeItem
 import { generateMermaidFromTree } from "@/lib/mermaid-generator";
 import { analysisMetadataSchema, MAX_MERMAID_OUTPUT_BYTES } from "@/lib/analysis-contract";
 import { readBoundedText } from "@/lib/response-limits";
+import { AIModelConfigurationError, getDefaultAIModel, getStageOutputTokens, type AnalysisStage } from "@/lib/ai-model-config";
+import { z } from "zod";
 
 // --- Provider Configuration ---
 
@@ -55,14 +57,14 @@ function getRoundRobinGeminiPool(basePool: string[]): string[] {
 }
 
 function getDefaultConfig(): AIConfig {
-    // Prefer dedicated Gemini key pool, then generic AI key.
+    // Explicit operator choices win; otherwise prefer the dedicated Gemini pool.
     const geminiKey = getGeminiKeyPool()[0];
     const genericKey = process.env.AI_API_KEY;
-    const provider = geminiKey ? "gemini" : (process.env.AI_PROVIDER ?? "openai");
+    const provider = process.env.AI_PROVIDER ?? (geminiKey ? "gemini" : "openai");
     return {
         provider,
-        apiKey: geminiKey || genericKey || "",
-        model: geminiKey ? "gemini-2.5-flash" : (process.env.AI_MODEL ?? "gpt-4o"),
+        apiKey: (provider === "gemini" ? geminiKey || genericKey : genericKey) || "",
+        model: process.env.AI_MODEL ?? getDefaultAIModel(provider),
         baseUrl:
             process.env.AI_BASE_URL ??
             (provider === "anthropic"
@@ -73,12 +75,39 @@ function getDefaultConfig(): AIConfig {
     };
 }
 
+class AIProviderError extends Error {
+    constructor(status: number, readonly fallbackReason: string) {
+        super(`AI provider error ${status}: ${fallbackReason}`);
+    }
+}
+
+function providerFailure(status: number, body: string): AIProviderError {
+    if (status === 404 || /model_not_found|model[^\n]{0,80}(?:not found|not available|does not exist|unsupported|retired|decommissioned)/i.test(body)) {
+        return new AIProviderError(status, "The selected AI model is unavailable. Check model access or choose another supported model.");
+    }
+    if (status === 401 || status === 403 || /API_KEY_INVALID|invalid_api_key/i.test(body)) {
+        return new AIProviderError(status, "Check your provider API key and model access in AI settings.");
+    }
+    if (status === 429 || /RESOURCE_EXHAUSTED/i.test(body)) {
+        return new AIProviderError(status, "The provider quota is exhausted. Check your AI account quota or try again later.");
+    }
+    return new AIProviderError(status, "The AI provider could not complete the request. Check AI settings or try again later.");
+}
+
+function safeFallbackReason(error: unknown, otherwise: string): string {
+    if (error instanceof AIModelConfigurationError) return error.message;
+    if (error instanceof AIProviderError) return error.fallbackReason;
+    return otherwise;
+}
+
+const metadataOutputSchema = z.toJSONSchema(analysisMetadataSchema);
+
 // --- Internal fetch helper ---
 
 async function aiCompletion(
     systemPrompt: string,
     userPrompt: string,
-    jsonMode: boolean = true,
+    stage: AnalysisStage,
     config?: AIConfig
 ): Promise<string> {
     const cfg = config ?? getDefaultConfig();
@@ -107,7 +136,7 @@ async function aiCompletion(
 
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
-                    return await aiCompletionInner(systemPrompt, userPrompt, jsonMode, {
+                    return await aiCompletionInner(systemPrompt, userPrompt, stage, {
                         ...cfg,
                         provider: "gemini",
                         apiKey: key,
@@ -141,7 +170,7 @@ async function aiCompletion(
     const maxRetries = 1;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            return await aiCompletionInner(systemPrompt, userPrompt, jsonMode, cfg);
+            return await aiCompletionInner(systemPrompt, userPrompt, stage, cfg);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             if (msg.includes("429") && attempt < maxRetries) {
@@ -159,7 +188,7 @@ async function aiCompletion(
 async function aiCompletionInner(
     systemPrompt: string,
     userPrompt: string,
-    jsonMode: boolean = true,
+    stage: AnalysisStage,
     config?: AIConfig
 ): Promise<string> {
     const cfg = config ?? getDefaultConfig();
@@ -169,6 +198,9 @@ async function aiCompletionInner(
             "AI API key is not configured. Please set it in Settings or via AI_API_KEY env variable."
         );
     }
+
+    const maxOutputTokens = getStageOutputTokens(cfg.provider, cfg.model, stage);
+    const jsonMode = stage === "metadata";
 
     const baseUrl = cfg.baseUrl ?? (
         cfg.provider === "anthropic"
@@ -181,17 +213,18 @@ async function aiCompletionInner(
     // --- Gemini provider ---
     if (cfg.provider === "gemini") {
         const res = await fetch(
-            `${baseUrl}/models/${cfg.model}:generateContent?key=${cfg.apiKey}`,
+            `${baseUrl}/models/${cfg.model}:generateContent`,
             {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.apiKey },
                 body: JSON.stringify({
                     contents: [
                         { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] },
                     ],
                     generationConfig: {
                         temperature: 0.3,
-                        maxOutputTokens: 65536,
+                        maxOutputTokens,
+                        thinkingConfig: { thinkingBudget: 0 },
                         ...(jsonMode ? { responseMimeType: "application/json" } : {}),
                     },
                 }),
@@ -200,7 +233,7 @@ async function aiCompletionInner(
 
         if (!res.ok) {
             const body = await readBoundedText(res, 64 * 1024).catch(() => "");
-            throw new Error(`Gemini API error ${res.status}: ${body}`);
+            throw providerFailure(res.status, body);
         }
 
         const data = JSON.parse(await readBoundedText(res, 512 * 1024));
@@ -219,7 +252,9 @@ async function aiCompletionInner(
             },
             body: JSON.stringify({
                 model: cfg.model,
-                max_tokens: 65536,
+                max_tokens: maxOutputTokens,
+                thinking: { type: "disabled" },
+                ...(jsonMode ? { output_config: { format: { type: "json_schema", schema: metadataOutputSchema } } } : {}),
                 system: systemPrompt,
                 messages: [{ role: "user", content: userPrompt }],
             }),
@@ -227,7 +262,7 @@ async function aiCompletionInner(
 
         if (!res.ok) {
             const body = await readBoundedText(res, 64 * 1024).catch(() => "");
-            throw new Error(`Anthropic API error ${res.status}: ${body}`);
+            throw providerFailure(res.status, body);
         }
 
         const data = JSON.parse(await readBoundedText(res, 512 * 1024));
@@ -249,14 +284,14 @@ async function aiCompletionInner(
                 { role: "user", content: userPrompt },
             ],
             temperature: 0.3,
-            max_tokens: 65536,
+            max_tokens: maxOutputTokens,
             ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
         }),
     });
 
     if (!res.ok) {
         const body = await readBoundedText(res, 64 * 1024).catch(() => "");
-        throw new Error(`OpenAI API error ${res.status}: ${body}`);
+        throw providerFailure(res.status, body);
     }
 
     const data = JSON.parse(await readBoundedText(res, 512 * 1024));
@@ -423,6 +458,8 @@ export async function analyzeRepository(
     aiConfig?: AIConfig
 ): Promise<RepositoryAnalysisResponse> {
     try {
+        const selectedConfig = aiConfig ?? getDefaultConfig();
+        getStageOutputTokens(selectedConfig.provider, selectedConfig.model, "diagram");
         // ── Step 1: Generate Mermaid diagram directly ──────────────────
         // Provider text remains pending until the browser's DOM-backed syntax check.
         onProgress?.("understand", "Generating AI architecture diagram...");
@@ -434,7 +471,7 @@ export async function analyzeRepository(
             const mermaidRaw = await aiCompletion(
                 MERMAID_DIRECT_SYSTEM_PROMPT,
                 buildMermaidDirectPrompt(owner, repo, tree, readme),
-                false, // NOT json mode — plain text output
+                "diagram",
                 aiConfig
             );
             if (typeof mermaidRaw !== "string" || Buffer.byteLength(mermaidRaw, "utf8") > MAX_MERMAID_OUTPUT_BYTES) {
@@ -447,10 +484,10 @@ export async function analyzeRepository(
             if (!/^flowchart\b/i.test(mermaidCode) || Buffer.byteLength(mermaidCode, "utf8") > MAX_MERMAID_OUTPUT_BYTES) {
                 throw new Error("AI did not return a bounded flowchart");
             }
-        } catch {
+        } catch (error) {
             console.warn("AI diagram generation failed; using a Smart diagram.");
             source = "fallback";
-            fallbackReason = "AI diagram generation failed; showing a Smart diagram.";
+            fallbackReason = safeFallbackReason(error, "AI diagram generation failed; showing a Smart diagram.");
             mermaidCode = generateMermaidFromTree(tree, owner, repo);
         }
 
@@ -464,7 +501,7 @@ export async function analyzeRepository(
             const metadataRaw = await aiCompletion(
                 METADATA_SYSTEM_PROMPT,
                 buildMetadataPrompt(owner, repo, tree, readme),
-                true, // json mode
+                "metadata",
                 aiConfig
             );
 
@@ -489,7 +526,7 @@ export async function analyzeRepository(
         }
 
         return { architecture, annotations: [], source, metadataSource, ...(fallbackReason ? { fallbackReason } : {}) };
-    } catch {
+    } catch (error) {
         // ALL AI failed — fall back to mock analysis entirely
         console.warn("AI pipeline failed; using a Smart diagram.");
         onProgress?.("enrich", "AI unavailable, generating fallback diagram...");
@@ -497,7 +534,7 @@ export async function analyzeRepository(
             ...getMockAnalysis(owner, repo, tree),
             source: "fallback",
             metadataSource: "deterministic",
-            fallbackReason: "AI analysis failed; showing a Smart diagram.",
+            fallbackReason: safeFallbackReason(error, "AI analysis failed; showing a Smart diagram."),
         };
     }
 }

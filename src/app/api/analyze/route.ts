@@ -5,10 +5,10 @@ import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/
 import type { AIConfig } from "@/lib/ai";
 import { analysisTreeSchema, MAX_ANALYZE_README_CHARS, MAX_ANALYZE_REQUEST_BYTES } from "@/lib/analysis-contract";
 import { readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
+import { getDefaultAIModel, isAIProvider } from "@/lib/ai-model-config";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
-const ALLOWED_PROVIDERS = new Set(["gemini", "anthropic", "openai"]);
 
 export async function POST(request: NextRequest) {
     const ip = getClientIp(request);
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: "invalid AI settings" }, { status: 400 });
             }
             const settings = body.aiSettings as Record<string, unknown>;
-            if (typeof settings.provider !== "string" || !ALLOWED_PROVIDERS.has(settings.provider)) {
+            if (!isAIProvider(settings.provider)) {
                 return NextResponse.json({ error: "invalid AI provider" }, { status: 400 });
             }
             if (typeof settings.apiKey !== "string" || !settings.apiKey.trim() || settings.apiKey.length > 300) {
@@ -119,11 +119,7 @@ export async function POST(request: NextRequest) {
                 ? {
                     provider: aiSettings!.provider,
                     apiKey: clientKey,
-                    model: aiSettings!.model ?? (aiSettings!.provider === "gemini"
-                        ? "gemini-2.5-flash"
-                        : aiSettings!.provider === "anthropic"
-                            ? "claude-3-5-sonnet-20241022"
-                            : "gpt-4o-mini"),
+                    model: aiSettings!.model ?? getDefaultAIModel(aiSettings!.provider),
                 }
                 : undefined; // will use env var defaults
 

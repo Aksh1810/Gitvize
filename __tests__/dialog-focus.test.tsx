@@ -41,7 +41,7 @@ describe("AI settings presentation preserves session and inference behavior", ()
 
     it.each([
         ["AIza-ui-fixture-only-not-a-real-key", "gemini", "gemini-2.5-flash"],
-        ["sk-ant-ui-fixture-only-not-a-real-key", "anthropic", "claude-3-5-sonnet-20241022"],
+        ["sk-ant-ui-fixture-only-not-a-real-key", "anthropic", "claude-sonnet-4-6"],
         ["sk-ui-fixture-only-not-a-real-key", "openai", "gpt-4o-mini"],
     ])("saves inferred %s settings for this tab and clears them on request", async (apiKey, provider, model) => {
         const onSave = jest.fn();

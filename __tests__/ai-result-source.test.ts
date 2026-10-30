@@ -60,7 +60,9 @@ it.each(["gemini", "anthropic"])("does not promote truncated %s output", async p
         ? Response.json({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: diagram }] } }] })
         : Response.json({ stop_reason: "max_tokens", content: [{ type: "text", text: diagram }] });
     global.fetch = jest.fn().mockResolvedValueOnce(truncated).mockResolvedValueOnce(new Response("Unavailable", { status: 503 }));
-    expect(await analyzeRepository("example", "repo", tree, "", undefined, { ...config, provider })).toMatchObject({ source: "fallback", metadataSource: "deterministic" });
+    const model = provider === "gemini" ? "gemini-2.5-flash" : "claude-sonnet-4-6";
+    expect(await analyzeRepository("example", "repo", tree, "", undefined, { ...config, provider, model })).toMatchObject({ source: "fallback", metadataSource: "deterministic" });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
 });
 
 it("keeps caller-funded failures on the caller key even when operator keys are configured", async () => {
