@@ -74,3 +74,53 @@ it("rejects a batch exceeding the serialized byte budget without fetching remain
     expect(response.status).toBe(413);
     expect(fetchFileContent).toHaveBeenCalledTimes(4);
 });
+
+it("rejects already-aborted batching before any request", async () => {
+    const controller = new AbortController(); controller.abort();
+    await expect(fetchSourceFiles("example", "repo", ["a.py"], {}, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(global.fetch).not.toHaveBeenCalled();
+});
+
+it.each(["headers", "body"])("rejects cancellation during %s even if fetch ignores abort, without submitting later batches", async stage => {
+    const controller = new AbortController();
+    const paths = Array.from({ length: 120 }, (_, i) => `${i}.py`);
+    global.fetch = jest.fn(async () => {
+        if (stage === "headers") controller.abort();
+        return { ok: true, json: async () => { if (stage === "body") controller.abort(); return { files: [{ path: "0.py", content: "partial" }] }; } };
+    }) as unknown as typeof fetch;
+    await expect(fetchSourceFiles("example", "repo", paths, {}, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(global.fetch).mock.calls[0][1]?.signal).toBe(controller.signal);
+});
+
+it("does not swallow an AbortError as successful empty data", async () => {
+    global.fetch = jest.fn().mockRejectedValue(new DOMException("Cancelled", "AbortError"));
+    await expect(fetchSourceFiles("example", "repo", ["a.py", "b.py"], {})).rejects.toMatchObject({ name: "AbortError" });
+});
+
+it("deduplicates submitted paths before splitting client batches", async () => {
+    const paths = Array.from({ length: 50 }, (_, i) => `${i}.py`);
+    const files = await fetchSourceFiles("example", "repo", [...paths, ...paths], {});
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(files.map(file => file.path)).toEqual(paths);
+});
+
+it("keeps earlier and later successful batches around an ordinary middle failure", async () => {
+    const paths = Array.from({ length: 120 }, (_, i) => `${i}.py`);
+    const routeFetch = global.fetch;
+    global.fetch = jest.fn().mockImplementationOnce(routeFetch).mockRejectedValueOnce(new Error("Temporary ordinary failure")).mockImplementation(routeFetch);
+    const files = await fetchSourceFiles("example", "repo", paths, {});
+    expect(files.map(file => file.path)).toEqual([...paths.slice(0, 50), ...paths.slice(100)]);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+});
+
+it("rejects cancellation during a second batch rather than returning its earlier partial data", async () => {
+    const controller = new AbortController(); let calls = 0;
+    const paths = Array.from({ length: 120 }, (_, i) => `${i}.py`);
+    global.fetch = jest.fn(async () => ({ ok: true, json: async () => {
+        if (++calls === 2) controller.abort();
+        return { files: [{ path: `${calls}.py`, content: "source" }] };
+    } })) as unknown as typeof fetch;
+    await expect(fetchSourceFiles("example", "repo", paths, {}, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+});

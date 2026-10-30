@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     GitBranch,
@@ -136,96 +136,143 @@ export default function BranchGraph({
     const [branchQuery, setBranchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"newest" | "oldest" | "author">("newest");
 
-    const [selectedBranch, setSelectedBranch] = useState<string>(defaultBranch);
-    const [branchCommits, setBranchCommits] = useState<Commit[]>([]);
-    const [isBranchLoading, setIsBranchLoading] = useState(false);
+    const [selection, setSelection] = useState({ branch: defaultBranch, defaultBranch, attempt: 0 });
+    const selectedBranch = selection.defaultBranch === defaultBranch ? selection.branch : defaultBranch;
+    const branchHead = branches.find(branch => branch.name === selectedBranch)?.sha;
+    const defaultHead = branches.find(branch => branch.name === defaultBranch)?.sha;
+    const historyContext = useMemo(() => ({ owner, repo, headers: githubHeaders, defaultBranch, head: defaultHead, commits: initialCommits }), [owner, repo, githubHeaders, defaultBranch, defaultHead, initialCommits]);
+    const baseHistory = useMemo(() => ({ context: historyContext, commits: historyContext.commits, page: historyContext.commits.length >= 500 ? 5 : 1, hasMore: historyContext.commits.length >= 500 }), [historyContext]);
+    const [history, setHistory] = useState(baseHistory);
+    const currentHistory = history.context === historyContext ? history : baseHistory;
+    const allCommits = currentHistory.commits;
+    const currentPage = currentHistory.page;
+    const hasMore = currentHistory.hasMore;
+    const requestScope = useMemo(() => ({ identity: [historyContext, selectedBranch, branchHead, selection.attempt], active: false, controllers: new Set<AbortController>(), paginationPending: false }), [historyContext, selectedBranch, branchHead, selection.attempt]);
+    const branchRequestId = useRef(0);
+    const paginationRequestId = useRef(0);
+    const [branchResult, setBranchResult] = useState<{ scope: typeof requestScope; commits: Commit[]; loading: boolean; error: string | null } | null>(null);
+    const [pagination, setPagination] = useState<{ scope: typeof requestScope; more: boolean; all: boolean } | null>(null);
+    const branchCommits = useMemo(() => branchResult?.scope === requestScope ? branchResult.commits : [], [branchResult, requestScope]);
+    const isBranchLoading = selectedBranch !== defaultBranch && (branchResult?.scope !== requestScope || branchResult.loading);
+    const branchError = branchResult?.scope === requestScope ? branchResult.error : null;
+    const isLoadingMore = pagination?.scope === requestScope && pagination.more;
+    const isLoadingAll = pagination?.scope === requestScope && pagination.all;
 
-    // Pagination state
-    const [allCommits, setAllCommits] = useState<Commit[]>(initialCommits);
-    // We fetch up to 500 commits (5 pages) server-side; start pagination from page 5
-    const [currentPage, setCurrentPage] = useState(initialCommits.length >= 500 ? 5 : 1);
-    const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [hasMore, setHasMore] = useState(initialCommits.length >= 500);
-    const [isLoadingAll, setIsLoadingAll] = useState(false);
+    // A selection owns this set, never a mutable ref belonging to a later selection.
+    useEffect(() => {
+        requestScope.active = true;
+        requestScope.paginationPending = false;
+        const controllers = requestScope.controllers;
+        setSelectedCommit(null);
+        setPagination({ scope: requestScope, more: false, all: false });
+        const cleanup = () => {
+            requestScope.active = false;
+            for (const controller of controllers) controller.abort();
+            controllers.clear();
+        };
+        if (selectedBranch === defaultBranch) return cleanup;
+        const controller = new AbortController();
+        controllers.add(controller);
+        const requestId = ++branchRequestId.current;
+        const ownsRequest = () => requestScope.active && !controller.signal.aborted && branchRequestId.current === requestId;
+        const update = (value: { commits: Commit[]; loading: boolean; error: string | null }) => {
+            if (ownsRequest()) setBranchResult(previous => ownsRequest() ? { scope: requestScope, ...value } : previous);
+        };
+        update({ commits: [], loading: true, error: null });
+        void (async () => {
+            try {
+                const params = new URLSearchParams({ owner, repo, sha: selectedBranch, per_page: "100", page: "1" });
+                const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
+                if (!ownsRequest()) return;
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const commits: Commit[] = await res.json();
+                update({ commits, loading: false, error: null });
+            } catch {
+                update({ commits: [], loading: false, error: "Could not load this branch's commits. Select the branch again to retry." });
+            } finally {
+                controllers.delete(controller);
+            }
+        })();
+        return cleanup;
+    }, [requestScope, selectedBranch, defaultBranch, owner, repo, githubHeaders]);
+
+    const fetchBranchCommits = useCallback((branch: string) => {
+        setSelection(previous => ({ branch, defaultBranch, attempt: previous.attempt + 1 }));
+    }, [defaultBranch]);
 
     const loadMoreCommits = useCallback(async () => {
-        setIsLoadingMore(true);
+        if (!requestScope.active || requestScope.paginationPending) return;
+        const controller = new AbortController();
+        requestScope.controllers.add(controller);
+        requestScope.paginationPending = true;
+        const requestId = ++paginationRequestId.current;
+        const ownsRequest = () => requestScope.active && !controller.signal.aborted && paginationRequestId.current === requestId;
+        setPagination({ scope: requestScope, more: true, all: false });
         try {
             const nextPage = currentPage + 1;
             const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(nextPage) });
-            const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders });
+            const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
+            if (!ownsRequest()) return;
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const newCommits: Commit[] = await res.json();
-
-            setAllCommits((prev) => [...prev, ...newCommits]);
-            setCurrentPage(nextPage);
-            if (newCommits.length < 100) setHasMore(false);
-        } catch (err) {
-            console.error("Failed to load more commits:", err);
-            setHasMore(false);
+            if (!ownsRequest()) return;
+            setHistory(previous => {
+                if (!ownsRequest()) return previous;
+                const current = previous.context === historyContext ? previous : baseHistory;
+                return { ...current, commits: [...current.commits, ...newCommits], page: nextPage, hasMore: newCommits.length < 100 ? false : current.hasMore };
+            });
+        } catch {
+            if (!ownsRequest()) return;
+            console.error("Failed to load more commits");
+            setHistory(previous => ownsRequest() ? { ...(previous.context === historyContext ? previous : baseHistory), hasMore: false } : previous);
         } finally {
-            setIsLoadingMore(false);
+            requestScope.controllers.delete(controller);
+            if (ownsRequest()) {
+                requestScope.paginationPending = false;
+                setPagination(previous => ownsRequest() ? { scope: requestScope, more: false, all: false } : previous);
+            }
         }
-    }, [currentPage, defaultBranch, owner, repo, githubHeaders]);
+    }, [currentPage, defaultBranch, owner, repo, githubHeaders, requestScope, historyContext, baseHistory]);
 
     const loadAllCommits = useCallback(async () => {
-        setIsLoadingAll(true);
-        setIsLoadingMore(true);
+        if (!requestScope.active || requestScope.paginationPending) return;
+        const controller = new AbortController();
+        requestScope.controllers.add(controller);
+        requestScope.paginationPending = true;
+        const requestId = ++paginationRequestId.current;
+        const ownsRequest = () => requestScope.active && !controller.signal.aborted && paginationRequestId.current === requestId;
+        setPagination({ scope: requestScope, more: true, all: true });
         let page = currentPage + 1;
         let keepGoing = true;
-
         try {
-            while (keepGoing) {
+            while (keepGoing && ownsRequest()) {
                 const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(page) });
-                const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders });
-                if (!res.ok) {
-                    keepGoing = false;
-                    break;
-                }
+                const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
+                if (!ownsRequest()) return;
+                if (!res.ok) break;
                 const newCommits: Commit[] = await res.json();
-
-                if (newCommits.length === 0) {
-                    keepGoing = false;
-                    break;
-                }
-
-                setAllCommits((prev) => [...prev, ...newCommits]);
-                setCurrentPage(page);
-
-                if (newCommits.length < 100) {
-                    keepGoing = false;
-                }
+                if (!ownsRequest()) return;
+                if (newCommits.length === 0) break;
+                const receivedPage = page;
+                setHistory(previous => {
+                    if (!ownsRequest()) return previous;
+                    const current = previous.context === historyContext ? previous : baseHistory;
+                    return { ...current, commits: [...current.commits, ...newCommits], page: receivedPage };
+                });
+                if (newCommits.length < 100) keepGoing = false;
                 page++;
             }
-        } catch (err) {
-            console.error("Failed to load all commits:", err);
+        } catch {
+            if (ownsRequest()) console.error("Failed to load all commits");
         } finally {
-            setHasMore(false);
-            setIsLoadingMore(false);
-            setIsLoadingAll(false);
+            requestScope.controllers.delete(controller);
+            if (ownsRequest()) {
+                requestScope.paginationPending = false;
+                setHistory(previous => ownsRequest() ? { ...(previous.context === historyContext ? previous : baseHistory), hasMore: false } : previous);
+                setPagination(previous => ownsRequest() ? { scope: requestScope, more: false, all: false } : previous);
+            }
         }
-    }, [currentPage, defaultBranch, owner, repo, githubHeaders]);
-
-    const fetchBranchCommits = useCallback(async (branch: string) => {
-        setSelectedBranch(branch);
-        if (branch === defaultBranch) {
-            setBranchCommits([]);
-            return;
-        }
-        setIsBranchLoading(true);
-        try {
-            const params = new URLSearchParams({ owner, repo, sha: branch, per_page: "100", page: "1" });
-            const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const commits: Commit[] = await res.json();
-            setBranchCommits(commits);
-        } catch (err) {
-            console.error("Failed to fetch branch commits:", err);
-            setBranchCommits([]);
-        } finally {
-            setIsBranchLoading(false);
-        }
-    }, [defaultBranch, owner, repo, githubHeaders]);
+    }, [currentPage, defaultBranch, owner, repo, githubHeaders, requestScope, historyContext, baseHistory]);
 
     const filteredCommits = useMemo(() => {
         let result = [...(selectedBranch === defaultBranch ? allCommits : branchCommits)];
@@ -406,7 +453,9 @@ export default function BranchGraph({
                             <div className="relative">
                                 <div className="absolute left-[19px] top-0 bottom-0 w-px bg-border/40" />
 
-                                {isBranchLoading ? (
+                                {branchError ? (
+                                    <p role="alert" className="text-center py-12 text-sm text-muted-foreground">{branchError}</p>
+                                ) : isBranchLoading ? (
                                     <div className="flex items-center justify-center py-16 gap-2 text-sm text-muted-foreground">
                                         <Loader2 className="w-4 h-4 animate-spin" />
                                         Loading commits for {selectedBranch}…
@@ -514,7 +563,7 @@ export default function BranchGraph({
                                 )}
 
                                 {/* End marker */}
-                                {!isBranchLoading && !searchQuery && displayCommits.length > 0 && (selectedBranch !== defaultBranch || !hasMore) && (
+                                {!branchError && !isBranchLoading && !searchQuery && displayCommits.length > 0 && (selectedBranch !== defaultBranch || !hasMore) && (
                                     <div className="flex items-center gap-3 ml-1 pt-4 pb-2">
                                         <div className="w-[10px] h-[10px] rounded-full bg-muted-foreground/20 border-2 border-background z-10" />
                                         <span className="text-xs text-muted-foreground">

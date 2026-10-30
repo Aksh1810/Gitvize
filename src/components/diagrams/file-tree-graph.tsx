@@ -393,7 +393,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     const githubHeaders = useMemo((): Record<string, string> => githubToken ? { "x-github-token": githubToken } : {}, [githubToken]);
     const { resolvedTheme } = useTheme();
     const containerRef = useRef<HTMLDivElement>(null);
-    const symbolCacheRef = useRef(new Map<string, string>());
+    const sourceCache = useMemo(() => ({ owner, repo, headers: githubHeaders, tree, files: new Map<string, string>() }), [owner, repo, githubHeaders, tree]);
     const symbolWorkerRef = useRef<Worker | null>(null);
     const importWorkerRef = useRef<Worker | null>(null);
     const codePanelRef = useRef<HTMLDivElement>(null);
@@ -405,9 +405,8 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     const [searchQuery, setSearchQuery] = useState("");
     const [searchOpen, setSearchOpen] = useState(false);
     const searchResults = useMemo(() => searchFiles(searchQuery.trim(), tree, 8), [searchQuery, tree]);
-    const [fileContent, setFileContent] = useState<string | null>(null);
-    const [fileLoading, setFileLoading] = useState(false);
-    const [fileError, setFileError] = useState<string | null>(null);
+    const fileRequestId = useRef(0);
+    const [filePreview, setFilePreview] = useState<{ context: object; content: string | null; loading: boolean; error: string | null } | null>(null);
     const [symbolFocus, setSymbolFocus] = useState<string | null>(null);
     const [focusLine, setFocusLine] = useState<number | null>(null);
     const [activeLine, setActiveLine] = useState(1);
@@ -438,6 +437,11 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     const [symbolDiagnostics, setSymbolDiagnostics] = useState<SymbolDiagnostics>(EMPTY_SYMBOL_DIAGNOSTICS);
     const [showExplorer, setShowExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
+    const selectedRevision = useMemo(() => tree.find(item => item.path === selectedFile?.path)?.sha, [tree, selectedFile?.path]);
+    const previewContext = useMemo(() => ({ owner, repo, headers: githubHeaders, file: selectedFile, revision: selectedRevision, open: showExplorerInspector }), [owner, repo, githubHeaders, selectedFile, selectedRevision, showExplorerInspector]);
+    const fileContent = filePreview?.context === previewContext ? filePreview.content : null;
+    const fileError = filePreview?.context === previewContext ? filePreview.error : null;
+    const fileLoading = Boolean(selectedFile && selectedFile.type !== "folder" && showExplorerInspector && (filePreview?.context !== previewContext || filePreview.loading));
     const [explorerWidth, setExplorerWidth] = useState(260);
     const [explorerViewportHeight, setExplorerViewportHeight] = useState(0);
     const [showRightFilters, setShowRightFilters] = useState(false);
@@ -776,52 +780,48 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
     const MAX_FILE_SIZE = 500_000; // 500KB limit for preview
 
-    const fetchFileContent = useCallback(async (file: FileNodeData) => {
-        setFileLoading(true);
-        setFileContent(null);
-        setFileError(null);
-
-        const ext = file.extension?.toLowerCase() ?? '';
-        if (BINARY_EXTENSIONS.has(ext)) {
-            setFileError(`Binary file (.${ext}) — preview not available`);
-            setFileLoading(false);
-            return;
-        }
-
-        if (file.size && file.size > MAX_FILE_SIZE) {
-            setFileError(`File too large (${formatBytes(file.size)}) — preview not available`);
-            setFileLoading(false);
-            return;
-        }
-
-        try {
-            const params = new URLSearchParams({ owner, repo, path: file.path });
-            const res = await fetch(`/api/github/repo/file?${params}`, { headers: githubHeaders });
-            if (!res.ok) {
-                const body = await res.json().catch(() => null);
-                setFileError(typeof body?.error === "string" && body.error.trim()
-                    ? body.error
-                    : `Could not load file (HTTP ${res.status}). Please try again.`);
-                return;
-            }
-            const text = await res.text();
-            setFileContent(text);
-        } catch {
-            setFileError("Could not reach the file service. Check your connection and try again.");
-        } finally {
-            setFileLoading(false);
-        }
-    }, [owner, repo, githubHeaders]);
-
-    // Fetch file content when a file is selected
+    // Each selection owns its controller; cleanup never reads a newer request's ref.
     useEffect(() => {
-        if (selectedFile && selectedFile.type !== 'folder') {
-            fetchFileContent(selectedFile);
-        } else {
-            setFileContent(null);
-            setFileError(null);
+        const requestId = ++fileRequestId.current;
+        const controller = new AbortController();
+        const ownsRequest = () => !controller.signal.aborted && requestId === fileRequestId.current;
+        const { file, owner, repo, headers, open } = previewContext;
+        const update = (value: { content: string | null; loading: boolean; error: string | null }) => {
+            if (ownsRequest()) setFilePreview(previous => ownsRequest() ? { context: previewContext, ...value } : previous);
+        };
+        if (!file || file.type === "folder" || !open) {
+            update({ content: null, loading: false, error: null });
+            return () => controller.abort();
         }
-    }, [selectedFile, fetchFileContent]);
+        update({ content: null, loading: true, error: null });
+        const ext = file.extension?.toLowerCase() ?? "";
+        if (BINARY_EXTENSIONS.has(ext)) {
+            update({ content: null, loading: false, error: `Binary file (.${ext}) — preview not available` });
+            return () => controller.abort();
+        }
+        if (file.size && file.size > MAX_FILE_SIZE) {
+            update({ content: null, loading: false, error: `File too large (${formatBytes(file.size)}) — preview not available` });
+            return () => controller.abort();
+        }
+        void (async () => {
+            try {
+                const params = new URLSearchParams({ owner, repo, path: file.path });
+                const res = await fetch(`/api/github/repo/file?${params}`, { headers, signal: controller.signal });
+                if (!ownsRequest()) return;
+                if (!res.ok) {
+                    const body = await res.json().catch(() => null);
+                    update({ content: null, loading: false, error: typeof body?.error === "string" && body.error.trim()
+                        ? body.error : `Could not load file (HTTP ${res.status}). Please try again.` });
+                    return;
+                }
+                const text = await res.text();
+                update({ content: text, loading: false, error: null });
+            } catch {
+                update({ content: null, loading: false, error: "Could not reach the file service. Check your connection and try again." });
+            }
+        })();
+        return () => controller.abort();
+    }, [previewContext]);
 
     const highlightedLines = useMemo<CodeLineRow[]>(() => {
         if (!fileContent) return [];
@@ -894,6 +894,8 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
     useEffect(() => {
         let cancelled = false;
+        const controller = new AbortController();
+        let ownedWorker: Worker | null = null;
         let idleId = 0;
 
         const rIC: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number =
@@ -951,7 +953,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             const uncachedPaths: string[] = [];
             for (const item of sourceFiles) {
                 const cacheKey = `${owner}/${repo}/${item.path}`;
-                const cached = symbolCacheRef.current.get(cacheKey);
+                const cached = sourceCache.files.get(cacheKey);
                 if (cached !== undefined) {
                     cacheHits += 1;
                     fetchAttempted += 1;
@@ -964,14 +966,21 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             if (uncachedPaths.length > 0 && !cancelled) {
                 fetchAttempted += uncachedPaths.length;
                 try {
-                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders);
+                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal);
+                    if (cancelled || controller.signal.aborted) return;
                     fetchSucceeded += files.length;
                     fetchFailed += uncachedPaths.length - files.length;
                     for (const file of files) {
-                        symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
+                        sourceCache.files.set(`${owner}/${repo}/${file.path}`, file.content);
                         filePayload.push(file);
                     }
-                } catch {
+                } catch (error) {
+                    if (cancelled || controller.signal.aborted) return;
+                    if (error !== null && typeof error === "object" && "name" in error && error.name === "AbortError") {
+                        setSymbolError("Source loading was cancelled. Reload the repository to retry.");
+                        setSymbolLoading(false);
+                        return;
+                    }
                     fetchFailed += uncachedPaths.length;
                 }
             }
@@ -1003,19 +1012,20 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             const worker = new Worker(
                 new URL("../../workers/symbol-analysis.worker.ts", import.meta.url)
             );
+            ownedWorker = worker;
             symbolWorkerRef.current = worker;
 
             worker.onmessage = (ev: MessageEvent<{ type: "symbolGraph"; data: import("@/lib/symbol-parser").SymbolGraphData }>) => {
-                if (cancelled) { worker.terminate(); symbolWorkerRef.current = null; return; }
+                if (cancelled) { worker.terminate(); if (symbolWorkerRef.current === worker) symbolWorkerRef.current = null; return; }
                 setSymbolGraph(ev.data.data);
                 setSymbolLoading(false);
                 worker.terminate();
-                symbolWorkerRef.current = null;
+                if (symbolWorkerRef.current === worker) symbolWorkerRef.current = null;
             };
             worker.onerror = () => {
                 if (!cancelled) setSymbolLoading(false);
                 worker.terminate();
-                symbolWorkerRef.current = null;
+                if (symbolWorkerRef.current === worker) symbolWorkerRef.current = null;
             };
 
             worker.postMessage({ type: "buildSymbolGraph", fileContents: filePayload, maxReferences });
@@ -1026,16 +1036,19 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
         return () => {
             cancelled = true;
+            controller.abort();
             cIC(idleId);
-            symbolWorkerRef.current?.terminate();
-            symbolWorkerRef.current = null;
+            ownedWorker?.terminate();
+            if (symbolWorkerRef.current === ownedWorker) symbolWorkerRef.current = null;
         };
-    }, [owner, repo, tree, githubHeaders]);
+    }, [owner, repo, tree, githubHeaders, sourceCache]);
 
     // Multi-language file import analysis (Python, Go, Rust, Java, C/C++, C#)
     // Fetches non-JS/TS source files and extracts file-to-file import edges.
     useEffect(() => {
         let cancelled = false;
+        const controller = new AbortController();
+        let ownedWorker: Worker | null = null;
         let idleId = 0;
 
         const rIC: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number =
@@ -1070,7 +1083,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             const uncachedPaths: string[] = [];
             for (const item of selected) {
                 const cacheKey = `${owner}/${repo}/${item.path}`;
-                const cached = symbolCacheRef.current.get(cacheKey);
+                const cached = sourceCache.files.get(cacheKey);
                 if (cached !== undefined) {
                     filePayload.push({ path: item.path, content: cached });
                 } else {
@@ -1080,12 +1093,20 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
             if (uncachedPaths.length > 0 && !cancelled) {
                 try {
-                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders);
+                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal);
+                    if (cancelled || controller.signal.aborted) return;
                     for (const file of files) {
-                        symbolCacheRef.current.set(`${owner}/${repo}/${file.path}`, file.content);
+                        sourceCache.files.set(`${owner}/${repo}/${file.path}`, file.content);
                         filePayload.push(file);
                     }
-                } catch { /* ignore batch fetch failures */ }
+                } catch (error) {
+                    if (cancelled || controller.signal.aborted) return;
+                    if (error !== null && typeof error === "object" && "name" in error && error.name === "AbortError") {
+                        setMultiLangLoading(false);
+                        return;
+                    }
+                    // Keep available sources after genuine partial failures.
+                }
             }
 
             if (cancelled) return;
@@ -1098,19 +1119,20 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             const worker = new Worker(
                 new URL("../../workers/symbol-analysis.worker.ts", import.meta.url)
             );
+            ownedWorker = worker;
             importWorkerRef.current = worker;
 
             worker.onmessage = (ev: MessageEvent<{ type: "importEdges"; data: FileImportEdge[] }>) => {
-                if (cancelled) { worker.terminate(); importWorkerRef.current = null; return; }
+                if (cancelled) { worker.terminate(); if (importWorkerRef.current === worker) importWorkerRef.current = null; return; }
                 setFileImportEdges(ev.data.data);
                 setMultiLangLoading(false);
                 worker.terminate();
-                importWorkerRef.current = null;
+                if (importWorkerRef.current === worker) importWorkerRef.current = null;
             };
             worker.onerror = () => {
                 if (!cancelled) setMultiLangLoading(false);
                 worker.terminate();
-                importWorkerRef.current = null;
+                if (importWorkerRef.current === worker) importWorkerRef.current = null;
             };
 
             worker.postMessage({ type: "extractFileToFileImports", fileContents: filePayload, fileSet });
@@ -1121,11 +1143,12 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
 
         return () => {
             cancelled = true;
+            controller.abort();
             cIC(idleId);
-            importWorkerRef.current?.terminate();
-            importWorkerRef.current = null;
+            ownedWorker?.terminate();
+            if (importWorkerRef.current === ownedWorker) importWorkerRef.current = null;
         };
-    }, [owner, repo, tree, githubHeaders]);
+    }, [owner, repo, tree, githubHeaders, sourceCache]);
 
     // Build graph elements — show all files
     const elements = useMemo(() => {

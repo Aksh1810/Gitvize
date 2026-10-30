@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import BranchGraph from "@/components/diagrams/branch-graph";
 import type { Commit } from "@/types";
 
@@ -84,7 +85,7 @@ it("keeps failed pagination counts neutral rather than claiming complete history
         render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={initial} branches={[]} />);
         fireEvent.click(screen.getByRole("button", { name: "+100" }));
         await screen.findByText("500 commits loaded");
-        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("sha=main&per_page=100&page=6"), { headers: {} });
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("sha=main&per_page=100&page=6"), expect.objectContaining({ headers: {}, signal: expect.any(AbortSignal) }));
         expect(screen.queryByText(/All \d+ commits loaded/)).not.toBeInTheDocument();
     } finally {
         global.fetch = originalFetch;
@@ -117,4 +118,115 @@ it.each([{ initial: [] }, { initial: commits }])("reports incomplete initial his
     if (initial.length === 0) expect(screen.queryByText("No commits match your search.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Graph" }));
     expect(screen.getByRole("alert")).toBeInTheDocument();
+});
+
+function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+const raceBranches = [{ name: "main", sha: "first", isDefault: true }, { name: "feature-a", sha: "a-head", isDefault: false }, { name: "feature-b", sha: "b-head", isDefault: false }];
+const branchResponse = (message: string) => ({ ok: true, json: async () => [{ ...commits[0], sha: message, message }] });
+
+it.each(["resolve", "reject"])("keeps branch B when aborted A later %ss", async outcome => {
+    const originalFetch = global.fetch, errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+    const a = deferred<ReturnType<typeof branchResponse>>();
+    global.fetch = jest.fn(url => String(url).includes("sha=feature-a") ? a.promise : Promise.resolve(branchResponse("CURRENT_B"))) as unknown as typeof fetch;
+    try {
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" })); fireEvent.click(screen.getByRole("button", { name: "feature-b" }));
+        await screen.findByText("CURRENT_B");
+        await act(async () => outcome === "resolve" ? a.resolve(branchResponse("OBSOLETE_A")) : a.reject(new Error("Obsolete A failed")));
+        expect(screen.getByText("CURRENT_B")).toBeInTheDocument(); expect(screen.queryByText("OBSOLETE_A")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "feature-b" })).toHaveAttribute("aria-pressed", "true");
+        expect(jest.mocked(global.fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+        expect(errorLog).not.toHaveBeenCalled();
+    } finally { global.fetch = originalFetch; errorLog.mockRestore(); }
+});
+
+it("returns to default data immediately while a feature request is pending", async () => {
+    const originalFetch = global.fetch, a = deferred<ReturnType<typeof branchResponse>>();
+    global.fetch = jest.fn(() => a.promise) as unknown as typeof fetch;
+    try {
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" })); fireEvent.click(screen.getByRole("button", { name: "main default" }));
+        expect(screen.getByText("First change")).toBeInTheDocument(); expect(screen.queryByText(/Loading commits/)).not.toBeInTheDocument();
+        await act(async () => a.resolve(branchResponse("OBSOLETE_FEATURE")));
+        expect(screen.getByText("First change")).toBeInTheDocument();
+        expect(jest.mocked(global.fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+    } finally { global.fetch = originalFetch; }
+});
+
+it("an old branch finally cannot end a newer branch's loading state", async () => {
+    const originalFetch = global.fetch, a = deferred<ReturnType<typeof branchResponse>>(), b = deferred<ReturnType<typeof branchResponse>>();
+    global.fetch = jest.fn(url => String(url).includes("sha=feature-a") ? a.promise : b.promise) as unknown as typeof fetch;
+    try {
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" })); fireEvent.click(screen.getByRole("button", { name: "feature-b" }));
+        await act(async () => a.resolve(branchResponse("OBSOLETE_A")));
+        expect(screen.getByText("Loading commits for feature-b…")).toBeInTheDocument();
+        await act(async () => b.resolve(branchResponse("CURRENT_B"))); await screen.findByText("CURRENT_B");
+    } finally { global.fetch = originalFetch; }
+});
+
+it.each(["owner", "repo", "token", "head"])("discards old branch data and refetches for a changed %s", async context => {
+    const originalFetch = global.fetch, old = deferred<ReturnType<typeof branchResponse>>(); let reads = 0;
+    global.fetch = jest.fn(() => ++reads === 1 ? old.promise : Promise.resolve(branchResponse("CURRENT_CONTEXT"))) as unknown as typeof fetch;
+    try {
+        const ui = render(<BranchGraph owner="example" repo="repo" defaultBranch="main" githubToken="dummy-old" commits={commits} branches={raceBranches} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" }));
+        ui.rerender(<BranchGraph owner={context === "owner" ? "other" : "example"} repo={context === "repo" ? "other" : "repo"} defaultBranch="main" githubToken={context === "token" ? "dummy-new" : "dummy-old"} commits={commits} branches={context === "head" ? raceBranches.map(branch => branch.name === "feature-a" ? { ...branch, sha: "new-head" } : branch) : raceBranches} />);
+        await screen.findByText("CURRENT_CONTEXT");
+        await act(async () => old.resolve(branchResponse("OBSOLETE_CONTEXT")));
+        expect(screen.getByText("CURRENT_CONTEXT")).toBeInTheDocument(); expect(screen.queryByText("OBSOLETE_CONTEXT")).not.toBeInTheDocument();
+        expect(jest.mocked(global.fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+        if (context === "token") expect(jest.mocked(global.fetch).mock.calls[1][1]?.headers).toEqual({ "x-github-token": "dummy-new" });
+    } finally { global.fetch = originalFetch; }
+});
+
+it("unmount/Strict Mode cleanup aborts only its own branch request", async () => {
+    const originalFetch = global.fetch, old = deferred<ReturnType<typeof branchResponse>>(), parse = jest.fn(async () => commits);
+    global.fetch = jest.fn(() => old.promise) as unknown as typeof fetch;
+    try {
+        const ui = render(<StrictMode><BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} /></StrictMode>);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" })); ui.unmount();
+        await act(async () => old.resolve({ ok: true, json: parse }));
+        expect(jest.mocked(global.fetch).mock.calls[0][1]?.signal?.aborted).toBe(true); expect(parse).not.toHaveBeenCalled();
+    } finally { global.fetch = originalFetch; }
+});
+
+it.each(["more", "all"])("aborts obsolete %s pagination on context change and never appends its late page", async operation => {
+    const originalFetch = global.fetch, old = deferred<ReturnType<typeof branchResponse>>();
+    global.fetch = jest.fn().mockImplementationOnce(() => old.promise).mockResolvedValue({ ok: false, status: 503 });
+    try {
+        const initial = Array.from({ length: 500 }, (_, i) => ({ ...commits[0], sha: `sha-${i}`, message: `Old ${i}` }));
+        const ui = render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={initial} branches={raceBranches} />);
+        fireEvent.click(screen.getByRole("button", { name: operation === "more" ? "+100" : /Load all/ }));
+        ui.rerender(<BranchGraph owner="example" repo="other" defaultBranch="main" commits={[{ ...commits[0], message: "NEW_DEFAULT" }]} branches={raceBranches} />);
+        await act(async () => old.resolve({ ok: true, json: async () => Array.from({ length: 100 }, (_, i) => ({ ...commits[0], sha: `late-${i}`, message: "OBSOLETE_PAGE" })) }));
+        expect(screen.getByText("NEW_DEFAULT")).toBeInTheDocument(); expect(screen.queryByText("OBSOLETE_PAGE")).not.toBeInTheDocument();
+        expect(jest.mocked(global.fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+    } finally { global.fetch = originalFetch; }
+});
+
+it("guards asynchronous JSON processing after A headers have arrived", async () => {
+    const originalFetch = global.fetch, json = deferred<Commit[]>();
+    global.fetch = jest.fn(url => Promise.resolve(String(url).includes("sha=feature-a") ? { ok: true, json: () => json.promise } : branchResponse("CURRENT_B"))) as unknown as typeof fetch;
+    try {
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" })); await act(async () => {});
+        fireEvent.click(screen.getByRole("button", { name: "feature-b" })); await screen.findByText("CURRENT_B");
+        await act(async () => json.resolve([{ ...commits[0], message: "OBSOLETE_BODY" }]));
+        expect(screen.getByText("CURRENT_B")).toBeInTheDocument(); expect(screen.queryByText("OBSOLETE_BODY")).not.toBeInTheDocument();
+    } finally { global.fetch = originalFetch; }
+});
+
+it("shows a current branch failure and retries on the existing branch control", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValue(branchResponse("RECOVERED_BRANCH"));
+    try {
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" }));
+        expect(await screen.findByRole("alert")).toHaveTextContent(/Could not load.*retry/);
+        expect(screen.queryByText("No commits match your search.")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" })); await screen.findByText("RECOVERED_BRANCH");
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally { global.fetch = originalFetch; }
 });
