@@ -33,8 +33,6 @@ import type {
     Commit,
     MergedPR,
     LanguageStats,
-    ArchitectureAnalysis,
-    FileAnnotation,
     PipelineStep,
     PipelineStatus as PipelineStatusType,
     RepositoryAnalysisResult,
@@ -61,6 +59,27 @@ interface RepoData {
 }
 
 
+type AnalysisMode = "smart" | "premium";
+type AnalysisSteps = Array<{ step: PipelineStep; status: PipelineStatusType; message: string }>;
+type DisplayAnalysis = Pick<RepositoryAnalysisResult, "architecture" | "annotations" | "source">;
+interface AnalysisSession {
+    identity: readonly unknown[];
+    active: boolean;
+    generation: number;
+    attempted: boolean;
+    pendingMode: AnalysisMode | null;
+    toastId?: string | number;
+}
+interface AnalysisView {
+    session: AnalysisSession;
+    selectedMode: AnalysisMode;
+    generation: number;
+    results: Partial<Record<AnalysisMode, { result: DisplayAnalysis; generation: number }>>;
+    requestMode: AnalysisMode | null;
+    error: string | null;
+    steps: AnalysisSteps;
+}
+
 export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -73,21 +92,9 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const [cloneMessage, setCloneMessage] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [repoData, setRepoData] = useState<RepoData | null>(null);
-    const [analysis, setAnalysis] = useState<{
-        architecture: ArchitectureAnalysis;
-        annotations: FileAnnotation[];
-        source?: "ai" | "fallback" | "smart";
-    } | null>(null);
-    const [pipelineSteps, setPipelineSteps] = useState<
-        Array<{ step: PipelineStep; status: PipelineStatusType; message: string }>
-    >([
-        { step: "ingest", status: "pending", message: "Waiting..." },
-        { step: "understand", status: "pending", message: "Waiting..." },
-        { step: "enrich", status: "pending", message: "Waiting..." },
-    ]);
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [aiSettingsOpen, setAISettingsOpen] = useState(false);
-    const [hasUserAIKey, setHasUserAIKey] = useState(false);
+    const [aiSettings, setAISettings] = useState(() => loadAISettings());
+    const hasUserAIKey = Boolean(aiSettings?.apiKey);
     const [showOnboarding, setShowOnboarding] = useState(false);
     const [tokenModalOpen, setTokenModalOpen] = useState(false);
     const [dashboardToken, setDashboardToken] = useState<string | null>(null);
@@ -100,17 +107,40 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // Tracks the active stream request so cleanup can abort it (prevents duplicate
     // connections in React StrictMode where effects run mount→unmount→mount).
     const abortRef = useRef<AbortController | null>(null);
-    // Prevents the auto-analyze effect from looping: once a smart-mode attempt has
-    // been made (success OR failure), we don't retry automatically. Reset when
-    // fetchData starts so a full page reload picks up fresh data.
-    const analyzeAttemptedRef = useRef(false);
-
     // One-time PAT token passed from the landing flow, or a token added via the dashboard Token button.
     const getToken = useCallback((): string | null => {
         return dashboardToken ?? sessionToken;
     }, [dashboardToken, sessionToken]);
 
     const githubToken = dashboardToken ?? sessionToken;
+    const repositoryContext = useMemo(() => ({ owner, repo, githubToken }), [owner, repo, githubToken]);
+    const [loadedContext, setLoadedContext] = useState<typeof repositoryContext | null>(null);
+    const analysisTree = loadedContext === repositoryContext ? repoData?.fileTree : null;
+    // Credentials stay in memory; neither they nor this identity enter persisted cache keys.
+    // A replacement tree also invalidates analysis when snapshot plumbing arrives later.
+    const analysisSession = useMemo<AnalysisSession>(() => ({ identity: [repositoryContext, analysisTree, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey], active: false, generation: 0, attempted: false, pendingMode: null }),
+        [repositoryContext, analysisTree, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey]);
+    const legacyCacheSessionRef = useRef<AnalysisSession | null>(null);
+    const [analysisView, setAnalysisView] = useState<AnalysisView | null>(null);
+    const currentView = analysisView?.session === analysisSession ? analysisView : null;
+    const selectedMode = currentView?.selectedMode ?? "smart";
+    const selectedResult = currentView?.results[selectedMode];
+    const displayedResult = selectedResult ?? currentView?.results[selectedMode === "smart" ? "premium" : "smart"];
+    const analysis = displayedResult?.result;
+    const isAnalyzing = Boolean(currentView?.requestMode);
+
+    useEffect(() => {
+        analysisSession.active = true;
+        // Legacy keys cannot prove compatibility after an in-session identity change.
+        if (analysisTree && !legacyCacheSessionRef.current) legacyCacheSessionRef.current = analysisSession;
+        return () => {
+            analysisSession.active = false;
+            analysisSession.generation++;
+            analysisSession.pendingMode = null;
+            if (analysisSession.toastId !== undefined) toast.dismiss(analysisSession.toastId);
+        };
+    }, [analysisSession, analysisTree]);
+
 
     // Fetch all repo data via SSE stream
     const fetchData = useCallback(async () => {
@@ -128,7 +158,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         setCloneStep("checking");
         setCloneMessage("");
         setError(null);
-        analyzeAttemptedRef.current = false;
 
         try {
             const token = getToken();
@@ -139,6 +168,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 signal,
             });
 
+            if (signal.aborted) return;
             const reader = res.body?.getReader();
             if (!reader) throw new Error("No response stream");
 
@@ -149,6 +179,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             while (true) {
                 if (signal.aborted) break;
                 const { done, value } = await reader.read();
+                if (signal.aborted) return;
                 if (done) break;
 
                 buffer += decoder.decode(value, { stream: true });
@@ -179,6 +210,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     if (type === "done") {
                         receivedDone = true;
                         setRepoData(event.payload as RepoData);
+                        setLoadedContext(repositoryContext);
                         setLoading(false);
                         // Don't return — keep reading for the enriched event.
                     } else if (type === "enriched") {
@@ -216,28 +248,44 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         } catch (err) {
             // AbortError means this request was intentionally cancelled by cleanup —
             // do not surface it as an error or update any state.
-            if (err instanceof Error && err.name === "AbortError") return;
+            if (signal.aborted || (err instanceof Error && err.name === "AbortError")) return;
             const baseMessage = err instanceof Error ? err.message : "Failed to fetch repository data";
             setError(baseMessage);
             setLoading(false);
         }
-    }, [owner, repo, getToken]);
+    }, [owner, repo, getToken, repositoryContext]);
 
-    const runAnalysis = useCallback(async (mode: "smart" | "premium" = "smart") => {
-        if (!repoData?.fileTree) return;
-
+    const runAnalysis = useCallback(async (mode: AnalysisMode = "smart") => {
+        if (!analysisTree || !analysisSession.active || analysisSession.pendingMode === mode) return;
+        if (analysisSession.toastId !== undefined) toast.dismiss(analysisSession.toastId);
+        const generation = ++analysisSession.generation;
+        analysisSession.attempted = true;
+        analysisSession.pendingMode = mode;
+        const ownsRequest = () => analysisSession.active && analysisSession.generation === generation;
+        const updateView = (update: (previous: AnalysisView) => AnalysisView) => {
+            if (!ownsRequest()) return;
+            setAnalysisView(previous => previous?.session === analysisSession && ownsRequest() ? update(previous) : previous);
+        };
+        setAnalysisView(previous => ({
+            session: analysisSession, selectedMode: mode, generation,
+            results: previous?.session === analysisSession ? previous.results : {},
+            requestMode: mode, error: null, steps: [],
+        }));
+        const setPipelineSteps = (update: AnalysisSteps | ((previous: AnalysisSteps) => AnalysisSteps)) =>
+            updateView(previous => ({ ...previous, steps: typeof update === "function" ? update(previous.steps) : update }));
+        const storeResult = (result: DisplayAnalysis, cached = false) => updateView(previous => ({ ...previous, results: { ...previous.results, [mode]: { result, generation: cached ? -1 : generation } } }));
         const cacheOpts = { tokenHash: hashToken(getToken()), mode };
-        const cached = getCachedDiagram(owner, repo, cacheOpts);
+        const cached = legacyCacheSessionRef.current === analysisSession ? getCachedDiagram(owner, repo, cacheOpts) : null;
 
-        setIsAnalyzing(true);
         let toastId: string | number | undefined;
         if (mode === "premium") {
             toastId = toast.loading("Generating Premium Architecture Diagram...");
+            analysisSession.toastId = toastId;
         }
 
         // Compute trimmed tree before setting pipeline steps so the ingest
         // message can include the sampling count.
-        const rawTree = repoData.fileTree.tree;
+        const rawTree = analysisTree.tree;
         const totalFileCount = rawTree.filter(i => i.type === "blob").length;
         const MAX_ANALYZE_FILES = 500;
         const priorityDirs = new Set(["src", "lib", "kernel", "drivers", "include", "app", "core", "api", "pkg"]);
@@ -272,16 +320,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         const analyzeAbort = new AbortController();
 
         try {
-            // Load AI settings from localStorage to send to server
-            let aiSettings: { provider: string; apiKey: string; model: string } | undefined;
-            if (typeof window !== "undefined") {
-                try {
-                    const saved = loadAISettings();
-                    if (saved) aiSettings = saved;
-                } catch { /* ignore */ }
-            }
-
-            const payload = buildAnalysisRequest({ mode, owner, repo, tree: treeToSend, readme: repoData.readme, aiSettings });
+            const payload = buildAnalysisRequest({ mode, owner, repo, tree: treeToSend, readme: repoData?.readme, aiSettings: aiSettings ?? undefined });
             const payloadMessage = `${payload.sampled ? `Analyzing ${payload.selectedCount} of ${treeToSend.length} selected repository items` : ingestMsg}${payload.readmeTruncated ? "; using a README excerpt" : ""}`;
             setPipelineSteps((prev) => prev.map((step) => step.step === "ingest" ? { ...step, message: payloadMessage } : step));
 
@@ -294,6 +333,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             });
             clearTimeout(analyzeTimeoutId);
             analyzeTimeoutId = null;
+            if (!ownsRequest()) return;
 
             if (res.status === 429) {
                 const rateLimitMsg = "Too many requests. Please try again later.";
@@ -302,7 +342,9 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         s.status === "running" ? { ...s, status: "error" as const, message: rateLimitMsg } : s
                     )
                 );
+                updateView(previous => ({ ...previous, error: rateLimitMsg }));
                 toast.error("Rate limit reached", {
+                    id: toastId,
                     description: rateLimitMsg,
                     action: { label: "Add Token", onClick: () => setAISettingsOpen(true) },
                 });
@@ -320,6 +362,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     let buffer = "";
                     while (true) {
                         const { done, value } = await reader.read();
+                        if (!ownsRequest()) return;
                         if (done) break;
 
                         buffer += decoder.decode(value, { stream: true });
@@ -337,6 +380,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                 }
                                 if (!event || typeof event !== "object") continue;
                                 if (event.data) analysisResult = await resolveAnalysisResponse(event.data);
+                                if (!ownsRequest()) return;
                                 setPipelineSteps((prev) =>
                                     prev.map((s) => s.step === event.step ? { ...s, ...event } : s)
                                 );
@@ -370,6 +414,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 analysisResult = await resolveAnalysisResponse(data);
             }
 
+            if (!ownsRequest()) return;
             if (!analysisResult || (mode === "smart" && analysisResult.source !== "smart")) {
                 throw new Error("Analysis did not return a valid result for this mode.");
             }
@@ -380,11 +425,14 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 { step: "enrich", status: "complete", message: analysisResult.metadataSource === "ai" ? "AI project details ready" : "Deterministic project details ready" },
             ]);
 
-            if (premiumFallback && cached) {
-                setAnalysis({ architecture: cached.architecture, annotations: cached.annotations, source: cached.source });
+            const previousPremium = currentView?.results.premium?.result ?? cached;
+            const fallbackReason = analysisResult.fallbackReason ?? "Premium AI unavailable. The diagram uses Smart analysis.";
+            if (premiumFallback) updateView(previous => ({ ...previous, error: fallbackReason }));
+            if (premiumFallback && previousPremium) {
+                if (!currentView?.results.premium) storeResult(previousPremium, true);
                 toast.warning("Premium AI unavailable", { id: toastId, description: "Showing cached diagram" });
             } else {
-                setAnalysis(analysisResult);
+                storeResult(analysisResult);
                 if (mode === "premium") {
                     const source = analysisResult.source === "ai" ? "ai" : "fallback";
                     cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, source, cacheOpts);
@@ -399,6 +447,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 }
             }
         } catch (err) {
+            if (!ownsRequest()) return;
             const rawMsg = err instanceof Error ? err.message : String(err);
             const errorMsg = (err instanceof Error && err.name === "AbortError")
                 ? "Analysis timed out. Try a smaller repo or add a GitHub token for faster access."
@@ -412,10 +461,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         : s
                 )
             );
-            // If AI failed, try serving from cache
+            updateView(previous => ({ ...previous, error: errorMsg }));
+            // Never discard a valid session result just because a retry failed.
             if (mode === "premium") {
-                if (cached) {
-                    setAnalysis({ architecture: cached.architecture, annotations: cached.annotations, source: cached.source });
+                if (cached && !currentView?.results.premium) {
+                    storeResult(cached, true);
                     toast.error("Analysis Failed", {
                         id: toastId,
                         description: `${errorMsg} — Showing cached diagram instead.`,
@@ -429,14 +479,26 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             }
         } finally {
             if (analyzeTimeoutId !== null) clearTimeout(analyzeTimeoutId);
-            setIsAnalyzing(false);
-            // If toastId is still visible as loading and wasn't swept by success/error (e.g. edge cases), dismiss it safely.
-            // Sonner ignores dismiss() if it's already updated to a strict state like success/error/warning that auto-closes.
-            if (toastId) {
-                setTimeout(() => toast.dismiss(toastId), 5000);
+            if (ownsRequest()) {
+                analysisSession.pendingMode = null;
+                analysisSession.toastId = undefined;
+                updateView(previous => ({ ...previous, requestMode: null }));
             }
         }
-    }, [repoData, owner, repo, getToken]);
+    }, [analysisTree, analysisSession, currentView?.results.premium, repoData?.readme, owner, repo, getToken, aiSettings]);
+
+    const showNormalDiagram = useCallback(() => {
+        if (!analysisSession.active) return;
+        if (!currentView?.results.smart) {
+            void runAnalysis("smart");
+            return;
+        }
+        analysisSession.generation++;
+        analysisSession.pendingMode = null;
+        if (analysisSession.toastId !== undefined) toast.dismiss(analysisSession.toastId);
+        analysisSession.toastId = undefined;
+        setAnalysisView(previous => previous?.session === analysisSession ? { ...previous, selectedMode: "smart", requestMode: null, error: null } : previous);
+    }, [analysisSession, currentView?.results.smart, runAnalysis]);
 
     // Load on mount — cleanup aborts the stream if the component unmounts or the
     // effect re-fires (e.g. React StrictMode double-invoke or owner/repo change).
@@ -447,19 +509,14 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         };
     }, [fetchData]);
 
-    // Auto-run smart analysis when data loads — run at most once per load.
-    // analyzeAttemptedRef prevents re-entry if the attempt fails (isAnalyzing
-    // goes true→false but analysis stays null, which would otherwise re-trigger).
+    // At most one automatic attempt per repository/credential/tree session.
+    // Explicit recovery actions remain available after either fetch or render failure.
     useEffect(() => {
-        if (repoData && !analysis && !isAnalyzing && !analyzeAttemptedRef.current) {
-            analyzeAttemptedRef.current = true;
-            runAnalysis("smart");
-        }
-    }, [repoData, analysis, isAnalyzing, runAnalysis]);
+        if (analysisTree && !analysisSession.attempted) void runAnalysis("smart");
+    }, [analysisTree, analysisSession, runAnalysis]);
 
     useEffect(() => {
-        const settings = loadAISettings();
-        setHasUserAIKey(Boolean(settings?.apiKey));
+        setAISettings(loadAISettings());
     }, [aiSettingsOpen]);
 
     // Tab change updates URL
@@ -513,39 +570,34 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const isTabMounted = useCallback((tab: DiagramTab) => mountedTabs.includes(tab), [mountedTabs]);
 
     const architectureTabContent = useMemo(() => {
-        if (analysis) {
-            return (
-                <ArchitectureDiagram
-                    key={analysis.source}
-                    analysis={analysis.architecture}
-                    source={analysis.source}
-                    owner={owner}
-                    repo={repo}
-                    defaultBranch={repoData?.metadata.defaultBranch ?? "main"}
-                    tree={repoData?.fileTree?.tree}
-                    onFallback={() => setAnalysis(null)}
-                />
-            );
-        }
-
-        // Show pipeline status while analyzing OR while waiting for analysis to start.
-        // Rendering ArchitectureDiagram(analysis=null) here would start a mermaid.render()
-        // that gets cancelled one render cycle later when isAnalyzing becomes true — the
-        // dangling internal mermaid render races with the real one and causes an infinite spinner.
-        if (isAnalyzing || repoData?.fileTree) {
-            return (
-                <div className="architecture-state">
-                    <PipelineStatusDisplay steps={pipelineSteps} />
-                </div>
-            );
-        }
-
+        if (!analysisTree && !isAnalyzing) return <div className="architecture-state text-muted-foreground text-sm">No data available for this view.</div>;
+        const displayedMode = analysis?.source === "ai" ? "Premium" : "Smart";
+        const previous = Boolean(analysis && (displayedResult !== selectedResult || ((isAnalyzing || currentView?.error) && displayedResult?.generation !== currentView?.generation)));
         return (
-            <div className="architecture-state text-muted-foreground text-sm">
-                No data available for this view.
+            <div className="flex h-full min-h-0 min-w-0 flex-col">
+                {previous && <p role="status" className="shrink-0 px-3 py-2 text-sm text-muted-foreground">Showing previous {displayedMode} diagram{isAnalyzing ? ` while ${selectedMode === "premium" ? "Premium" : "Smart"} analysis runs.` : "."}</p>}
+                {currentView?.error && <p role="alert" className="shrink-0 px-3 py-2 text-sm text-destructive break-words">{currentView.error}</p>}
+                <div className="flex-1 min-h-0 min-w-0">
+                    {analysis ? (
+                        <ArchitectureDiagram
+                            key={`${analysis.source}-${displayedResult?.generation}`}
+                            analysis={analysis.architecture}
+                            source={analysis.source}
+                            owner={owner}
+                            repo={repo}
+                            defaultBranch={repoData?.metadata.defaultBranch ?? "main"}
+                            tree={analysisTree?.tree}
+                            onFallback={() => selectedMode === "premium" ? showNormalDiagram() : void runAnalysis("smart")}
+                        />
+                    ) : (
+                        <div className="architecture-state">
+                            <PipelineStatusDisplay steps={currentView?.steps ?? []} />
+                        </div>
+                    )}
+                </div>
             </div>
         );
-    }, [analysis, isAnalyzing, owner, pipelineSteps, repo, repoData?.fileTree, repoData?.metadata.defaultBranch]);
+    }, [analysis, analysisTree, currentView, displayedResult, isAnalyzing, owner, repo, repoData?.metadata.defaultBranch, runAnalysis, selectedMode, selectedResult, showNormalDiagram]);
 
     const filesTabContent = useMemo(() => {
         if (repoData?.fileTree) {
@@ -734,16 +786,21 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                                     aria-hidden={activeTab !== "architecture"}
                                 >
                                     <div className="architecture-content">{architectureTabContent}</div>
-                                    {activeTab === "architecture" && !isAnalyzing && (
+                                    {activeTab === "architecture" && (
                                         <div className="architecture-actions" role="group" aria-label="Architecture generation">
-                                            {analysis?.source === "ai" && (
+                                            {selectedMode === "premium" && (
                                                 <Button variant="outline"
-                                                    onClick={() => setAnalysis(null)}
+                                                    onClick={showNormalDiagram}
                                                 >
                                                     Show Normal Diagram
                                                 </Button>
                                             )}
-                                            <Button variant="outline"
+                                            {(!analysis || currentView?.error) && (
+                                                <Button variant="outline" disabled={!analysisTree || isAnalyzing} onClick={() => void runAnalysis("smart")}>
+                                                    Retry Smart Diagram
+                                                </Button>
+                                            )}
+                                            <Button variant="outline" disabled={!analysisTree || currentView?.requestMode === "premium"}
                                                 onClick={() => {
                                                     if (!hasUserAIKey) {
                                                         setAISettingsOpen(true);
@@ -803,8 +860,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <AISettingsModal
                 open={aiSettingsOpen}
                 onOpenChange={setAISettingsOpen}
-                onSave={() => {
-                    setHasUserAIKey(true);
+                onSave={(settings) => {
+                    setAISettings(settings);
                     toast.success("AI key saved", {
                         description: "You can now generate premium architecture diagrams",
                     });
