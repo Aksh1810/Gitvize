@@ -7,6 +7,7 @@ import Graph from "graphology";
 import type Sigma from "sigma";
 import { List, type RowComponentProps } from "react-window";
 import { getFileColor } from "@/lib/file-icons";
+import { repositorySnapshotKey, repositorySnapshotSchema } from "@/lib/repository-snapshot";
 import { fetchSourceFiles } from "@/lib/file-batch";
 import { searchFiles } from "@/lib/search-engine";
 import { getWorkbenchPanelLayout } from "@/lib/workbench-layout";
@@ -19,8 +20,8 @@ import {
     type SimMessageNode,
     type SimNodeType,
 } from "@/lib/file-tree-physics";
-import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind } from "@/lib/symbol-parser";
-import type { TreeItem, FileNodeData } from "@/types";
+import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind, type SymbolGraphData } from "@/lib/symbol-parser";
+import type { TreeItem, FileNodeData, RepositorySnapshot } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen, SquareCheck, Square } from "lucide-react";
 import Prism from "prismjs";
@@ -54,6 +55,7 @@ const extToPrismLang: Record<string, string> = {
 
 
 interface FileTreeGraphProps {
+    snapshot?: RepositorySnapshot;
     tree: TreeItem[];
     owner: string;
     repo: string;
@@ -389,11 +391,12 @@ function syncGraphData(
     return { nodeList, pathToId };
 }
 
-export default function FileTreeGraph({ tree, owner, repo, githubToken, fileTypeLegend = [] }: FileTreeGraphProps) {
+export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot, fileTypeLegend = [] }: FileTreeGraphProps) {
+    const snapshotIdentity = repositorySnapshotKey(snapshot);
     const githubHeaders = useMemo((): Record<string, string> => githubToken ? { "x-github-token": githubToken } : {}, [githubToken]);
     const { resolvedTheme } = useTheme();
     const containerRef = useRef<HTMLDivElement>(null);
-    const sourceCache = useMemo(() => ({ owner, repo, headers: githubHeaders, tree, files: new Map<string, string>() }), [owner, repo, githubHeaders, tree]);
+    const sourceCache = useMemo(() => ({ owner, repo, headers: githubHeaders, tree, snapshotIdentity, files: new Map<string, string>() }), [owner, repo, githubHeaders, tree, snapshotIdentity]);
     const symbolWorkerRef = useRef<Worker | null>(null);
     const importWorkerRef = useRef<Worker | null>(null);
     const codePanelRef = useRef<HTMLDivElement>(null);
@@ -422,7 +425,9 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     const [showExtendsEdges, setShowExtendsEdges] = useState(false);
     const [showImplementsEdges, setShowImplementsEdges] = useState(false);
     const [showFileImportEdges, setShowFileImportEdges] = useState(false);
-    const [fileImportEdges, setFileImportEdges] = useState<FileImportEdge[]>([]);
+    const [importResult, setImportResult] = useState<{ context: typeof sourceCache; data: FileImportEdge[] } | null>(null);
+    const fileImportEdges = useMemo(() => importResult?.context === sourceCache ? importResult.data : [], [importResult, sourceCache]);
+    const setFileImportEdges = useCallback((data: FileImportEdge[]) => setImportResult({ context: sourceCache, data }), [sourceCache]);
     const [multiLangLoading, setMultiLangLoading] = useState(false);
     const [symbolKindVisibility, setSymbolKindVisibility] = useState<Record<SymbolKind, boolean>>({
         class: false,
@@ -438,7 +443,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
     const [showExplorer, setShowExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const selectedRevision = useMemo(() => tree.find(item => item.path === selectedFile?.path)?.sha, [tree, selectedFile?.path]);
-    const previewContext = useMemo(() => ({ owner, repo, headers: githubHeaders, file: selectedFile, revision: selectedRevision, open: showExplorerInspector }), [owner, repo, githubHeaders, selectedFile, selectedRevision, showExplorerInspector]);
+    const previewContext = useMemo(() => ({ owner, repo, headers: githubHeaders, file: selectedFile, revision: selectedRevision, snapshotIdentity, open: showExplorerInspector }), [owner, repo, githubHeaders, selectedFile, selectedRevision, snapshotIdentity, showExplorerInspector]);
     const fileContent = filePreview?.context === previewContext ? filePreview.content : null;
     const fileError = filePreview?.context === previewContext ? filePreview.error : null;
     const fileLoading = Boolean(selectedFile && selectedFile.type !== "folder" && showExplorerInspector && (filePreview?.context !== previewContext || filePreview.loading));
@@ -503,10 +508,9 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
         element: HTMLDivElement | null;
         scrollToRow: (config: { index: number; align?: "auto" | "center" | "end" | "smart" | "start"; behavior?: "auto" | "instant" | "smooth" }) => void;
     } | null>(null);
-    const [symbolGraph, setSymbolGraph] = useState<import("@/lib/symbol-parser").SymbolGraphData>({
-        symbols: [],
-        references: [],
-    });
+    const [symbolResult, setSymbolResult] = useState<{ context: typeof sourceCache; data: SymbolGraphData } | null>(null);
+    const symbolGraph = useMemo<SymbolGraphData>(() => symbolResult?.context === sourceCache ? symbolResult.data : { symbols: [], references: [] }, [symbolResult, sourceCache]);
+    const setSymbolGraph = useCallback((data: SymbolGraphData) => setSymbolResult({ context: sourceCache, data }), [sourceCache]);
     const [inspectorWidth, setInspectorWidth] = useState(440);
     const panelLayout = getWorkbenchPanelLayout(workbenchWidth, showExplorer, explorerWidth, inspectorWidth);
     const [filterPanelWidth, setFilterPanelWidth] = useState(FILTER_PANEL_WIDTH);
@@ -1041,7 +1045,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             ownedWorker?.terminate();
             if (symbolWorkerRef.current === ownedWorker) symbolWorkerRef.current = null;
         };
-    }, [owner, repo, tree, githubHeaders, sourceCache]);
+    }, [owner, repo, tree, githubHeaders, sourceCache, setSymbolGraph]);
 
     // Multi-language file import analysis (Python, Go, Rust, Java, C/C++, C#)
     // Fetches non-JS/TS source files and extracts file-to-file import edges.
@@ -1148,7 +1152,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             ownedWorker?.terminate();
             if (importWorkerRef.current === ownedWorker) importWorkerRef.current = null;
         };
-    }, [owner, repo, tree, githubHeaders, sourceCache]);
+    }, [owner, repo, tree, githubHeaders, sourceCache, setFileImportEdges]);
 
     // Build graph elements — show all files
     const elements = useMemo(() => {
@@ -1914,27 +1918,30 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
         setSymbolKindVisibility({ class: false, function: false, interface: false, type: false, method: false, variable: false });
     };
 
-    // Server-computed FA2 seed layout — primes initial node positions so the worker
-    // converges in fewer ticks. Non-fatal: ring fallback in syncGraphData covers a miss.
+    // Seed only the displayed, server-verified snapshot; never independently resolve HEAD.
     useEffect(() => {
-        if (typeof window === "undefined") return;
-        let cancelled = false;
         seedPositionsRef.current = null;
-        fetch(`/api/graph/seed?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`, { headers: githubHeaders })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((data: { positions?: Record<string, [number, number]> } | null) => {
-                if (cancelled || !data?.positions) return;
+        if (!snapshot || snapshot.status !== "ready") return;
+        const controller = new AbortController();
+        const expected = snapshotIdentity;
+        const params = new URLSearchParams({ owner, repo, snapshot: JSON.stringify(snapshot) });
+        fetch(`/api/graph/seed?${params}`, { headers: githubHeaders, signal: controller.signal })
+            .then(r => r.ok ? r.json() : null)
+            .then((data) => {
+                if (controller.signal.aborted || !data?.positions) return;
+                const received = repositorySnapshotSchema.safeParse(data.snapshot);
+                if (!received.success || repositorySnapshotKey(received.data) !== expected) return;
                 const map = new Map<string, [number, number]>();
                 for (const [id, xy] of Object.entries(data.positions)) {
-                    if (Array.isArray(xy) && xy.length === 2) map.set(id, [xy[0], xy[1]]);
+                    if (Array.isArray(xy) && xy.length === 2 && xy.every(Number.isFinite)) map.set(id, xy as [number, number]);
                 }
-                seedPositionsRef.current = map.size > 0 ? map : null;
+                seedPositionsRef.current = map.size ? map : null;
             })
-            .catch(() => { /* silent — ring seed remains the fallback */ });
-        return () => { cancelled = true; };
-    }, [owner, repo, githubHeaders]);
+            .catch(() => { /* Ring seed remains the fallback. */ });
+        return () => controller.abort();
+    }, [owner, repo, githubHeaders, snapshot, snapshotIdentity]);
 
-    // Effect 1 — create Sigma instance once. Runs only on mount.
+    // Effect 1 — own a Sigma instance for the captured snapshot.
     // Event handlers are wired here; restoreColors/applyHoverEffect are stable callbacks ([] deps).
     useEffect(() => {
         if (!containerRef.current || typeof window === "undefined") return;
@@ -2040,6 +2047,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             layoutSettledRef.current = false;
 
             const flushPending = () => {
+                if (cancelled) return;
                 refreshFrameRef.current = null;
                 const pending = pendingTickRef.current;
                 pendingTickRef.current = null;
@@ -2061,6 +2069,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             };
 
             worker.onmessage = (e: MessageEvent) => {
+                if (cancelled) return;
                 const msg = e.data as
                     | { type: "ready"; epoch: number; ids: string[] }
                     | { type: "tick"; epoch: number; positions: Float32Array }
@@ -2192,7 +2201,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, fileType
             visibleNodesRef.current = [];
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [snapshotIdentity]);
 
     // Effect 2 — incrementally sync graph data when elements change.
     // Sigma instance is already live; we only add/remove/update nodes and edges.

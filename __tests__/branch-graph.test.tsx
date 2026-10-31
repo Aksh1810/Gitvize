@@ -230,3 +230,27 @@ it("shows a current branch failure and retries on the existing branch control", 
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally { global.fetch = originalFetch; }
 });
+
+it("owns branch responses by code snapshot even when all branch/tree inputs are unchanged", async () => {
+    const originalFetch = global.fetch, pending = deferred<ReturnType<typeof branchResponse>>(); let calls = 0;
+    const snapshotA = { schemaVersion: 1, owner: "example", repo: "repo", defaultBranch: "main", selectedBranch: "main", capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public", status: "ready", commitSha: "a".repeat(40), treeSha: "c".repeat(40) } as const;
+    global.fetch = jest.fn(() => ++calls === 1 ? pending.promise : Promise.resolve(branchResponse("CURRENT_SNAPSHOT"))) as unknown as typeof fetch;
+    try {
+        const ui = render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} snapshot={snapshotA} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature-a" }));
+        ui.rerender(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={raceBranches} snapshot={{ ...snapshotA, commitSha: "b".repeat(40) }} />);
+        await screen.findByText("CURRENT_SNAPSHOT"); await act(async () => pending.resolve(branchResponse("OLD_SNAPSHOT")));
+        expect(screen.queryByText("OLD_SNAPSHOT")).not.toBeInTheDocument(); expect(jest.mocked(global.fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+    } finally { global.fetch = originalFetch; }
+});
+
+it("requests a selected branch's captured head rather than its advancing name", async () => {
+    const originalFetch = global.fetch, headSha = "b".repeat(40);
+    global.fetch = jest.fn().mockResolvedValue(branchResponse("CAPTURED_BRANCH_HEAD"));
+    try {
+        render(<BranchGraph owner="example" repo="repo" defaultBranch="main" commits={commits} branches={[{ name: "feature/正常", sha: headSha, headSha, capturedAt: "2026-10-30T12:00:00.000Z", isDefault: false }]} />);
+        fireEvent.click(screen.getByRole("button", { name: "feature/正常" })); await screen.findByText("CAPTURED_BRANCH_HEAD");
+        const url = new URL(String(jest.mocked(global.fetch).mock.calls[0][0]), "http://localhost");
+        expect(url.searchParams.get("sha")).toBe(headSha);
+    } finally { global.fetch = originalFetch; }
+});

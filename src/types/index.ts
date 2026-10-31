@@ -4,7 +4,20 @@
 
 // --- GitHub API Types ---
 
+export type RepositorySnapshot = {
+  schemaVersion: 1;
+  owner: string;
+  repo: string;
+  selectedBranch: string;
+  defaultBranch: string;
+  visibility: "public" | "private";
+  capturedAt: string;
+} & ({ status: "ready"; commitSha: string; treeSha: string } | { status: "empty"; commitSha: null; treeSha: null });
+
+export type RepositoryObservations = Record<"metadata" | "contributors" | "languages", { observedAt: string; status: "ready" | "error" }>;
+
 export interface RepoMetadata {
+  visibility?: "public" | "private";
   owner: string;
   repo: string;
   fullName: string;
@@ -50,6 +63,9 @@ export interface Contributor {
 }
 
 export interface Branch {
+  /** Captured branch head; separate from the default code snapshot. */
+  headSha?: string;
+  capturedAt?: string;
   name: string;
   sha: string;
   isDefault: boolean;

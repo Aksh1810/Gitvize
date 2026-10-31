@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import Graph from "graphology";
 import forceAtlas2 from "graphology-layout-forceatlas2";
-import { fetchAllRepoData } from "@/lib/github";
+import { fetchRepositorySnapshotTree, GitHubApiError, GitHubRateLimitError } from "@/lib/github";
+import { parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { selectImportantTreeItems } from "@/lib/graph-builder";
 import { getCachedSeed, setCachedSeed, type SeedPositions } from "@/lib/graph-cache";
-import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIp, scrubSecrets } from "@/lib/rate-limit";
 import type { TreeItem } from "@/types";
 
 export const maxDuration = 30;
@@ -89,16 +90,20 @@ export async function GET(request: NextRequest) {
     const token = request.headers.get("x-github-token");
 
     try {
-        const data = await fetchAllRepoData(owner, repo, token);
-        const fileTree = data.fileTree;
+        let value: unknown;
+        const raw = searchParams.get("snapshot");
+        if (!raw || raw.length > 4096) throw new RepositorySnapshotError();
+        try { value = JSON.parse(raw); } catch { throw new RepositorySnapshotError(); }
+        const requested = parseRepositorySnapshot(value, owner, repo);
+        const { snapshot, fileTree } = await fetchRepositorySnapshotTree(owner, repo, requested, token);
         if (!fileTree?.tree?.length) {
-            return NextResponse.json({ positions: {}, cached: false });
+            return NextResponse.json({ positions: {}, cached: false, snapshot }, { headers: { "Cache-Control": "private, no-store" } });
         }
 
-        const cacheKey = `graph-seed:${owner}/${repo}/${fileTree.sha}`;
-        const cached = await getCachedSeed(cacheKey);
+        const cacheKey = `graph-seed-v2-selection2000:${repositorySnapshotKey(snapshot)}`;
+        const cached = snapshot.visibility === "public" ? await getCachedSeed(cacheKey) : null;
         if (cached) {
-            return NextResponse.json({ positions: cached, cached: true });
+            return NextResponse.json({ positions: cached, cached: true, snapshot }, { headers: { "Cache-Control": "private, no-store" } });
         }
 
         const items = selectImportantTreeItems(fileTree.tree);
@@ -106,7 +111,7 @@ export async function GET(request: NextRequest) {
         const nodeCount = graph.order;
 
         if (nodeCount === 0) {
-            return NextResponse.json({ positions: {}, cached: false });
+            return NextResponse.json({ positions: {}, cached: false, snapshot }, { headers: { "Cache-Control": "private, no-store" } });
         }
 
         const iterations = nodeCount > 1500 ? 200 : 400;
@@ -126,11 +131,12 @@ export async function GET(request: NextRequest) {
         }
 
         // Fire-and-forget — never let a cache write delay the response.
-        void setCachedSeed(cacheKey, positions, SEED_TTL_SEC);
+        if (snapshot.visibility === "public") void setCachedSeed(cacheKey, positions, SEED_TTL_SEC);
 
-        return NextResponse.json({ positions, cached: false });
+        return NextResponse.json({ positions, cached: false, snapshot }, { headers: { "Cache-Control": "private, no-store" } });
     } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to compute seed";
-        return NextResponse.json({ error: msg }, { status: 500 });
+        const msg = scrubSecrets(err instanceof Error ? err.message : "Failed to compute seed");
+        const status = err instanceof RepositorySnapshotError ? 400 : err instanceof GitHubApiError ? err.status : err instanceof GitHubRateLimitError ? 429 : 500;
+        return NextResponse.json({ error: msg }, { status });
     }
 }

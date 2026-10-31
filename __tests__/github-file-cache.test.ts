@@ -29,9 +29,9 @@ it.each([
 });
 
 it("preserves cached reads for the same complete credential", async () => {
-    global.fetch = jest.fn(async () => Response.json({
-        type: "file", encoding: "base64", content: Buffer.from("cached source").toString("base64"),
-    })) as typeof fetch;
+    global.fetch = jest.fn(async (input) => /^\/repos\/example\/[^/]+$/.test(new URL(String(input)).pathname)
+        ? Response.json({ private: true })
+        : Response.json({ type: "file", encoding: "base64", content: Buffer.from("cached source").toString("base64") })) as typeof fetch;
     await expect(fetchFileContent("example", "repeat-read", "index.ts", "github_pat_test-only")).resolves.toBe("cached source");
 
     global.fetch = jest.fn(async (input) => /^\/repos\/example\/[^/]+$/.test(new URL(String(input)).pathname)

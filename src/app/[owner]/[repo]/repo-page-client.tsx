@@ -23,10 +23,13 @@ import BrandLogo from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { getCachedDiagram, cacheDiagram, hashToken } from "@/lib/diagram-cache";
+import { parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { buildAnalysisRequest, resolveAnalysisResponse } from "@/lib/analysis-client";
 import type {
     DiagramTab,
     RepoMetadata,
+    RepositorySnapshot,
+    RepositoryObservations,
     FileTreeResponse,
     Contributor,
     Branch,
@@ -44,6 +47,8 @@ interface RepoPageClientProps {
 }
 
 interface RepoData {
+    snapshot?: RepositorySnapshot;
+    observations?: RepositoryObservations;
     metadata: RepoMetadata;
     fileTree: FileTreeResponse | null;
     contributors: Contributor[];
@@ -115,11 +120,14 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const githubToken = dashboardToken ?? sessionToken;
     const repositoryContext = useMemo(() => ({ owner, repo, githubToken }), [owner, repo, githubToken]);
     const [loadedContext, setLoadedContext] = useState<typeof repositoryContext | null>(null);
-    const analysisTree = loadedContext === repositoryContext ? repoData?.fileTree : null;
+    const loadedTree = loadedContext === repositoryContext ? repoData?.fileTree : null;
+    const emptyTree = repoData?.snapshot?.status === "ready" && loadedTree?.tree.length === 0;
+    const analysisTree = emptyTree ? null : loadedTree;
+    const analysisSnapshotIdentity = loadedContext === repositoryContext ? repositorySnapshotKey(repoData?.snapshot) : undefined;
     // Credentials stay in memory; neither they nor this identity enter persisted cache keys.
-    // A replacement tree also invalidates analysis when snapshot plumbing arrives later.
-    const analysisSession = useMemo<AnalysisSession>(() => ({ identity: [repositoryContext, analysisTree, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey], active: false, generation: 0, attempted: false, pendingMode: null }),
-        [repositoryContext, analysisTree, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey]);
+    // Commit identity invalidates analysis even when the tree contents are unchanged.
+    const analysisSession = useMemo<AnalysisSession>(() => ({ identity: [repositoryContext, analysisTree, analysisSnapshotIdentity, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey], active: false, generation: 0, attempted: false, pendingMode: null }),
+        [repositoryContext, analysisTree, analysisSnapshotIdentity, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey]);
     const legacyCacheSessionRef = useRef<AnalysisSession | null>(null);
     const [analysisView, setAnalysisView] = useState<AnalysisView | null>(null);
     const currentView = analysisView?.session === analysisSession ? analysisView : null;
@@ -209,7 +217,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
                     if (type === "done") {
                         receivedDone = true;
-                        setRepoData(event.payload as RepoData);
+                        const payload = event.payload as RepoData;
+                        if (payload.snapshot) {
+                            payload.snapshot = parseRepositorySnapshot(payload.snapshot, owner, repo);
+                            if ((payload.snapshot.status === "ready" && payload.fileTree?.sha !== payload.snapshot.treeSha) || (payload.snapshot.status === "empty" && payload.fileTree !== null)) throw new RepositorySnapshotError();
+                        }
+                        setRepoData(payload);
                         setLoadedContext(repositoryContext);
                         setLoading(false);
                         // Don't return — keep reading for the enriched event.
@@ -275,7 +288,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             updateView(previous => ({ ...previous, steps: typeof update === "function" ? update(previous.steps) : update }));
         const storeResult = (result: DisplayAnalysis, cached = false) => updateView(previous => ({ ...previous, results: { ...previous.results, [mode]: { result, generation: cached ? -1 : generation } } }));
         const cacheOpts = { tokenHash: hashToken(getToken()), mode };
-        const cached = legacyCacheSessionRef.current === analysisSession ? getCachedDiagram(owner, repo, cacheOpts) : null;
+        // shortcut: ignore revisionless legacy entries for pinned views until Chunk 6 migrates cache identity.
+        const cached = !analysisSnapshotIdentity && legacyCacheSessionRef.current === analysisSession ? getCachedDiagram(owner, repo, cacheOpts) : null;
 
         let toastId: string | number | undefined;
         if (mode === "premium") {
@@ -485,7 +499,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 updateView(previous => ({ ...previous, requestMode: null }));
             }
         }
-    }, [analysisTree, analysisSession, currentView?.results.premium, repoData?.readme, owner, repo, getToken, aiSettings]);
+    }, [analysisTree, analysisSession, analysisSnapshotIdentity, currentView?.results.premium, repoData?.readme, owner, repo, getToken, aiSettings]);
 
     const showNormalDiagram = useCallback(() => {
         if (!analysisSession.active) return;
@@ -570,6 +584,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const isTabMounted = useCallback((tab: DiagramTab) => mountedTabs.includes(tab), [mountedTabs]);
 
     const architectureTabContent = useMemo(() => {
+        if (repoData?.snapshot?.status === "empty") return <div role="status" className="architecture-state text-sm text-muted-foreground">This repository has no commits yet. There is no code snapshot to display.</div>;
+        if (emptyTree) return <div role="status" className="architecture-state text-sm text-muted-foreground">This snapshot contains no files.</div>;
         if (!analysisTree && !isAnalyzing) return <div className="architecture-state text-muted-foreground text-sm">No data available for this view.</div>;
         const displayedMode = analysis?.source === "ai" ? "Premium" : "Smart";
         const previous = Boolean(analysis && (displayedResult !== selectedResult || ((isAnalyzing || currentView?.error) && displayedResult?.generation !== currentView?.generation)));
@@ -597,9 +613,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 </div>
             </div>
         );
-    }, [analysis, analysisTree, currentView, displayedResult, isAnalyzing, owner, repo, repoData?.metadata.defaultBranch, runAnalysis, selectedMode, selectedResult, showNormalDiagram]);
+    }, [analysis, analysisTree, emptyTree, currentView, displayedResult, isAnalyzing, owner, repo, repoData?.metadata.defaultBranch, repoData?.snapshot?.status, runAnalysis, selectedMode, selectedResult, showNormalDiagram]);
 
     const filesTabContent = useMemo(() => {
+        if (emptyTree) return <div role="status" className="architecture-state text-sm text-muted-foreground">This snapshot contains no files.</div>;
+        if (repoData?.snapshot?.status === "empty") return <div role="status" className="architecture-state text-sm text-muted-foreground">This repository has no commits yet. There is no code snapshot to display.</div>;
         if (repoData?.fileTree) {
             return (
                 <div className="relative h-full w-full">
@@ -610,6 +628,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                         repo={repo}
                         githubToken={githubToken}
                         fileTypeLegend={fileTypeLegend}
+                        snapshot={repoData.snapshot}
                     />
                 </div>
             );
@@ -620,7 +639,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 No data available for this view.
             </div>
         );
-    }, [fileTypeLegend, owner, repo, repoData?.fileTree, githubToken]);
+    }, [emptyTree, fileTypeLegend, owner, repo, repoData?.fileTree, repoData?.snapshot, githubToken]);
 
     const contributorsTabContent = useMemo(
         () => (
@@ -648,6 +667,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 branches={repoData.branches}
                 commits={repoData.commits}
                 commitsFetchError={repoData.commitsFetchError}
+                snapshot={repoData.snapshot}
                 defaultBranch={repoData.metadata.defaultBranch}
                 owner={owner}
                 repo={repo}
@@ -746,6 +766,10 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     <div className="workspace-identity min-w-0">
                         <h1 className="font-semibold truncate" title={`${owner}/${repo}`}><span>{owner} / </span>{repo}</h1>
                         {repoData.metadata.description && <p className="workspace-description" title={repoData.metadata.description}>{repoData.metadata.description}</p>}
+                        {repoData.snapshot && <div role="note" aria-label="Repository snapshot" className="text-xs text-muted-foreground break-words">
+                            {repoData.snapshot.status === "empty" ? "Empty repository" : <>Tree snapshot <code title={repoData.snapshot.commitSha}>{repoData.snapshot.commitSha.slice(0, 7)}</code></>} · Captured <time dateTime={repoData.snapshot.capturedAt}>{new Date(repoData.snapshot.capturedAt).toLocaleString()}</time>
+                            {repoData.observations && <span className="block">Repository metrics observed <time dateTime={repoData.observations.metadata.observedAt}>{new Date(repoData.observations.metadata.observedAt).toLocaleString()}</time>; contributors and languages are live observations, not commit-specific.</span>}
+                        </div>}
                     </div>
                     <div className="workspace-summary" aria-label="Repository summary">
                         <span><strong className="text-white">{repoData.fileTree?.tree.filter((item) => item.type === "blob").length.toLocaleString() ?? "0"}</strong> files</span>

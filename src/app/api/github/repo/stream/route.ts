@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { fetchAllRepoData } from "@/lib/github";
-import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIp, scrubSecrets } from "@/lib/rate-limit";
 import type { Contributor } from "@/types";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
                     },
                 });
             } catch (err) {
-                const msg = err instanceof Error ? err.message : "Failed to load repository";
+                const msg = scrubSecrets(err instanceof Error ? err.message : "Failed to load repository");
                 // Rate limit check must come before the generic 403 check — a 403 rate-limit
                 // response contains "403" in the message which would otherwise match the auth
                 // pattern first and show a misleading "Authentication failed" error.
@@ -132,7 +132,7 @@ export async function GET(request: NextRequest) {
     return new Response(stream, {
         headers: {
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "private, no-store",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },

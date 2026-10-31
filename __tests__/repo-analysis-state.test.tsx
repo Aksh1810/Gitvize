@@ -262,3 +262,47 @@ it("does not reintroduce a legacy cached result after a known credential-context
     expect(screen.queryByText("Incompatible cached Premium")).not.toBeInTheDocument();
     expect(cacheDiagram).toHaveBeenCalledTimes(1);
 });
+
+it("shows an explicit empty-code snapshot instead of an analysis pipeline or invented SHA", async () => {
+    global.fetch = jest.fn(async () => stream({ type: "done", payload: { ...repository(), fileTree: null, snapshot: { schemaVersion: 1, owner: "example", repo: "repo", defaultBranch: "main", selectedBranch: "main", capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public", status: "empty", commitSha: null, treeSha: null } } })) as unknown as typeof fetch;
+    render(<RepoPageClient owner="example" repo="repo" />);
+    await screen.findByText(/This repository has no commits yet/);
+    expect(screen.getByRole("note", { name: "Repository snapshot" })).toHaveTextContent(/Empty repository/);
+    expect(requests).toHaveLength(0);
+});
+
+it("labels the captured revision and suppresses A's Premium completion after a same-tree snapshot B arrives", async () => {
+    const A = "a".repeat(40), B = "b".repeat(40), T = "c".repeat(40);
+    const first = { ...repository(), fileTree: { ...repository().fileTree, sha: T }, snapshot: { schemaVersion: 1, owner: "example", repo: "repo", defaultBranch: "main", selectedBranch: "main", capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public", status: "ready", commitSha: A, treeSha: T } };
+    const next = deferred<{ done: boolean; value?: Uint8Array }>(); let read = 0;
+    const fetchFixture = global.fetch;
+    global.fetch = jest.fn((url, init) => String(url).includes("/stream?") ? Promise.resolve({ ok: true, status: 200, headers: new Headers({ "content-type": "text/event-stream" }), body: { getReader: () => ({ read: async () => read++ === 0 ? { done: false, value: new TextEncoder().encode(`data: ${JSON.stringify({ type: "done", payload: first })}\n\n`) } : read === 2 ? next.promise : { done: true } }) } }) : fetchFixture(url, init)) as unknown as typeof fetch;
+    render(<RepoPageClient owner="example" repo="repo" />); await screen.findByText("Smart overview: repo.ts");
+    expect(screen.getByRole("note", { name: "Repository snapshot" })).toHaveTextContent("aaaaaaa");
+    const old = deferred<ResponseFixture>(); analyze = () => old.promise; generate();
+    analyze = async () => json(result());
+    await act(async () => next.resolve({ done: false, value: new TextEncoder().encode(`data: ${JSON.stringify({ type: "done", payload: { ...first, snapshot: { ...first.snapshot, commitSha: B, capturedAt: "2026-10-30T13:00:00.000Z" } } })}\n\n`) }));
+    await waitFor(() => expect(requests.filter(r => r.mode === "smart")).toHaveLength(2));
+    await screen.findByText("Smart overview: repo.ts");
+    await act(async () => old.resolve(json(result("pending", "Obsolete snapshot Premium"))));
+    expect(screen.getByRole("note", { name: "Repository snapshot" })).toHaveTextContent("bbbbbbb");
+    expect(view()).toHaveTextContent("Smart overview: repo.ts"); expect(cacheDiagram).not.toHaveBeenCalled(); expect(toast.success).not.toHaveBeenCalled();
+});
+
+it("distinguishes a captured empty tree from a repository with no commits", async () => {
+    global.fetch = jest.fn(async () => stream({ type: "done", payload: { ...repository(), fileTree: { sha: "c".repeat(40), tree: [], truncated: false }, snapshot: { schemaVersion: 1, owner: "example", repo: "repo", defaultBranch: "main", selectedBranch: "main", capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public", status: "ready", commitSha: "a".repeat(40), treeSha: "c".repeat(40) } } })) as unknown as typeof fetch;
+    render(<RepoPageClient owner="example" repo="repo" />);
+    await screen.findByText("This snapshot contains no files.");
+    expect(screen.getByRole("note", { name: "Repository snapshot" })).toHaveTextContent("aaaaaaa"); expect(requests).toHaveLength(0);
+});
+
+it("does not replace a pinned Smart view with a legacy cached diagram whose revision is unknown", async () => {
+    const fetchFixture = global.fetch;
+    const data = { ...repository(), fileTree: { ...repository().fileTree, sha: "c".repeat(40) }, snapshot: { schemaVersion: 1, owner: "example", repo: "repo", defaultBranch: "main", selectedBranch: "main", capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public", status: "ready", commitSha: "a".repeat(40), treeSha: "c".repeat(40) } };
+    global.fetch = jest.fn((url, init) => String(url).includes("/stream?") ? Promise.resolve(stream({ type: "done", payload: data })) : fetchFixture(url, init)) as unknown as typeof fetch;
+    jest.mocked(getCachedDiagram).mockReturnValue({ architecture: result("pending", "Unknown revision cache").architecture, annotations: [], source: "ai", cachedAt: "2026-10-29T00:00:00.000Z" });
+    render(<RepoPageClient owner="example" repo="repo" />); await screen.findByText("Smart overview: repo.ts");
+    analyze = async () => { throw new Error("Fixture Premium unavailable"); }; generate(); await screen.findByRole("alert");
+    expect(view()).toHaveTextContent("Smart overview: repo.ts"); expect(screen.queryByText("Unknown revision cache")).not.toBeInTheDocument();
+    expect(cacheDiagram).not.toHaveBeenCalled(); expect(toast.success).not.toHaveBeenCalled();
+});

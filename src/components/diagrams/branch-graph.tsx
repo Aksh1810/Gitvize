@@ -20,11 +20,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CommitHistoryRail from "./commit-history-rail";
-import type { Branch, Commit } from "@/types";
+import { repositorySnapshotKey } from "@/lib/repository-snapshot";
+import type { Branch, Commit, RepositorySnapshot } from "@/types";
 
 const BRANCH_COLOR = "var(--atlas-blue)";
 
 interface BranchGraphProps {
+    snapshot?: RepositorySnapshot;
     branches: Branch[];
     commits: Commit[];
     commitsFetchError?: boolean;
@@ -125,7 +127,9 @@ export default function BranchGraph({
     owner,
     repo,
     githubToken,
+    snapshot,
 }: BranchGraphProps) {
+    const snapshotIdentity = repositorySnapshotKey(snapshot);
     const githubHeaders = useMemo((): Record<string, string> => githubToken ? { "x-github-token": githubToken } : {}, [githubToken]);
     const [view, setView] = useState<"timeline" | "history">("timeline");
     const [showAllBranches, setShowAllBranches] = useState(false);
@@ -138,9 +142,10 @@ export default function BranchGraph({
 
     const [selection, setSelection] = useState({ branch: defaultBranch, defaultBranch, attempt: 0 });
     const selectedBranch = selection.defaultBranch === defaultBranch ? selection.branch : defaultBranch;
-    const branchHead = branches.find(branch => branch.name === selectedBranch)?.sha;
+    const selectedHead = branches.find(branch => branch.name === selectedBranch)?.headSha;
+    const branchHead = selectedHead ?? branches.find(branch => branch.name === selectedBranch)?.sha;
     const defaultHead = branches.find(branch => branch.name === defaultBranch)?.sha;
-    const historyContext = useMemo(() => ({ owner, repo, headers: githubHeaders, defaultBranch, head: defaultHead, commits: initialCommits }), [owner, repo, githubHeaders, defaultBranch, defaultHead, initialCommits]);
+    const historyContext = useMemo(() => ({ owner, repo, headers: githubHeaders, defaultBranch, head: defaultHead, snapshotIdentity, commits: initialCommits }), [owner, repo, githubHeaders, defaultBranch, defaultHead, snapshotIdentity, initialCommits]);
     const baseHistory = useMemo(() => ({ context: historyContext, commits: historyContext.commits, page: historyContext.commits.length >= 500 ? 5 : 1, hasMore: historyContext.commits.length >= 500 }), [historyContext]);
     const [history, setHistory] = useState(baseHistory);
     const currentHistory = history.context === historyContext ? history : baseHistory;
@@ -181,7 +186,7 @@ export default function BranchGraph({
         update({ commits: [], loading: true, error: null });
         void (async () => {
             try {
-                const params = new URLSearchParams({ owner, repo, sha: selectedBranch, per_page: "100", page: "1" });
+                const params = new URLSearchParams({ owner, repo, sha: selectedHead ?? selectedBranch, per_page: "100", page: "1" });
                 const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
                 if (!ownsRequest()) return;
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -194,7 +199,7 @@ export default function BranchGraph({
             }
         })();
         return cleanup;
-    }, [requestScope, selectedBranch, defaultBranch, owner, repo, githubHeaders]);
+    }, [requestScope, selectedBranch, selectedHead, defaultBranch, owner, repo, githubHeaders]);
 
     const fetchBranchCommits = useCallback((branch: string) => {
         setSelection(previous => ({ branch, defaultBranch, attempt: previous.attempt + 1 }));

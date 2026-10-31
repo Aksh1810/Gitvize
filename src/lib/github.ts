@@ -4,9 +4,12 @@
 
 import { createHash } from "node:crypto";
 import { unstable_cache } from "next/cache";
+import { gitShaSchema, parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { MAX_FILE_BYTES, readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
 import type {
     RepoMetadata,
+    RepositorySnapshot,
+    RepositoryObservations,
     FileTreeResponse,
     TreeItem,
     Contributor,
@@ -46,6 +49,14 @@ function headers(token?: string | null): HeadersInit {
     return h;
 }
 
+export class GitHubApiError extends Error {
+    constructor(public readonly status: number, path: string, body: string) {
+        super(`GitHub API error ${status} for ${path}: ${body}`);
+        try { this.responseMessage = JSON.parse(body).message; } catch { /* Non-JSON failures are not empty-repository evidence. */ }
+    }
+    readonly responseMessage?: string;
+}
+
 async function ghFetch<T>(
     path: string,
     token?: string | null,
@@ -83,7 +94,7 @@ async function ghFetch<T>(
 
     if (!res.ok) {
         const body = await readBoundedText(res, 64 * 1024).catch(() => "");
-        throw new Error(`GitHub API error ${res.status} for ${path}: ${body}`);
+        throw new GitHubApiError(res.status, path, body);
     }
 
     const remaining = parseInt(res.headers.get("x-ratelimit-remaining") ?? "9999", 10);
@@ -100,13 +111,15 @@ async function ghFetch<T>(
 export async function fetchRepoMetadata(
     owner: string,
     repo: string,
-    token?: string | null
+    token?: string | null,
+    cacheMode: FetchCacheMode = { revalidate: 300 }
 ): Promise<RepoMetadata> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ghFetch<any>(`/repos/${owner}/${repo}`, token);
+    const data = await ghFetch<any>(`/repos/${owner}/${repo}`, token, cacheMode);
     return {
         owner,
         repo,
+        visibility: data.private === true ? "private" : data.private === false ? "public" : undefined,
         fullName: data.full_name,
         description: data.description,
         stars: data.stargazers_count,
@@ -127,15 +140,16 @@ export async function fetchRepoMetadata(
 export async function fetchFileTree(
     owner: string,
     repo: string,
-    branch?: string,
-    token?: string | null
+    treeRef?: string,
+    token?: string | null,
+    cacheMode: FetchCacheMode = { revalidate: 120 }
 ): Promise<FileTreeResponse> {
-    const ref = branch ?? "HEAD";
+    const ref = treeRef ?? "HEAD";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await ghFetch<any>(
         `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
         token,
-        { revalidate: 120 }
+        cacheMode
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allItems: TreeItem[] = data.tree.map((item: any) => ({
@@ -233,8 +247,11 @@ export async function fetchBranches(
         `/repos/${owner}/${repo}/branches?per_page=20`,
         token
     );
+    const capturedAt = new Date().toISOString();
     return data.map((b) => ({
         name: b.name,
+        headSha: gitShaSchema.parse(b.commit.sha),
+        capturedAt,
         sha: b.commit.sha,
         isDefault: b.name === defaultBranch,
     }));
@@ -306,12 +323,12 @@ export async function fetchCommits(
 async function fetchCommitsForDAG(
     owner: string,
     repo: string,
-    defaultBranch: string,
+    defaultHeadSha: string,
     branches: Branch[],
     token?: string | null
 ): Promise<{ commits: Commit[]; commitsFetchError: boolean }> {
-    // Phase 1: fetch 5 pages from the default branch in parallel
-    const base = `?sha=${encodeURIComponent(defaultBranch)}&per_page=100`;
+    // Phase 1: fetch 5 pages at the captured default-branch commit in parallel
+    const base = `?sha=${encodeURIComponent(defaultHeadSha)}&per_page=100`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const defaultPages = await Promise.allSettled<any[]>(
         [1, 2, 3, 4, 5].map((page) =>
@@ -464,7 +481,8 @@ export async function checkRepoAccess(
         };
     }
 
-    const data = await res.json() as { private?: boolean; full_name?: string };
+    const data = JSON.parse(await readBoundedText(res, 8 * 1024 * 1024)) as { private?: boolean; full_name?: string };
+    if (typeof data.private !== "boolean") return { ok: false, status: 502, isPrivate: false };
     if (!callerToken && data.private !== false) {
         return { ok: false, status: 404, isPrivate: false };
     }
@@ -652,93 +670,104 @@ export async function fetchFileContent(
 
 // --- Fetch all repo data in parallel ---
 
-async function _fetchAllRepoDataImpl(
-    owner: string,
-    repo: string,
-    token?: string | null
-) {
+/** A Git ref points at a commit, whose tree is a different Git object. */
+async function captureSnapshot(owner: string, repo: string, metadata: RepoMetadata, visibility: "public" | "private", token?: string | null): Promise<RepositorySnapshot> {
+    const base = { schemaVersion: 1, owner, repo, selectedBranch: metadata.defaultBranch, defaultBranch: metadata.defaultBranch, visibility, capturedAt: new Date().toISOString() };
+    let commitSha: string;
+    try {
+        const ref = await ghFetch<{ object: { type: string; sha: string } }>(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(metadata.defaultBranch)}`, token, { noStore: true });
+        if (ref.object.type !== "commit") throw new RepositorySnapshotError();
+        commitSha = gitShaSchema.parse(ref.object.sha);
+    } catch (error) {
+        // A generic 404/409, denial or rate limit does not establish an empty repo.
+        if (error instanceof GitHubApiError && error.status === 409 && error.responseMessage === "Git Repository is empty.") return parseRepositorySnapshot({ ...base, status: "empty", commitSha: null, treeSha: null });
+        throw error;
+    }
+    const commit = await ghFetch<{ sha: string; tree: { sha: string } }>(`/repos/${owner}/${repo}/git/commits/${commitSha}`, token, { noStore: true });
+    if (commit.sha !== commitSha) throw new RepositorySnapshotError();
+    return parseRepositorySnapshot({ ...base, status: "ready", commitSha, treeSha: commit.tree.sha });
+}
+
+/** Browser identifiers are checked behind a fresh access gate and a commit read. */
+export async function fetchRepositorySnapshotTree(owner: string, repo: string, value: unknown, token?: string | null) {
+    const snapshot = parseRepositorySnapshot(value, owner, repo);
+    const access = await checkRepoAccess(owner, repo, token);
+    if (!access.ok) {
+        if (access.rateLimited) throw new GitHubRateLimitError(access.retryAfter);
+        throw new GitHubApiError(access.status, `/repos/${owner}/${repo}`, "Repository unavailable");
+    }
+    if ((access.isPrivate ? "private" : "public") !== snapshot.visibility) throw new RepositorySnapshotError();
+    const effectiveToken = token?.trim() || getNextServerToken();
+    if (snapshot.status === "empty") {
+        const metadata = await fetchRepoMetadata(owner, repo, effectiveToken, { noStore: true });
+        const verified = await captureSnapshot(owner, repo, metadata, snapshot.visibility, effectiveToken);
+        if (verified.status !== "empty" || verified.defaultBranch !== snapshot.defaultBranch) throw new RepositorySnapshotError();
+        return { snapshot, fileTree: null };
+    }
+    const commit = await ghFetch<{ sha: string; tree: { sha: string } }>(`/repos/${owner}/${repo}/git/commits/${snapshot.commitSha}`, effectiveToken, { noStore: true });
+    if (commit.sha !== snapshot.commitSha || commit.tree.sha !== snapshot.treeSha) throw new RepositorySnapshotError();
+    const fileTree = await fetchFileTree(owner, repo, snapshot.treeSha, effectiveToken, { noStore: true });
+    if (fileTree.sha !== snapshot.treeSha) throw new RepositorySnapshotError();
+    return { snapshot, fileTree };
+}
+
+async function _fetchAllRepoDataImpl(snapshot: RepositorySnapshot, metadata: RepoMetadata, metadataObservedAt: string, token?: string | null) {
+    const { owner, repo } = snapshot;
     let contributorsFetchError: string | null = null;
-    const [metadata, contributorsResult, languages] = await Promise.all([
-        fetchRepoMetadata(owner, repo, token),
-        fetchContributors(owner, repo, token).catch((err) => {
+    const observations: RepositoryObservations = {
+        metadata: { status: "ready", observedAt: metadataObservedAt },
+        contributors: { status: "ready", observedAt: metadataObservedAt },
+        languages: { status: "ready", observedAt: metadataObservedAt },
+    };
+    const [contributorsResult, languages] = await Promise.all([
+        fetchContributors(owner, repo, token).then(result => { observations.contributors.observedAt = new Date().toISOString(); return result; }).catch((err) => {
             const msg = (err as Error)?.message ?? String(err);
-            console.warn("[contributors] fetch failed:", msg);
-            contributorsFetchError = /rate.?limit|secondary.?rate/i.test(msg)
-                ? "rate_limited"
-                : "fetch_failed";
+            contributorsFetchError = /rate.?limit|secondary.?rate/i.test(msg) ? "rate_limited" : "fetch_failed";
+            observations.contributors = { status: "error", observedAt: new Date().toISOString() };
             return { data: [] as Contributor[], truncated: false };
         }),
-        fetchLanguages(owner, repo, token).catch(() => ({})),
+        fetchLanguages(owner, repo, token).then(result => { observations.languages.observedAt = new Date().toISOString(); return result; }).catch(() => {
+            observations.languages = { status: "error", observedAt: new Date().toISOString() };
+            return {};
+        }),
     ]);
-    const contributors = contributorsResult.data;
-    const contributorsTruncated = contributorsResult.truncated;
-
-    // Branches feed fetchCommitsForDAG; let it overlap with the other independent fetches.
-    const branchesP = fetchBranches(owner, repo, metadata.defaultBranch, token).catch(
-        () => [] as Branch[],
-    );
-
-    const [fileTree, branches, history, readme, dependencyFiles, mergedPRs] =
-        await Promise.all([
-            fetchFileTree(owner, repo, metadata.defaultBranch, token),
-            branchesP,
-            branchesP.then((b) =>
-                fetchCommitsForDAG(owner, repo, metadata.defaultBranch, b, token).catch(
-                    () => ({ commits: [] as Commit[], commitsFetchError: true })
-                ),
-            ),
-            fetchReadme(owner, repo, token).catch(() => ""),
-            fetchDependencyFiles(owner, repo, token).catch(() => []),
-            fetchMergedPRs(owner, repo, 1, token).catch(() => []),
-        ]);
-
-    return {
-        metadata,
-        fileTree,
-        contributors,
-        contributorsTruncated,
-        contributorsFetchError,
-        branches,
-        ...history,
-        readme,
-        languages,
-        dependencyFiles,
-        mergedPRs,
-    };
+    const branchesP = snapshot.status === "empty" ? Promise.resolve([] as Branch[]) : fetchBranches(owner, repo, snapshot.defaultBranch, token).then(branches => branches.map(branch => branch.isDefault ? { ...branch, sha: snapshot.commitSha!, headSha: snapshot.commitSha!, capturedAt: snapshot.capturedAt } : branch)).catch(() => [] as Branch[]);
+    const [fileTree, branches, history, readme, dependencyFiles, mergedPRs] = await Promise.all([
+        snapshot.status === "empty" ? null : fetchFileTree(owner, repo, snapshot.treeSha, token, { noStore: true }),
+        branchesP,
+        snapshot.status === "empty" ? { commits: [], commitsFetchError: false } : branchesP.then(b => fetchCommitsForDAG(owner, repo, snapshot.commitSha!, b, token).catch(() => ({ commits: [] as Commit[], commitsFetchError: true }))),
+        snapshot.status === "empty" ? "" : fetchReadme(owner, repo, token).catch(() => ""),
+        snapshot.status === "empty" ? [] : fetchDependencyFiles(owner, repo, token).catch(() => []),
+        fetchMergedPRs(owner, repo, 1, token).catch(() => []),
+    ]);
+    if (snapshot.status === "ready" && fileTree?.sha !== snapshot.treeSha) throw new RepositorySnapshotError();
+    return { snapshot, observations, metadata, fileTree, contributors: contributorsResult.data, contributorsTruncated: contributorsResult.truncated, contributorsFetchError, branches, ...history, readme, languages, dependencyFiles, mergedPRs };
 }
 
-// In-flight deduplication: collapses concurrent cold-cache bursts for the same
-// repo onto a single Promise so only one GitHub API fan-out runs at a time.
+// Only public aggregates share work; credentials never enter persistent arguments/keys.
 const inflight = new Map<string, ReturnType<typeof _fetchAllRepoDataImpl>>();
-
-function deduplicatedFetch(owner: string, repo: string) {
-    const key = `${owner}/${repo}`;
+function deduplicatedFetch(snapshot: RepositorySnapshot, metadata: RepoMetadata, observedAt: string, token?: string | null) {
+    const key = repositorySnapshotKey(snapshot)!;
     const existing = inflight.get(key);
     if (existing) return existing;
-    const p = requireRepoToken(owner, repo)
-        .then((token) => _fetchAllRepoDataImpl(owner, repo, token))
-        .finally(() => inflight.delete(key));
-    inflight.set(key, p);
-    return p;
+    const promise = _fetchAllRepoDataImpl(snapshot, metadata, observedAt, token).finally(() => inflight.delete(key));
+    inflight.set(key, promise);
+    return promise;
 }
 
-// Server-side 5-minute cache backed by Vercel Data Cache (or Next.js in-process
-// cache in dev). Each unique (owner, repo) pair gets its own cache entry.
-const cachedFetchAllRepoData = unstable_cache(
-    deduplicatedFetch,
-    ["repo-data-v5"],
-    { revalidate: 300 }
-);
-
-export async function fetchAllRepoData(
-    owner: string,
-    repo: string,
-    token?: string | null
-) {
-    const effectiveToken = await requireRepoToken(owner, repo, token);
-    if (token?.trim()) {
-        // User's own PAT (private repo) — never serve cached content
-        return _fetchAllRepoDataImpl(owner, repo, effectiveToken);
+export async function fetchAllRepoData(owner: string, repo: string, token?: string | null) {
+    const access = await checkRepoAccess(owner, repo, token);
+    if (!access.ok) {
+        if (access.rateLimited) throw new GitHubRateLimitError(access.retryAfter);
+        throw new GitHubApiError(access.status, `/repos/${owner}/${repo}`, "Repository unavailable");
     }
-    return cachedFetchAllRepoData(owner, repo);
+    const effectiveToken = token?.trim() || getNextServerToken();
+    const metadata = await fetchRepoMetadata(owner, repo, effectiveToken, { noStore: true });
+    if (!metadata.visibility) throw new GitHubApiError(502, `/repos/${owner}/${repo}`, "Repository visibility unavailable");
+    if (!token?.trim() && metadata.visibility !== "public") throw new GitHubApiError(404, `/repos/${owner}/${repo}`, "Repository unavailable");
+    const observedAt = new Date().toISOString();
+    const snapshot = await captureSnapshot(owner, repo, metadata, metadata.visibility, effectiveToken);
+    if (token?.trim()) return _fetchAllRepoDataImpl(snapshot, metadata, observedAt, effectiveToken);
+    // Cache the entire captured payload. Never relabel an old payload with new identity/time.
+    return unstable_cache(() => deduplicatedFetch(snapshot, metadata, observedAt, effectiveToken), ["repo-data-v6-snapshot", repositorySnapshotKey(snapshot)!], { revalidate: 300 })();
 }

@@ -12,8 +12,8 @@ import { GET as getSeed } from "@/app/api/graph/seed/route";
 
 jest.mock("next/cache", () => {
     const entries = new Map<string, unknown>();
-    return { unstable_cache: (callback: (...args: string[]) => Promise<unknown>) => async (...args: string[]) => {
-        const key = JSON.stringify(args);
+    return { unstable_cache: (callback: (...args: string[]) => Promise<unknown>, keys: string[]) => async (...args: string[]) => {
+        const key = JSON.stringify([keys, args]);
         if (!entries.has(key)) entries.set(key, await callback(...args));
         return entries.get(key);
     } };
@@ -22,6 +22,7 @@ jest.mock("@/lib/rate-limit", () => ({
     checkRateLimit: () => ({ ok: true }), getClientIp: () => "test", scrubSecrets: (value: string) => value,
 }));
 
+const SNAP_COMMIT = "a".repeat(40), SNAP_TREE = "c".repeat(40);
 const originalFetch = global.fetch;
 const originalToken = process.env.GITHUB_TOKEN;
 const originalPool = process.env.GITHUB_TOKENS;
@@ -47,7 +48,9 @@ beforeEach(() => {
         }
         usedServerForData ||= server;
         if (url.pathname.includes("/contents/")) return Response.json({ type: "file", encoding: "base64", content: Buffer.from("private-marker").toString("base64") });
-        if (url.pathname.includes("/git/trees/")) return Response.json({ sha: "tree", tree: [{ path: "private-marker.ts", type: "blob", sha: "blob" }] });
+        if (url.pathname.includes("/git/ref/")) return Response.json({ object: { type: "commit", sha: SNAP_COMMIT } });
+        if (url.pathname.includes("/git/commits/")) return Response.json({ sha: SNAP_COMMIT, tree: { sha: SNAP_TREE } });
+        if (url.pathname.includes("/git/trees/")) return Response.json({ sha: SNAP_TREE, tree: [{ path: "private-marker.ts", type: "blob", sha: "blob" }] });
         if (url.hostname === "raw.githubusercontent.com" || url.pathname.endsWith("/readme")) return new Response("Not found", { status: 404 });
         return Response.json([]);
     }) as typeof fetch;
@@ -64,7 +67,8 @@ afterEach(() => {
 it.each([
     ["repo", getRepo], ["stream", getStream], ["file", getFile], ["commits", getCommits], ["access", getAccess], ["seed", getSeed],
 ])("does not expose operator-private data through the %s route", async (route, handler) => {
-    const response = await handler(new NextRequest(`http://localhost/api/test?owner=example&repo=route-${route}&path=private.ts`));
+    const snapshot = { schemaVersion: 1, owner: "example", repo: `route-${route}`, selectedBranch: "main", defaultBranch: "main", status: "ready", commitSha: SNAP_COMMIT, treeSha: SNAP_TREE, capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public" };
+    const response = await handler(new NextRequest(`http://localhost/api/test?owner=example&repo=route-${route}&path=private.ts${route === "seed" ? `&snapshot=${encodeURIComponent(JSON.stringify(snapshot))}` : ""}`));
     const body = await response.text();
     expect(body).not.toContain("private-marker");
     if (route === "access") expect(JSON.parse(body)).toMatchObject({ ok: false });
