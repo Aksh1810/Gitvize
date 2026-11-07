@@ -1,104 +1,81 @@
-// ============================================================================
-// Gitvize — AI Diagram Cache (localStorage-based)
-// ============================================================================
-// Caches AI-generated architecture analysis per repo so that when
-// credits are exhausted or the same repo is revisited, we serve
-// the cached version instantly instead of using fallback heuristics.
+import { z } from "zod";
+import { architectureSchema } from "@/lib/analysis-contract";
+import { repositorySnapshotKey, repositorySnapshotSchema } from "@/lib/repository-snapshot";
+import type { ArchitectureAnalysis, FileAnnotation, RepositorySnapshot } from "@/types";
 
-import type { ArchitectureAnalysis, FileAnnotation } from "@/types";
-
-const CACHE_KEY_PREFIX = "gitviz_diagram_cache:";
-const MAX_CACHED_REPOS = 20; // evict oldest when exceeded
-
-interface CachedDiagram {
-    architecture: ArchitectureAnalysis;
-    annotations: FileAnnotation[];
-    cachedAt: string; // ISO timestamp
-    source: "ai" | "fallback";
-}
-
+const CACHE_KEY_PREFIX = "gitviz_diagram_cache:v2:";
+const MAX_CACHED_REPOS = 20;
+const TTL_MS = 24 * 60 * 60 * 1000;
+const versions = { schemaVersion: 2, generatorVersion: 1, promptVersion: 1 } as const;
+const entrySchema = z.object({
+    schemaVersion: z.literal(2), generatorVersion: z.literal(1), promptVersion: z.literal(1),
+    snapshot: repositorySnapshotSchema,
+    mode: z.enum(["smart", "premium"]), provider: z.string().max(256).nullable(), model: z.string().max(256).nullable(),
+    architecture: architectureSchema,
+    annotations: z.array(z.object({ path: z.string(), role: z.string(), description: z.string(), module: z.string() })),
+    cachedAt: z.string().datetime(), source: z.enum(["ai", "fallback"]), metadataSource: z.enum(["ai", "deterministic"]),
+}).strict();
+export type CachedDiagram = Pick<z.infer<typeof entrySchema>, "architecture" | "annotations" | "cachedAt" | "source"> & { metadataSource?: "ai" | "deterministic" };
 export interface DiagramCacheOpts {
-    /** Short, stable identifier for the GitHub token in use. Cached entries written with
-     *  one token are not returned for another (prevents cross-account stale reads). */
-    tokenHash?: string | null;
-    /** AI analysis mode. "smart" and "premium" produce different output and must not share. */
+    snapshot?: RepositorySnapshot;
     mode?: "smart" | "premium";
+    provider?: string;
+    model?: string;
 }
 
-function cacheKey(owner: string, repo: string, opts?: DiagramCacheOpts): string {
-    const tokenPart = opts?.tokenHash ? opts.tokenHash : "anon";
-    const modePart = opts?.mode ?? "smart";
-    return `${CACHE_KEY_PREFIX}${owner}/${repo}|${tokenPart}|${modePart}`;
+function cacheKey(owner: string, repo: string, opts?: DiagramCacheOpts): string | null {
+    const parsed = repositorySnapshotSchema.safeParse(opts?.snapshot);
+    if (!parsed.success || parsed.data.status !== "ready" || parsed.data.visibility !== "public" || parsed.data.owner.toLowerCase() !== owner.toLowerCase() || parsed.data.repo.toLowerCase() !== repo.toLowerCase()) return null;
+    // shortcut: skip persisted server-funded results until responses expose provider/model identity.
+    if (!opts?.mode || (opts.mode === "premium" && (!opts.provider || !opts.model))) return null;
+    return CACHE_KEY_PREFIX + JSON.stringify([versions, repositorySnapshotKey(parsed.data), opts.mode, opts.mode === "premium" ? opts.provider : null, opts.mode === "premium" ? opts.model : null]);
 }
 
-/** Store an AI-generated diagram in cache */
-export function cacheDiagram(
-    owner: string,
-    repo: string,
-    data: { architecture: ArchitectureAnalysis; annotations: FileAnnotation[] },
-    source: "ai" | "fallback" = "ai",
-    opts?: DiagramCacheOpts,
-): void {
+export function cacheDiagram(owner: string, repo: string, data: { architecture: ArchitectureAnalysis; annotations: FileAnnotation[]; metadataSource?: "ai" | "deterministic" }, source: "ai" | "fallback" = "ai", opts?: DiagramCacheOpts): void {
     if (typeof window === "undefined") return;
-    try {
-        const entry: CachedDiagram = {
-            ...data,
-            cachedAt: new Date().toISOString(),
-            source,
-        };
-        localStorage.setItem(cacheKey(owner, repo, opts), JSON.stringify(entry));
-        evictOldEntries();
-    } catch {
-        // localStorage full or unavailable — silently skip
-    }
+    removeLegacyEntries();
+    const key = cacheKey(owner, repo, opts);
+    if (!key) return; // Private results remain in the owning analysis session only.
+    const entry = entrySchema.safeParse({ ...versions, ...data, snapshot: opts?.snapshot, mode: opts?.mode, provider: opts?.mode === "premium" ? opts.provider : null, model: opts?.mode === "premium" ? opts.model : null, source, metadataSource: data.metadataSource ?? "deterministic", cachedAt: new Date().toISOString() });
+    if (!entry.success) return;
+    try { localStorage.setItem(key, JSON.stringify(entry.data)); evictOldEntries(); } catch { /* Storage unavailable/full: retain the current session view. */ }
 }
 
-/** Retrieve a cached diagram, or null if none exists */
-export function getCachedDiagram(
-    owner: string,
-    repo: string,
-    opts?: DiagramCacheOpts,
-): CachedDiagram | null {
+export function getCachedDiagram(owner: string, repo: string, opts?: DiagramCacheOpts): CachedDiagram | null {
     if (typeof window === "undefined") return null;
+    removeLegacyEntries();
+    const key = cacheKey(owner, repo, opts);
+    if (!key) return null;
     try {
-        const raw = localStorage.getItem(cacheKey(owner, repo, opts));
+        const raw = localStorage.getItem(key);
         if (!raw) return null;
-        return JSON.parse(raw) as CachedDiagram;
-    } catch {
-        return null;
-    }
+        const parsed = entrySchema.safeParse(JSON.parse(raw));
+        if (!parsed.success || cacheKey(owner, repo, { ...parsed.data, provider: parsed.data.provider ?? undefined, model: parsed.data.model ?? undefined }) !== key) return null;
+        const age = Date.now() - Date.parse(parsed.data.cachedAt);
+        if (age < 0 || age > TTL_MS) return null;
+        return parsed.data;
+    } catch { return null; }
 }
 
-/** Tiny synchronous string hash — good enough to bucket cache by token without
- *  exposing the token itself. Not cryptographic. */
-export function hashToken(token: string | null | undefined): string {
-    if (!token) return "anon";
-    let h = 5381;
-    for (let i = 0; i < token.length; i++) {
-        h = ((h << 5) + h + token.charCodeAt(i)) | 0;
-    }
-    return (h >>> 0).toString(36);
+function removeLegacyEntries(): void {
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const key = localStorage.key(i);
+            if (key?.startsWith("gitviz_diagram_cache:") && !key.startsWith(CACHE_KEY_PREFIX)) localStorage.removeItem(key);
+        }
+    } catch { /* Storage unavailable: keep the current session view. */ }
 }
 
-/** Evict oldest cached entries when over limit */
 function evictOldEntries(): void {
-    if (typeof window === "undefined") return;
-    const entries: Array<{ key: string; cachedAt: string }> = [];
+    const entries: Array<{ key: string; cachedAt: number }> = [];
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key?.startsWith(CACHE_KEY_PREFIX)) {
-            try {
-                const raw = localStorage.getItem(key);
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    entries.push({ key, cachedAt: parsed.cachedAt ?? "" });
-                }
-            } catch { /* skip */ }
-        }
+        if (!key?.startsWith(CACHE_KEY_PREFIX)) continue;
+        try {
+            const parsed = entrySchema.safeParse(JSON.parse(localStorage.getItem(key)!));
+            entries.push({ key, cachedAt: parsed.success ? Date.parse(parsed.data.cachedAt) : 0 });
+        } catch { entries.push({ key, cachedAt: 0 }); }
     }
-    if (entries.length > MAX_CACHED_REPOS) {
-        entries.sort((a, b) => a.cachedAt.localeCompare(b.cachedAt));
-        const toRemove = entries.slice(0, entries.length - MAX_CACHED_REPOS);
-        toRemove.forEach((e) => localStorage.removeItem(e.key));
-    }
+    entries.sort((a, b) => a.cachedAt - b.cachedAt);
+    for (const { key } of entries.slice(0, Math.max(0, entries.length - MAX_CACHED_REPOS))) localStorage.removeItem(key);
 }

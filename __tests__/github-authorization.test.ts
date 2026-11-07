@@ -29,6 +29,8 @@ const originalPool = process.env.GITHUB_TOKENS;
 let isPrivate: boolean;
 let revoked: boolean;
 let usedServerForData: boolean;
+const snapshot = (repo: string) => ({ schemaVersion: 1 as const, owner: "example", repo, selectedBranch: "main", defaultBranch: "main", status: "ready" as const, commitSha: SNAP_COMMIT, treeSha: SNAP_TREE, visibility: isPrivate ? "private" as const : "public" as const, capturedAt: "2026-11-07T12:00:00.000Z" });
+const read = (repo: string, path: string, token?: string) => fetchFileContent("example", repo, path, token, snapshot(repo));
 
 beforeEach(() => {
     process.env.GITHUB_TOKEN = "server-test-only";
@@ -75,15 +77,16 @@ it.each([
     expect(usedServerForData).toBe(false);
 });
 
-it("omits operator-private files from batch responses", async () => {
+it("rejects operator-private files in batch responses", async () => {
     const response = await getFiles(new NextRequest("http://localhost/api/test", {
-        method: "POST", body: JSON.stringify({ owner: "example", repo: "batch", paths: ["private.ts"] }),
+        method: "POST", body: JSON.stringify({ owner: "example", repo: "batch", snapshot: snapshot("batch"), paths: ["private.ts"] }),
     }));
-    expect(await response.json()).toEqual({ files: [] });
+    expect(response.status).toBe(404);
+    expect((await response.json()).error).toMatch(/unavailable/i);
 });
 
 it("rejects invalid caller tokens without inheriting operator permissions", async () => {
-    await expect(fetchFileContent("example", "invalid", "private.ts", "invalid-test-only")).rejects.toThrow();
+    await expect(read("invalid", "private.ts", "invalid-test-only")).rejects.toThrow();
     expect(await checkRepoAccess("example", "invalid", "invalid-test-only")).toMatchObject({ ok: false });
 });
 
@@ -95,7 +98,7 @@ it("rejects private reads with pool-only server configuration", async () => {
 
 it("preserves caller-authorized private reads", async () => {
     expect(await checkRepoAccess("example", "caller", "caller-test-only")).toMatchObject({ ok: true, isPrivate: true });
-    await expect(fetchFileContent("example", "caller", "private.ts", "caller-test-only")).resolves.toBe("private-marker");
+    await expect(read("caller", "private.ts", "caller-test-only")).resolves.toBe("private-marker");
 });
 
 it.each([
@@ -104,7 +107,7 @@ it.each([
     ["public-authenticated", false, "caller-test-only"],
 ])("prevents HTTP cache storage of %s file responses", async (label, privateRepo, token) => {
     isPrivate = privateRepo;
-    const response = await getFile(new NextRequest(`http://localhost/api/test?owner=example&repo=cache-${label}&path=index.ts`, {
+    const response = await getFile(new NextRequest(`http://localhost/api/test?owner=example&repo=cache-${label}&path=index.ts&snapshot=${encodeURIComponent(JSON.stringify(snapshot(`cache-${label}`)))}`, {
         headers: token ? { "x-github-token": token } : {},
     }));
     expect(response.status).toBe(200);
@@ -121,7 +124,7 @@ it("preserves server-token throughput for public repositories", async () => {
 
 it("keeps invalid-token retries usable for public repositories", async () => {
     isPrivate = false;
-    await expect(fetchFileContent("example", "public-invalid", "index.ts", "invalid-test-only")).resolves.toBe("private-marker");
+    await expect(read("public-invalid", "index.ts", "invalid-test-only")).resolves.toBe("private-marker");
     expect(usedServerForData).toBe(false);
 });
 
@@ -144,9 +147,9 @@ it("rechecks visibility before serving a warmed aggregate cache", async () => {
 });
 
 it("rechecks access before serving a private file cached with a revoked credential", async () => {
-    await fetchFileContent("example", "revoked", "private.ts", "caller-test-only");
+    await read("revoked", "private.ts", "caller-test-only");
     revoked = true;
-    await expect(fetchFileContent("example", "revoked", "private.ts", "caller-test-only")).rejects.toThrow();
+    await expect(read("revoked", "private.ts", "caller-test-only")).rejects.toThrow();
 });
 
 it.each([
@@ -166,7 +169,7 @@ it.each([
         }
         return fetchRepo(input, init);
     }) as typeof fetch;
-    await expect(fetchFileContent("example", "public-traversal", path)).rejects.toThrow();
+    await expect(read("public-traversal", path)).rejects.toThrow();
 });
 
 it("preserves raw-file fallback for public repositories", async () => {
@@ -174,9 +177,8 @@ it("preserves raw-file fallback for public repositories", async () => {
     const fetchRepo = global.fetch;
     global.fetch = jest.fn(async (input, init) => {
         const url = new URL(String(input));
-        if (url.pathname.includes("/contents/")) return new Response("Not found", { status: 404 });
-        if (url.hostname === "raw.githubusercontent.com") return new Response("public raw source");
+        if (url.pathname.includes("/contents/")) return new Headers(init?.headers).get("Accept")?.includes("raw") ? new Response("public raw source") : Response.json({ type: "file", encoding: "none", download_url: "https://untrusted.invalid/ignored" });
         return fetchRepo(input, init);
     }) as typeof fetch;
-    await expect(fetchFileContent("example", "public-raw", "src/index.ts")).resolves.toBe("public raw source");
+    await expect(read("public-raw", "src/index.ts")).resolves.toBe("public raw source");
 });

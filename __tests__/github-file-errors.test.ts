@@ -7,6 +7,7 @@ const { GET } = jest.requireActual<typeof import("@/app/api/github/repo/file/rou
 afterAll(() => jest.useRealTimers());
 
 const originalFetch = global.fetch;
+const snapshotQuery = encodeURIComponent(JSON.stringify({ schemaVersion: 1, owner: "example", repo: "repo", selectedBranch: "main", defaultBranch: "main", status: "ready", commitSha: "a".repeat(40), treeSha: "c".repeat(40), visibility: "public", capturedAt: "2026-11-07T12:00:00.000Z" }));
 const originalToken = process.env.GITHUB_TOKEN;
 const originalPool = process.env.GITHUB_TOKENS;
 
@@ -29,7 +30,7 @@ it.each(["package.json", "README.md"])("reports exhausted GitHub quota when sele
         status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(resetAt) },
     })) as typeof fetch;
 
-    const response = await GET(new NextRequest(`http://localhost/api/test?owner=example&repo=repo&path=${path}`));
+    const response = await GET(new NextRequest(`http://localhost/api/test?owner=example&repo=repo&path=${path}&snapshot=${snapshotQuery}`));
     expect(response.status).toBe(429);
     expect(Number(response.headers.get("Retry-After"))).toBeGreaterThanOrEqual(119);
     expect(Number(response.headers.get("Retry-After"))).toBeLessThanOrEqual(121);
@@ -43,7 +44,7 @@ it("preserves GitHub's secondary rate-limit retry delay", async () => {
     global.fetch = jest.fn(async () => new Response("Slow down", {
         status: 403, headers: { "retry-after": "60" },
     })) as typeof fetch;
-    const response = await GET(new NextRequest("http://localhost/api/test?owner=example&repo=repo&path=README.md"));
+    const response = await GET(new NextRequest(`http://localhost/api/test?owner=example&repo=repo&path=README.md&snapshot=${snapshotQuery}`));
     expect(response.status).toBe(429);
     expect(response.headers.get("Retry-After")).toBe("60");
 });
@@ -52,7 +53,7 @@ it("reports HTTP 429 without inventing a retry delay from invalid headers", asyn
     global.fetch = jest.fn(async () => new Response("Slow down", {
         status: 429, headers: { "retry-after": "invalid", "x-ratelimit-reset": "invalid" },
     })) as typeof fetch;
-    const response = await GET(new NextRequest("http://localhost/api/test?owner=example&repo=repo&path=README.md"));
+    const response = await GET(new NextRequest(`http://localhost/api/test?owner=example&repo=repo&path=README.md&snapshot=${snapshotQuery}`));
     expect(response.status).toBe(429);
     expect(response.headers.has("Retry-After")).toBe(false);
     expect((await response.json()).error).toMatch(/rate limit.*try again/i);
@@ -60,7 +61,7 @@ it("reports HTTP 429 without inventing a retry delay from invalid headers", asyn
 
 it("does not label an unrelated permission failure as quota exhaustion", async () => {
     global.fetch = jest.fn(async () => new Response("Forbidden", { status: 403 })) as typeof fetch;
-    const response = await GET(new NextRequest("http://localhost/api/test?owner=example&repo=repo&path=README.md"));
+    const response = await GET(new NextRequest(`http://localhost/api/test?owner=example&repo=repo&path=README.md&snapshot=${snapshotQuery}`));
     expect(response.status).not.toBe(429);
     expect((await response.json()).error).not.toMatch(/rate limit/i);
 });

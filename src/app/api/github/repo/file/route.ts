@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchFileContent, GitHubRateLimitError } from "@/lib/github";
+import { fetchFileContent, GitHubApiError, GitHubRateLimitError } from "@/lib/github";
+import { parseRepositorySnapshot, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { ResponseTooLargeError } from "@/lib/response-limits";
 import { checkRateLimit, getClientIp, scrubSecrets, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -35,7 +36,12 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        const content = await fetchFileContent(owner, repo, filePath, token);
+        const raw = searchParams.get("snapshot");
+        if (!raw || raw.length > 4096) throw new RepositorySnapshotError();
+        let value: unknown;
+        try { value = JSON.parse(raw); } catch { throw new RepositorySnapshotError(); }
+        const snapshot = parseRepositorySnapshot(value, owner, repo);
+        const content = await fetchFileContent(owner, repo, filePath, token, snapshot, request.signal);
         return new NextResponse(content, {
             headers: {
                 "Content-Type": "text/plain; charset=utf-8",
@@ -43,6 +49,8 @@ export async function GET(request: NextRequest) {
             },
         });
     } catch (error) {
+        if (request.signal.aborted || (error !== null && typeof error === "object" && "name" in error && error.name === "AbortError")) return NextResponse.json({ error: "File read cancelled" }, { status: 499 });
+        if (error instanceof RepositorySnapshotError) return NextResponse.json({ error: error.message }, { status: 400 });
         if (error instanceof ResponseTooLargeError) return NextResponse.json({ error: error.message }, { status: 413 });
         const message = scrubSecrets(error instanceof Error ? error.message : "Failed to read file");
         if (error instanceof GitHubRateLimitError) {
@@ -54,7 +62,7 @@ export async function GET(request: NextRequest) {
                 },
             });
         }
-        const status = message.includes("not found") || message.includes("Not a file") ? 404 : 500;
-        return NextResponse.json({ error: message }, { status });
+        const status = error instanceof GitHubApiError ? error.status : 500;
+        return NextResponse.json({ error: message }, { status, headers: { "Cache-Control": "private, no-store" } });
     }
 }

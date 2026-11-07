@@ -38,14 +38,52 @@ let requests: Array<{ mode: string; repo: string }>;
 let analyze: (body: { mode: string; repo: string }) => Promise<ResponseFixture>;
 const originalFetch = global.fetch;
 beforeEach(() => {
+    localStorage.clear();
     mockSettings = { provider: "openai", apiKey: "dummy-caller-key", model: "gpt-4o-mini" };
     requests = [];
-    jest.mocked(getCachedDiagram).mockReturnValue(null);
+    jest.mocked(getCachedDiagram).mockReset().mockReturnValue(null);
     analyze = async body => json(result(body.mode === "smart" ? "smart" : "pending", body.mode === "smart" ? "Smart result" : "Premium result"));
     global.fetch = jest.fn(async (url, init) => {
         if (String(url).includes("/stream?")) return stream({ type: "done", payload: repository(new URL(String(url), "http://localhost").searchParams.get("repo")!) });
         const body = JSON.parse(String(init?.body)); requests.push(body); return analyze(body);
     }) as unknown as typeof fetch;
+});
+
+function pinnedCacheFixture(description: string, code = "flowchart TB\nA-->B") {
+    const cache = jest.requireActual<typeof import("@/lib/diagram-cache")>("@/lib/diagram-cache");
+    const snapshot = { schemaVersion: 1 as const, owner: "example", repo: "repo", selectedBranch: "main", defaultBranch: "main", status: "ready" as const, commitSha: "a".repeat(40), treeSha: "c".repeat(40), visibility: "public" as const, capturedAt: "2026-11-07T12:00:00.000Z" };
+    cache.cacheDiagram("example", "repo", { architecture: { ...result().architecture, description, mermaidDiagram: code }, annotations: [], metadataSource: "ai" }, "ai", { snapshot, mode: "premium", provider: "openai", model: "gpt-4o-mini" });
+    jest.mocked(getCachedDiagram).mockImplementation(cache.getCachedDiagram);
+    const fixture = global.fetch;
+    global.fetch = jest.fn((url, init) => String(url).includes("/stream?") ? Promise.resolve(stream({ type: "done", payload: { ...repository(), snapshot, fileTree: { ...repository().fileTree, sha: snapshot.treeSha } } })) : fixture(url, init)) as unknown as typeof fetch;
+}
+
+it("recovers a matching public cached Premium result with its provenance and previous-view label", async () => {
+    pinnedCacheFixture("Pinned cached Premium");
+    await open(); analyze = async () => { throw new Error("Fixture provider unavailable"); };
+    generate(); await screen.findByText("Pinned cached Premium");
+    expect(screen.getByText(/Showing previous Premium diagram/)).toBeInTheDocument();
+    expect(mermaid.parse).toHaveBeenCalledWith("flowchart TB\nA-->B", expect.any(Object));
+    expect(cacheDiagram).not.toHaveBeenCalled(); expect(toast.success).not.toHaveBeenCalled();
+});
+
+it("does not promote an invalid cached Mermaid diagram to a verified fallback view", async () => {
+    pinnedCacheFixture("Invalid cached Premium", "flowchart TB\nA[broken");
+    await open(); jest.mocked(mermaid.parse).mockRejectedValueOnce(new Error("Invalid cached Mermaid"));
+    analyze = async () => { throw new Error("Fixture provider unavailable"); };
+    generate(); await screen.findByRole("alert");
+    expect(view()).toHaveTextContent("Smart overview: repo.ts");
+    expect(screen.queryByText("Invalid cached Premium")).not.toBeInTheDocument();
+    expect(cacheDiagram).not.toHaveBeenCalled(); expect(toast.success).not.toHaveBeenCalled();
+});
+
+it("abandons cached Mermaid validation when Normal supersedes its generation", async () => {
+    pinnedCacheFixture("Obsolete cached Premium"); await open();
+    const pending = deferred<never>(); jest.mocked(mermaid.parse).mockReturnValueOnce(pending.promise);
+    generate(); normal(); await act(async () => pending.reject(new Error("Obsolete cached Mermaid")));
+    expect(view()).toHaveTextContent("Smart overview: repo.ts");
+    expect(requests.map(request => request.mode)).toEqual(["smart"]);
+    expect(cacheDiagram).not.toHaveBeenCalled(); expect(toast.success).not.toHaveBeenCalled();
 });
 afterEach(() => { global.fetch = originalFetch; });
 const generate = () => fireEvent.click(screen.getByRole("button", { name: "Generate Premium Diagram" }));
@@ -251,7 +289,8 @@ it("the real Mermaid error screen keeps explicit retry and fallback actions with
 
 it("does not reintroduce a legacy cached result after a known credential-context change", async () => {
     await open(); generate(); await screen.findByText("Premium result");
-    jest.mocked(getCachedDiagram).mockReturnValue({ architecture: result("pending", "Incompatible cached Premium").architecture, annotations: [], source: "ai", cachedAt: "2026-10-29T00:00:00Z" });
+    localStorage.setItem("gitviz_diagram_cache:example/repo|anon|premium", JSON.stringify({ architecture: result("pending", "Incompatible cached Premium").architecture, annotations: [], source: "ai", cachedAt: "2026-10-29T00:00:00Z" }));
+    jest.mocked(getCachedDiagram).mockImplementation(jest.requireActual<typeof import("@/lib/diagram-cache")>("@/lib/diagram-cache").getCachedDiagram);
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     mockSettings = { provider: "gemini", apiKey: "dummy-new-context", model: "gemini-2.5-flash" };
     fireEvent.click(screen.getByRole("button", { name: "Save fixture settings" }));
@@ -300,7 +339,8 @@ it("does not replace a pinned Smart view with a legacy cached diagram whose revi
     const fetchFixture = global.fetch;
     const data = { ...repository(), fileTree: { ...repository().fileTree, sha: "c".repeat(40) }, snapshot: { schemaVersion: 1, owner: "example", repo: "repo", defaultBranch: "main", selectedBranch: "main", capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public", status: "ready", commitSha: "a".repeat(40), treeSha: "c".repeat(40) } };
     global.fetch = jest.fn((url, init) => String(url).includes("/stream?") ? Promise.resolve(stream({ type: "done", payload: data })) : fetchFixture(url, init)) as unknown as typeof fetch;
-    jest.mocked(getCachedDiagram).mockReturnValue({ architecture: result("pending", "Unknown revision cache").architecture, annotations: [], source: "ai", cachedAt: "2026-10-29T00:00:00.000Z" });
+    localStorage.setItem("gitviz_diagram_cache:example/repo|anon|premium", JSON.stringify({ architecture: result("pending", "Unknown revision cache").architecture, annotations: [], source: "ai", cachedAt: "2026-10-29T00:00:00.000Z" }));
+    jest.mocked(getCachedDiagram).mockImplementation(jest.requireActual<typeof import("@/lib/diagram-cache")>("@/lib/diagram-cache").getCachedDiagram);
     render(<RepoPageClient owner="example" repo="repo" />); await screen.findByText("Smart overview: repo.ts");
     analyze = async () => { throw new Error("Fixture Premium unavailable"); }; generate(); await screen.findByRole("alert");
     expect(view()).toHaveTextContent("Smart overview: repo.ts"); expect(screen.queryByText("Unknown revision cache")).not.toBeInTheDocument();

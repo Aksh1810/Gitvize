@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MAX_FILE_BATCH_PATHS } from "@/lib/file-batch";
-import { fetchFileContent } from "@/lib/github";
-import { FILE_BATCH_CONCURRENCY, MAX_BATCH_BYTES } from "@/lib/response-limits";
-import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
+import { authorizeRepositoryRead, readFileAtSnapshot, GitHubApiError, GitHubRateLimitError } from "@/lib/github";
+import { FILE_BATCH_CONCURRENCY, MAX_BATCH_BYTES, ResponseTooLargeError } from "@/lib/response-limits";
+import { parseRepositorySnapshot, RepositorySnapshotError } from "@/lib/repository-snapshot";
+import { checkRateLimit, getClientIp, rateLimitResponse, scrubSecrets } from "@/lib/rate-limit";
 
 const OWNER_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
 
 /**
  * POST /api/github/repo/files
- * Body: { owner, repo, paths: string[] }
+ * Body: { owner, repo, snapshot, paths: string[] }
  *
  * Batch file content endpoint — fetches all requested files from the GitHub
  * contents API in one request instead of one HTTP round-trip per file.
  * Returns: { files: Array<{ path: string; content: string }> }
- * Files that fail to read are silently omitted from the response.
+ * Preserve successful files and distinguish failed paths from successful empty content.
  */
 export async function POST(request: NextRequest) {
     const ip = getClientIp(request);
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
     const globalRl = checkRateLimit("files:global", 200, 60_000);
     if (!globalRl.ok) return rateLimitResponse(globalRl.resetAt);
 
-    let body: { owner?: unknown; repo?: unknown; paths?: unknown };
+    let body: { owner?: unknown; repo?: unknown; paths?: unknown; snapshot?: unknown };
     try {
         body = await request.json();
     } catch {
@@ -56,25 +57,36 @@ export async function POST(request: NextRequest) {
             !p.startsWith("/"),
     ))];
 
-    const files: Array<{ path: string; content: string }> = [];
-    let responseBytes = Buffer.byteLength(JSON.stringify({ files: [] }), "utf8");
-    for (let offset = 0; offset < validPaths.length; offset += FILE_BATCH_CONCURRENCY) {
-        const results = await Promise.all(validPaths.slice(offset, offset + FILE_BATCH_CONCURRENCY).map(async (filePath) => {
-            try {
-                const content = await fetchFileContent(owner, repo, filePath, token);
-                return { path: filePath, content };
-            } catch {
-                return null;
+    try {
+        request.signal.throwIfAborted();
+        const snapshot = parseRepositorySnapshot(body.snapshot, owner, repo);
+        if (paths.length && !validPaths.length) return NextResponse.json({ error: "invalid file paths" }, { status: 400 });
+        const context = await authorizeRepositoryRead(owner, repo, token, request.signal);
+        const files: Array<{ path: string; content: string }> = [];
+        const errors: Array<{ path: string; status: number; error: string }> = [];
+        for (let offset = 0; offset < validPaths.length; offset += FILE_BATCH_CONCURRENCY) {
+            request.signal.throwIfAborted();
+            const results = await Promise.all(validPaths.slice(offset, offset + FILE_BATCH_CONCURRENCY).map(async path => {
+                try { return { file: { path, content: await readFileAtSnapshot(context, snapshot, path, request.signal) } }; }
+                catch (error) {
+                    request.signal.throwIfAborted();
+                    if (error !== null && typeof error === "object" && "name" in error && error.name === "AbortError") throw error;
+                    const status = error instanceof GitHubApiError ? error.status : error instanceof GitHubRateLimitError ? 429 : error instanceof ResponseTooLargeError ? 413 : error instanceof RepositorySnapshotError ? 400 : 502;
+                    return { failure: { path, status, error: scrubSecrets(error instanceof Error ? error.message : "Pinned file unavailable").slice(0, 512) } };
+                }
+            }));
+            request.signal.throwIfAborted();
+            for (const result of results) {
+                if (result.file) files.push(result.file);
+                else if (result.failure) errors.push(result.failure);
             }
-        }));
-        for (const file of results) {
-            if (!file) continue;
-            responseBytes += Buffer.byteLength(JSON.stringify(file), "utf8") + (files.length ? 1 : 0);
-            if (responseBytes > MAX_BATCH_BYTES) {
-                return NextResponse.json({ error: "Batch exceeds maximum allowed size" }, { status: 413 });
-            }
-            files.push(file);
+            if (Buffer.byteLength(JSON.stringify({ files, errors }), "utf8") > MAX_BATCH_BYTES) return NextResponse.json({ error: "Batch exceeds maximum allowed size" }, { status: 413 });
         }
+        const failure = !files.length ? errors[0] : undefined;
+        return NextResponse.json({ files, errors, ...(failure ? { error: failure.error } : {}) }, { status: failure?.status ?? 200, headers: { "Cache-Control": "private, no-store" } });
+    } catch (error) {
+        const cancelled = request.signal.aborted || (error !== null && typeof error === "object" && "name" in error && error.name === "AbortError");
+        const status = cancelled ? 499 : error instanceof RepositorySnapshotError ? 400 : error instanceof GitHubApiError ? error.status : error instanceof GitHubRateLimitError ? 429 : 502;
+        return NextResponse.json({ error: cancelled ? "File batch cancelled" : scrubSecrets(error instanceof Error ? error.message : "File batch unavailable") }, { status, headers: { "Cache-Control": "private, no-store", ...(error instanceof GitHubRateLimitError && error.retryAfter !== undefined ? { "Retry-After": String(error.retryAfter) } : {}) } });
     }
-    return NextResponse.json({ files });
 }

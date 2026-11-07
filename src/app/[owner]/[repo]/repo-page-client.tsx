@@ -22,7 +22,7 @@ import CloneProgressScreen, { type CloneStep } from "@/components/dashboard/clon
 import BrandLogo from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { getCachedDiagram, cacheDiagram, hashToken } from "@/lib/diagram-cache";
+import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
 import { parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { buildAnalysisRequest, resolveAnalysisResponse } from "@/lib/analysis-client";
 import type {
@@ -128,7 +128,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     // Commit identity invalidates analysis even when the tree contents are unchanged.
     const analysisSession = useMemo<AnalysisSession>(() => ({ identity: [repositoryContext, analysisTree, analysisSnapshotIdentity, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey], active: false, generation: 0, attempted: false, pendingMode: null }),
         [repositoryContext, analysisTree, analysisSnapshotIdentity, aiSettings?.provider, aiSettings?.model, aiSettings?.apiKey]);
-    const legacyCacheSessionRef = useRef<AnalysisSession | null>(null);
     const [analysisView, setAnalysisView] = useState<AnalysisView | null>(null);
     const currentView = analysisView?.session === analysisSession ? analysisView : null;
     const selectedMode = currentView?.selectedMode ?? "smart";
@@ -139,8 +138,6 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
 
     useEffect(() => {
         analysisSession.active = true;
-        // Legacy keys cannot prove compatibility after an in-session identity change.
-        if (analysisTree && !legacyCacheSessionRef.current) legacyCacheSessionRef.current = analysisSession;
         return () => {
             analysisSession.active = false;
             analysisSession.generation++;
@@ -287,9 +284,16 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         const setPipelineSteps = (update: AnalysisSteps | ((previous: AnalysisSteps) => AnalysisSteps)) =>
             updateView(previous => ({ ...previous, steps: typeof update === "function" ? update(previous.steps) : update }));
         const storeResult = (result: DisplayAnalysis, cached = false) => updateView(previous => ({ ...previous, results: { ...previous.results, [mode]: { result, generation: cached ? -1 : generation } } }));
-        const cacheOpts = { tokenHash: hashToken(getToken()), mode };
-        // shortcut: ignore revisionless legacy entries for pinned views until Chunk 6 migrates cache identity.
-        const cached = !analysisSnapshotIdentity && legacyCacheSessionRef.current === analysisSession ? getCachedDiagram(owner, repo, cacheOpts) : null;
+        const cacheOpts = { snapshot: repoData?.snapshot, mode, provider: aiSettings?.provider, model: aiSettings?.model };
+        const stored = getCachedDiagram(owner, repo, cacheOpts);
+        let cached: DisplayAnalysis | null = null;
+        if (stored) {
+            try {
+                const validated = await resolveAnalysisResponse({ ...stored, source: stored.source === "ai" ? "pending" : "fallback", metadataSource: stored.metadataSource ?? "deterministic" });
+                if (stored.source !== "ai" || validated.source === "ai") cached = validated;
+            } catch { /* Invalid cached data cannot replace the current view. */ }
+            if (!ownsRequest()) return;
+        }
 
         let toastId: string | number | undefined;
         if (mode === "premium") {
@@ -449,7 +453,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 storeResult(analysisResult);
                 if (mode === "premium") {
                     const source = analysisResult.source === "ai" ? "ai" : "fallback";
-                    cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations }, source, cacheOpts);
+                    cacheDiagram(owner, repo, { architecture: analysisResult.architecture, annotations: analysisResult.annotations, metadataSource: analysisResult.metadataSource }, source, cacheOpts);
                     if (source === "ai") {
                         toast.success("Premium AI diagram generated", {
                             id: toastId,
@@ -499,7 +503,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 updateView(previous => ({ ...previous, requestMode: null }));
             }
         }
-    }, [analysisTree, analysisSession, analysisSnapshotIdentity, currentView?.results.premium, repoData?.readme, owner, repo, getToken, aiSettings]);
+    }, [analysisTree, analysisSession, currentView?.results.premium, repoData?.snapshot, repoData?.readme, owner, repo, aiSettings]);
 
     const showNormalDiagram = useCallback(() => {
         if (!analysisSession.active) return;
@@ -601,7 +605,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             source={analysis.source}
                             owner={owner}
                             repo={repo}
-                            defaultBranch={repoData?.metadata.defaultBranch ?? "main"}
+                            defaultBranch={repoData?.snapshot?.status === "ready" ? repoData.snapshot.commitSha : repoData?.metadata.defaultBranch ?? "main"}
                             tree={analysisTree?.tree}
                             onFallback={() => selectedMode === "premium" ? showNormalDiagram() : void runAnalysis("smart")}
                         />
@@ -613,7 +617,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 </div>
             </div>
         );
-    }, [analysis, analysisTree, emptyTree, currentView, displayedResult, isAnalyzing, owner, repo, repoData?.metadata.defaultBranch, repoData?.snapshot?.status, runAnalysis, selectedMode, selectedResult, showNormalDiagram]);
+    }, [analysis, analysisTree, emptyTree, currentView, displayedResult, isAnalyzing, owner, repo, repoData?.metadata.defaultBranch, repoData?.snapshot, runAnalysis, selectedMode, selectedResult, showNormalDiagram]);
 
     const filesTabContent = useMemo(() => {
         if (emptyTree) return <div role="status" className="architecture-state text-sm text-muted-foreground">This snapshot contains no files.</div>;

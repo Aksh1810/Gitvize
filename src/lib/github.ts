@@ -2,10 +2,9 @@
 // Gitvize — GitHub API Service
 // ============================================================================
 
-import { createHash } from "node:crypto";
 import { unstable_cache } from "next/cache";
 import { gitShaSchema, parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
-import { MAX_FILE_BYTES, readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
+import { FILE_BATCH_CONCURRENCY, MAX_FILE_BYTES, readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
 import type {
     RepoMetadata,
     RepositorySnapshot,
@@ -60,11 +59,13 @@ export class GitHubApiError extends Error {
 async function ghFetch<T>(
     path: string,
     token?: string | null,
-    cacheMode: FetchCacheMode = { revalidate: 300 }
+    cacheMode: FetchCacheMode = { revalidate: 300 },
+    signal?: AbortSignal,
 ): Promise<T> {
+    signal?.throwIfAborted();
     const url = `${GITHUB_API}${path}`;
     const fetchInit =
-        "noStore" in cacheMode
+        token?.trim() || "noStore" in cacheMode
             ? {
                 headers: headers(token),
                 cache: "no-store" as const,
@@ -74,26 +75,13 @@ async function ghFetch<T>(
                 next: { revalidate: cacheMode.revalidate },
             };
 
-    let res = await fetch(url, fetchInit);
-
-    // If the provided token is invalid/expired, retry unauthenticated so
-    // public repositories still work instead of failing with 401/403.
-    if ((res.status === 401 || res.status === 403) && token?.trim()) {
-        const fallbackInit =
-            "noStore" in cacheMode
-                ? {
-                    headers: headers(null),
-                    cache: "no-store" as const,
-                }
-                : {
-                    headers: headers(null),
-                    next: { revalidate: cacheMode.revalidate },
-                };
-        res = await fetch(url, fallbackInit);
-    }
+    const res = await fetch(url, { ...fetchInit, signal });
+    signal?.throwIfAborted();
 
     if (!res.ok) {
+        if (res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after")))) throw new GitHubRateLimitError(retryDelay(res));
         const body = await readBoundedText(res, 64 * 1024).catch(() => "");
+        signal?.throwIfAborted();
         throw new GitHubApiError(res.status, path, body);
     }
 
@@ -103,7 +91,9 @@ async function ghFetch<T>(
         console.warn(`[github] Rate limit low: ${remaining}/${limit} remaining for ${path}`);
     }
 
-    return JSON.parse(await readBoundedText(res, 8 * 1024 * 1024));
+    const text = await readBoundedText(res, 8 * 1024 * 1024);
+    signal?.throwIfAborted();
+    return JSON.parse(text);
 }
 
 // --- Repository Metadata ---
@@ -175,17 +165,20 @@ export async function fetchFileTree(
 
 // --- README ---
 
-export async function fetchReadme(
-    owner: string,
-    repo: string,
-    token?: string | null
-): Promise<string> {
+export async function fetchReadme(context: RepositoryReadContext, snapshot: RepositorySnapshot, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    const access = snapshotAccess(context, snapshot);
+    if (snapshot.status === "empty") return "";
+    await verifySnapshotCommit(access, snapshot, signal);
     try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = await ghFetch<any>(`/repos/${owner}/${repo}/readme`, token);
-        return Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf-8");
-    } catch {
-        return "";
+        return await readContent(access, `/repos/${access.owner}/${access.repo}/readme?ref=${snapshot.commitSha}`, signal);
+    } catch (error) {
+        signal?.throwIfAborted();
+        if (error instanceof GitHubApiError && error.status === 404) {
+            await verifySnapshotCommit(access, snapshot, signal);
+            return "";
+        }
+        throw error;
     }
 }
 
@@ -438,27 +431,32 @@ export class GitHubRateLimitError extends Error {
     }
 }
 
-export async function checkRepoAccess(
+async function inspectRepoAccess(
     owner: string,
     repo: string,
-    token?: string | null
-): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string; rateLimited?: boolean; retryAfter?: number }> {
+    token?: string | null,
+    signal?: AbortSignal,
+): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string; rateLimited?: boolean; retryAfter?: number; token?: string }> {
     const url = `${GITHUB_API}/repos/${owner}/${repo}`;
 
     const callerToken = token?.trim();
-    const requestToken = callerToken || getNextServerToken();
+    let requestToken = callerToken || getNextServerToken();
+    signal?.throwIfAborted();
     let res = await fetch(url, {
         headers: headers(requestToken),
-        cache: "no-store",
+        cache: "no-store", signal,
     });
+    signal?.throwIfAborted();
 
     // If a stored token is invalid/expired, retry without auth so public
     // repositories can still be resolved.
-    if ((res.status === 401 || res.status === 403) && requestToken) {
+    if ((res.status === 401 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") !== "0" && !res.headers.has("retry-after"))) && requestToken) {
+        requestToken = undefined;
         res = await fetch(url, {
             headers: headers(null),
-            cache: "no-store",
+            cache: "no-store", signal,
         });
+        signal?.throwIfAborted();
     }
 
     if (!res.ok) {
@@ -482,8 +480,9 @@ export async function checkRepoAccess(
     }
 
     const data = JSON.parse(await readBoundedText(res, 8 * 1024 * 1024)) as { private?: boolean; full_name?: string };
+    signal?.throwIfAborted();
     if (typeof data.private !== "boolean") return { ok: false, status: 502, isPrivate: false };
-    if (!callerToken && data.private !== false) {
+    if (data.private && (!callerToken || requestToken !== callerToken)) {
         return { ok: false, status: 404, isPrivate: false };
     }
     return {
@@ -491,17 +490,64 @@ export async function checkRepoAccess(
         status: 200,
         isPrivate: Boolean(data.private),
         fullName: data.full_name,
+        token: requestToken,
     };
 }
 
-async function requireRepoToken(owner: string, repo: string, token?: string | null): Promise<string | undefined> {
-    const access = await checkRepoAccess(owner, repo, token);
+export async function checkRepoAccess(owner: string, repo: string, token?: string | null, signal?: AbortSignal) {
+    const access = await inspectRepoAccess(owner, repo, token, signal);
+    return { ok: access.ok, status: access.status, isPrivate: access.isPrivate, fullName: access.fullName, rateLimited: access.rateLimited, retryAfter: access.retryAfter };
+}
+
+function retryDelay(response: Response): number | undefined {
+    const delay = Number(response.headers.get("retry-after") ?? NaN);
+    const reset = Number(response.headers.get("x-ratelimit-reset") ?? NaN);
+    return Number.isFinite(delay) && delay >= 0 ? Math.max(1, Math.ceil(delay)) : Number.isFinite(reset) && reset > 0 ? Math.max(1, Math.ceil(reset - Date.now() / 1000)) : undefined;
+}
+
+declare const authorizedRead: unique symbol;
+export type RepositoryReadContext = { readonly [authorizedRead]: true };
+type ReadAccess = { owner: string; repo: string; visibility: "public" | "private"; token?: string; files: Map<string, Promise<string>>; commits: Map<string, Promise<void>>; activeReads: number; waitingReads: Array<() => void> };
+// Opaque request-local handles cannot be reconstructed from browser JSON or serialized credentials.
+const readContexts = new WeakMap<RepositoryReadContext, ReadAccess>();
+
+export async function authorizeRepositoryRead(owner: string, repo: string, callerToken?: string | null, signal?: AbortSignal): Promise<RepositoryReadContext> {
+    if (typeof window !== "undefined") throw new Error("Repository read contexts are server-only");
+    if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/.test(owner) || !/^[a-zA-Z0-9._-]{1,100}$/.test(repo)) throw new RepositorySnapshotError();
+    const access = await inspectRepoAccess(owner, repo, callerToken, signal);
     if (!access.ok) {
         if (access.rateLimited) throw new GitHubRateLimitError(access.retryAfter);
-        const message = access.status === 404 ? "Repository not found or access denied" : "Repository unavailable";
-        throw new Error(`GitHub API error ${access.status} for /repos/${owner}/${repo}: ${message}`);
+        throw new GitHubApiError(access.status, `/repos/${owner}/${repo}`, "Repository unavailable");
     }
-    return token?.trim() || getNextServerToken();
+    const context = Object.freeze({}) as RepositoryReadContext;
+    readContexts.set(context, { owner, repo, visibility: access.isPrivate ? "private" : "public", token: access.token, files: new Map(), commits: new Map(), activeReads: 0, waitingReads: [] });
+    return context;
+}
+
+function snapshotAccess(context: RepositoryReadContext, value: RepositorySnapshot): ReadAccess {
+    const access = readContexts.get(context);
+    if (!access) throw new RepositorySnapshotError();
+    const snapshot = parseRepositorySnapshot(value, access.owner, access.repo);
+    if (snapshot.visibility !== access.visibility) throw new RepositorySnapshotError();
+    return access;
+}
+
+async function requireRepoToken(owner: string, repo: string, token?: string | null): Promise<string | undefined> {
+    return readContexts.get(await authorizeRepositoryRead(owner, repo, token))!.token;
+}
+
+async function verifySnapshotCommit(access: ReadAccess, snapshot: RepositorySnapshot, signal?: AbortSignal): Promise<void> {
+    if (snapshot.status !== "ready") throw new RepositorySnapshotError();
+    const key = `${snapshot.commitSha}:${snapshot.treeSha}`;
+    let pending = access.commits.get(key);
+    if (!pending) {
+        pending = ghFetch<{ sha: string; tree: { sha: string } }>(`/repos/${access.owner}/${access.repo}/git/commits/${snapshot.commitSha}`, access.token, { noStore: true }, signal).then(commit => {
+            if (commit.sha !== snapshot.commitSha || commit.tree.sha !== snapshot.treeSha) throw new RepositorySnapshotError();
+        });
+        access.commits.set(key, pending);
+    }
+    await pending;
+    signal?.throwIfAborted();
 }
 
 // --- Dependency Files ---
@@ -517,29 +563,25 @@ const MANIFEST_FILES = [
     "pyproject.toml",
 ];
 
-export async function fetchDependencyFiles(
-    owner: string,
-    repo: string,
-    token?: string | null
-): Promise<{ filename: string; content: string }[]> {
-    const results = await Promise.allSettled(
-        MANIFEST_FILES.map(async (filename) => {
-            const res = await fetch(
-                `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${filename}`,
-                { headers: headers(token), cache: "no-store" }
-            );
-            if (!res.ok) throw new Error("Not found");
-            const content = await readBoundedText(res, MAX_FILE_BYTES);
-            return { filename, content };
-        })
-    );
-
-    return results
-        .filter(
-            (r): r is PromiseFulfilledResult<{ filename: string; content: string }> =>
-                r.status === "fulfilled"
-        )
-        .map((r) => r.value);
+export async function fetchDependencyFiles(context: RepositoryReadContext, snapshot: RepositorySnapshot, signal?: AbortSignal): Promise<{ files: { filename: string; content: string }[]; fetchError: string | null }> {
+    signal?.throwIfAborted();
+    const access = snapshotAccess(context, snapshot);
+    if (snapshot.status === "empty") return { files: [], fetchError: null };
+    const files: { filename: string; content: string }[] = [];
+    let failure: unknown;
+    for (let offset = 0; offset < MANIFEST_FILES.length; offset += FILE_BATCH_CONCURRENCY) {
+        signal?.throwIfAborted();
+        const results = await Promise.allSettled(MANIFEST_FILES.slice(offset, offset + FILE_BATCH_CONCURRENCY).map(async filename => ({ filename, content: await readFileAtSnapshot(context, snapshot, filename, signal) })));
+        signal?.throwIfAborted();
+        for (const result of results) {
+            if (result.status === "fulfilled") files.push(result.value);
+            else if (result.reason !== null && typeof result.reason === "object" && "name" in result.reason && result.reason.name === "AbortError") throw result.reason;
+            else if (result.reason instanceof GitHubApiError && result.reason.status === 404) {
+                try { await verifySnapshotCommit(access, snapshot, signal); } catch (error) { signal?.throwIfAborted(); failure ??= error; }
+            } else failure ??= result.reason;
+        }
+    }
+    return { files, fetchError: failure ? "Some pinned dependency manifests could not be loaded." : null };
 }
 
 // --- Paginated commits (used by branch-graph "load more") ---
@@ -579,10 +621,8 @@ function fileCacheDelete(key: string): void {
     fileContentCache.delete(key);
 }
 
-function fileCacheKey(owner: string, repo: string, filePath: string, token?: string | null): string {
-    // Isolate credentials without retaining their plaintext in cache keys.
-    const tokenBucket = token == null ? "anon" : createHash("sha256").update(token).digest("hex");
-    return `${tokenBucket}:${owner}/${repo}:${filePath}`;
+function fileCacheKey(snapshot: RepositorySnapshot, filePath: string): string {
+    return JSON.stringify(["public-content-utf8-v1", repositorySnapshotKey(snapshot), filePath]);
 }
 
 function fileCacheGet(key: string): string | null {
@@ -611,61 +651,69 @@ function fileCacheSet(key: string, content: string): void {
     fileContentCacheBytes += bytes;
 }
 
-export async function fetchFileContent(
-    owner: string,
-    repo: string,
-    filePath: string,
-    token?: string | null,
-): Promise<string> {
-    if (filePath.length > 4096 || filePath.includes("..") || filePath.startsWith("/")) throw new Error("File path not found");
-    const effectiveToken = await requireRepoToken(owner, repo, token);
-    const cacheKey = fileCacheKey(owner, repo, filePath, token);
-    const cached = fileCacheGet(cacheKey);
-    if (cached !== null) return cached;
+async function readContent(access: ReadAccess, path: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    while (access.activeReads >= FILE_BATCH_CONCURRENCY) await new Promise<void>(resolve => access.waitingReads.push(resolve));
+    access.activeReads++;
+    try { signal?.throwIfAborted(); return await downloadContent(access, path, signal); }
+    finally { access.activeReads--; access.waitingReads.shift()?.(); }
+}
 
-    const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let data: any;
-    try {
-        data = await ghFetch<any>(
-            `/repos/${owner}/${repo}/contents/${encodedPath}`,
-            effectiveToken,
-            { noStore: true },
-        );
-    } catch (error) {
-        if (error instanceof ResponseTooLargeError) throw error;
-        // GitHub returns 403/404 for blobs > 1 MB — fall back to raw content.
-        const rawRes = await fetch(
-            `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${encodedPath}`,
-            { headers: headers(effectiveToken), cache: "no-store" },
-        );
-        if (!rawRes.ok) throw new Error(`File not found: ${filePath}`);
-        const text = await readBoundedText(rawRes, MAX_FILE_BYTES);
-        fileCacheSet(cacheKey, text);
-        return text;
-    }
-
-    if (data.type !== "file") throw new Error("Not a file");
+async function downloadContent(access: ReadAccess, path: string, signal?: AbortSignal): Promise<string> {
+    const data = await ghFetch<{ type: string; size?: number; encoding?: string; content?: string; download_url?: string | null }>(path, access.token, { noStore: true }, signal);
+    if (data.type !== "file") throw new GitHubApiError(404, path, "Not a file");
     if (typeof data.size === "number" && data.size > MAX_FILE_BYTES) throw new ResponseTooLargeError();
-
     if (data.encoding === "base64" && typeof data.content === "string") {
         const encoded = data.content.replace(/\s/g, "");
         if (Buffer.byteLength(encoded, "base64") > MAX_FILE_BYTES) throw new ResponseTooLargeError();
-        const decoded = Buffer.from(encoded, "base64").toString("utf-8");
-        fileCacheSet(cacheKey, decoded);
-        return decoded;
+        const bytes = Buffer.from(encoded, "base64");
+        if (bytes.toString("base64") !== encoded) throw new Error("Invalid file content encoding");
+        const content = bytes.toString("utf-8");
+        if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) throw new ResponseTooLargeError();
+        return content;
     }
-
-    // GitHub provides download_url for files it can't inline (e.g. large blobs).
-    if (typeof data.download_url === "string") {
-        const rawRes = await fetch(data.download_url, { cache: "no-store" });
-        if (!rawRes.ok) throw new Error("Failed to download file");
-        const text = await readBoundedText(rawRes, MAX_FILE_BYTES);
-        fileCacheSet(cacheKey, text);
-        return text;
+    if (data.encoding !== "none" && !data.download_url) throw new Error("File content not available");
+    // Use the same pinned permission endpoint; never trust/retain an expiring download URL.
+    const response = await fetch(`${GITHUB_API}${path}`, { headers: { ...headers(access.token), Accept: "application/vnd.github.raw+json" }, cache: "no-store", signal, redirect: "error" });
+    signal?.throwIfAborted();
+    if (!response.ok) {
+        if (response.status === 429 || (response.status === 403 && (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after")))) throw new GitHubRateLimitError(retryDelay(response));
+        throw new GitHubApiError(response.status, path, "Pinned file download unavailable");
     }
+    const content = await readBoundedText(response, MAX_FILE_BYTES);
+    signal?.throwIfAborted();
+    return content;
+}
 
-    throw new Error("File content not available");
+export async function readFileAtSnapshot(context: RepositoryReadContext, snapshot: RepositorySnapshot, filePath: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    const access = snapshotAccess(context, snapshot);
+    if (snapshot.status !== "ready") throw new GitHubApiError(409, "snapshot", "Repository has no code snapshot");
+    if (!filePath || filePath.length > 4096 || filePath.includes("..") || /[\\\x00-\x1f]/.test(filePath) || filePath.split("/").some(part => !part || part === ".")) throw new GitHubApiError(400, "snapshot", "Invalid file path");
+    const key = fileCacheKey(snapshot, filePath);
+    await verifySnapshotCommit(access, snapshot, signal);
+    if (access.visibility === "public") {
+        const cached = fileCacheGet(key);
+        if (cached !== null) return cached;
+    }
+    let pending = access.files.get(key);
+    if (!pending) {
+        const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+        pending = readContent(access, `/repos/${access.owner}/${access.repo}/contents/${encodedPath}?ref=${snapshot.commitSha}`, signal).then(content => {
+            signal?.throwIfAborted();
+            if (access.visibility === "public") fileCacheSet(key, content);
+            return content;
+        }).catch(error => { access.files.delete(key); throw error; });
+        access.files.set(key, pending);
+    }
+    const content = await pending;
+    signal?.throwIfAborted();
+    return content;
+}
+
+export async function fetchFileContent(owner: string, repo: string, filePath: string, token?: string | null, value?: RepositorySnapshot, signal?: AbortSignal): Promise<string> {
+    const snapshot = parseRepositorySnapshot(value, owner, repo);
+    return readFileAtSnapshot(await authorizeRepositoryRead(owner, repo, token, signal), snapshot, filePath, signal);
 }
 
 // --- Fetch all repo data in parallel ---
@@ -691,13 +739,9 @@ async function captureSnapshot(owner: string, repo: string, metadata: RepoMetada
 /** Browser identifiers are checked behind a fresh access gate and a commit read. */
 export async function fetchRepositorySnapshotTree(owner: string, repo: string, value: unknown, token?: string | null) {
     const snapshot = parseRepositorySnapshot(value, owner, repo);
-    const access = await checkRepoAccess(owner, repo, token);
-    if (!access.ok) {
-        if (access.rateLimited) throw new GitHubRateLimitError(access.retryAfter);
-        throw new GitHubApiError(access.status, `/repos/${owner}/${repo}`, "Repository unavailable");
-    }
-    if ((access.isPrivate ? "private" : "public") !== snapshot.visibility) throw new RepositorySnapshotError();
-    const effectiveToken = token?.trim() || getNextServerToken();
+    const context = await authorizeRepositoryRead(owner, repo, token);
+    const access = snapshotAccess(context, snapshot);
+    const effectiveToken = access.token;
     if (snapshot.status === "empty") {
         const metadata = await fetchRepoMetadata(owner, repo, effectiveToken, { noStore: true });
         const verified = await captureSnapshot(owner, repo, metadata, snapshot.visibility, effectiveToken);
@@ -711,7 +755,10 @@ export async function fetchRepositorySnapshotTree(owner: string, repo: string, v
     return { snapshot, fileTree };
 }
 
-async function _fetchAllRepoDataImpl(snapshot: RepositorySnapshot, metadata: RepoMetadata, metadataObservedAt: string, token?: string | null) {
+async function _fetchAllRepoDataImpl(snapshot: RepositorySnapshot, metadata: RepoMetadata, metadataObservedAt: string, context: RepositoryReadContext) {
+    const token = readContexts.get(context)!.token;
+    let readmeFetchError: string | null = null;
+    let dependencyFilesFetchError: string | null = null;
     const { owner, repo } = snapshot;
     let contributorsFetchError: string | null = null;
     const observations: RepositoryObservations = {
@@ -736,38 +783,37 @@ async function _fetchAllRepoDataImpl(snapshot: RepositorySnapshot, metadata: Rep
         snapshot.status === "empty" ? null : fetchFileTree(owner, repo, snapshot.treeSha, token, { noStore: true }),
         branchesP,
         snapshot.status === "empty" ? { commits: [], commitsFetchError: false } : branchesP.then(b => fetchCommitsForDAG(owner, repo, snapshot.commitSha!, b, token).catch(() => ({ commits: [] as Commit[], commitsFetchError: true }))),
-        snapshot.status === "empty" ? "" : fetchReadme(owner, repo, token).catch(() => ""),
-        snapshot.status === "empty" ? [] : fetchDependencyFiles(owner, repo, token).catch(() => []),
+        snapshot.status === "empty" ? "" : fetchReadme(context, snapshot).catch(() => { readmeFetchError = "Pinned README could not be loaded."; return ""; }),
+        snapshot.status === "empty" ? [] : fetchDependencyFiles(context, snapshot).then(result => { dependencyFilesFetchError = result.fetchError; return result.files; }).catch(() => { dependencyFilesFetchError = "Pinned dependency manifests could not be loaded."; return []; }),
         fetchMergedPRs(owner, repo, 1, token).catch(() => []),
     ]);
     if (snapshot.status === "ready" && fileTree?.sha !== snapshot.treeSha) throw new RepositorySnapshotError();
-    return { snapshot, observations, metadata, fileTree, contributors: contributorsResult.data, contributorsTruncated: contributorsResult.truncated, contributorsFetchError, branches, ...history, readme, languages, dependencyFiles, mergedPRs };
+    return { snapshot, observations, metadata, fileTree, contributors: contributorsResult.data, contributorsTruncated: contributorsResult.truncated, contributorsFetchError, branches, ...history, readme, readmeFetchError, languages, dependencyFiles, dependencyFilesFetchError, mergedPRs };
 }
 
 // Only public aggregates share work; credentials never enter persistent arguments/keys.
 const inflight = new Map<string, ReturnType<typeof _fetchAllRepoDataImpl>>();
-function deduplicatedFetch(snapshot: RepositorySnapshot, metadata: RepoMetadata, observedAt: string, token?: string | null) {
+function deduplicatedFetch(snapshot: RepositorySnapshot, metadata: RepoMetadata, observedAt: string, context: RepositoryReadContext) {
     const key = repositorySnapshotKey(snapshot)!;
     const existing = inflight.get(key);
     if (existing) return existing;
-    const promise = _fetchAllRepoDataImpl(snapshot, metadata, observedAt, token).finally(() => inflight.delete(key));
+    const promise = _fetchAllRepoDataImpl(snapshot, metadata, observedAt, context).finally(() => inflight.delete(key));
     inflight.set(key, promise);
     return promise;
 }
 
 export async function fetchAllRepoData(owner: string, repo: string, token?: string | null) {
-    const access = await checkRepoAccess(owner, repo, token);
-    if (!access.ok) {
-        if (access.rateLimited) throw new GitHubRateLimitError(access.retryAfter);
-        throw new GitHubApiError(access.status, `/repos/${owner}/${repo}`, "Repository unavailable");
-    }
-    const effectiveToken = token?.trim() || getNextServerToken();
+    const context = await authorizeRepositoryRead(owner, repo, token);
+    const access = readContexts.get(context)!;
+    const effectiveToken = access.token;
     const metadata = await fetchRepoMetadata(owner, repo, effectiveToken, { noStore: true });
     if (!metadata.visibility) throw new GitHubApiError(502, `/repos/${owner}/${repo}`, "Repository visibility unavailable");
     if (!token?.trim() && metadata.visibility !== "public") throw new GitHubApiError(404, `/repos/${owner}/${repo}`, "Repository unavailable");
+    if (metadata.visibility !== access.visibility) throw new RepositorySnapshotError();
     const observedAt = new Date().toISOString();
     const snapshot = await captureSnapshot(owner, repo, metadata, metadata.visibility, effectiveToken);
-    if (token?.trim()) return _fetchAllRepoDataImpl(snapshot, metadata, observedAt, effectiveToken);
+    if (snapshot.status === "ready") access.commits.set(`${snapshot.commitSha}:${snapshot.treeSha}`, Promise.resolve());
+    if (token?.trim()) return _fetchAllRepoDataImpl(snapshot, metadata, observedAt, context);
     // Cache the entire captured payload. Never relabel an old payload with new identity/time.
-    return unstable_cache(() => deduplicatedFetch(snapshot, metadata, observedAt, effectiveToken), ["repo-data-v6-snapshot", repositorySnapshotKey(snapshot)!], { revalidate: 300 })();
+    return unstable_cache(() => deduplicatedFetch(snapshot, metadata, observedAt, context), ["repo-data-v7-pinned-content", repositorySnapshotKey(snapshot)!], { revalidate: 300 })();
 }

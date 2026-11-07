@@ -31,6 +31,19 @@ beforeEach(() => {
 afterEach(() => { global.fetch = originalFetch; global.Worker = originalWorker; global.ResizeObserver = originalObserver; jest.restoreAllMocks(); });
 function choose(path: string) { const input = screen.getByRole("searchbox", { name: "Find a file by name or path" }); fireEvent.change(input, { target: { value: path } }); fireEvent.keyDown(input, { key: "Enter" }); }
 
+it("sends the displayed snapshot to both preview and source-worker file requests", async () => {
+    const snapshot = { schemaVersion: 1 as const, owner: "example", repo: "repo", selectedBranch: "main", defaultBranch: "main", status: "ready" as const, commitSha: "a".repeat(40), treeSha: "c".repeat(40), visibility: "public" as const, capturedAt: "2026-11-07T12:00:00.000Z" };
+    const sources: TreeItem[] = [{ ...tree[0], path: "a.ts" }];
+    global.fetch = jest.fn(async url => String(url).includes("/file?") ? text("PINNED_PREVIEW") : String(url).includes("/files") ? { ok: true, json: async () => ({ files: [{ path: "a.ts", content: "PINNED_SOURCE" }] }) } : { ok: false }) as unknown as typeof fetch;
+    render(<FileTreeGraph tree={sources} owner="example" repo="repo" snapshot={snapshot} />);
+    choose("a.ts"); await screen.findByText("PINNED_PREVIEW");
+    await waitFor(() => expect(mockWorkerMessages.some(message => message.fileContents?.some(file => file.content === "PINNED_SOURCE"))).toBe(true));
+    const preview = jest.mocked(global.fetch).mock.calls.find(([url]) => String(url).includes("/file?"))!;
+    expect(JSON.parse(new URL(String(preview[0]), "http://localhost").searchParams.get("snapshot")!)).toEqual(snapshot);
+    const source = jest.mocked(global.fetch).mock.calls.find(([url]) => String(url).includes("/files"))!;
+    expect(JSON.parse(String(source[1]?.body))).toMatchObject({ owner: "example", repo: "repo", snapshot, paths: ["a.ts"] });
+});
+
 it("keeps B's selected label/content when an aborted A resolves after B", async () => {
     const a = deferred<ReturnType<typeof text>>();
     global.fetch = jest.fn((url) => String(url).includes("/file?") ? new URL(String(url), "http://localhost").searchParams.get("path") === "a.txt" ? a.promise : Promise.resolve(text("CURRENT_B")) : Promise.resolve({ ok: false })) as unknown as typeof fetch;

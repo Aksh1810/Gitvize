@@ -396,7 +396,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
     const githubHeaders = useMemo((): Record<string, string> => githubToken ? { "x-github-token": githubToken } : {}, [githubToken]);
     const { resolvedTheme } = useTheme();
     const containerRef = useRef<HTMLDivElement>(null);
-    const sourceCache = useMemo(() => ({ owner, repo, headers: githubHeaders, tree, snapshotIdentity, files: new Map<string, string>() }), [owner, repo, githubHeaders, tree, snapshotIdentity]);
+    const sourceCache = useMemo(() => ({ owner, repo, headers: githubHeaders, tree, snapshotIdentity, snapshot, files: new Map<string, string>() }), [owner, repo, githubHeaders, tree, snapshotIdentity, snapshot]);
     const symbolWorkerRef = useRef<Worker | null>(null);
     const importWorkerRef = useRef<Worker | null>(null);
     const codePanelRef = useRef<HTMLDivElement>(null);
@@ -443,7 +443,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
     const [showExplorer, setShowExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const selectedRevision = useMemo(() => tree.find(item => item.path === selectedFile?.path)?.sha, [tree, selectedFile?.path]);
-    const previewContext = useMemo(() => ({ owner, repo, headers: githubHeaders, file: selectedFile, revision: selectedRevision, snapshotIdentity, open: showExplorerInspector }), [owner, repo, githubHeaders, selectedFile, selectedRevision, snapshotIdentity, showExplorerInspector]);
+    const previewContext = useMemo(() => ({ owner, repo, headers: githubHeaders, file: selectedFile, revision: selectedRevision, snapshotIdentity, snapshot, open: showExplorerInspector }), [owner, repo, githubHeaders, selectedFile, selectedRevision, snapshotIdentity, snapshot, showExplorerInspector]);
     const fileContent = filePreview?.context === previewContext ? filePreview.content : null;
     const fileError = filePreview?.context === previewContext ? filePreview.error : null;
     const fileLoading = Boolean(selectedFile && selectedFile.type !== "folder" && showExplorerInspector && (filePreview?.context !== previewContext || filePreview.loading));
@@ -809,7 +809,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
         }
         void (async () => {
             try {
-                const params = new URLSearchParams({ owner, repo, path: file.path });
+                const params = new URLSearchParams({ owner, repo, path: file.path, snapshot: JSON.stringify(previewContext.snapshot) });
                 const res = await fetch(`/api/github/repo/file?${params}`, { headers, signal: controller.signal });
                 if (!ownsRequest()) return;
                 if (!res.ok) {
@@ -970,7 +970,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
             if (uncachedPaths.length > 0 && !cancelled) {
                 fetchAttempted += uncachedPaths.length;
                 try {
-                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal);
+                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal, sourceCache.snapshot);
                     if (cancelled || controller.signal.aborted) return;
                     fetchSucceeded += files.length;
                     fetchFailed += uncachedPaths.length - files.length;
@@ -1097,7 +1097,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
 
             if (uncachedPaths.length > 0 && !cancelled) {
                 try {
-                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal);
+                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal, sourceCache.snapshot);
                     if (cancelled || controller.signal.aborted) return;
                     for (const file of files) {
                         sourceCache.files.set(`${owner}/${repo}/${file.path}`, file.content);
