@@ -70,7 +70,7 @@ it.each([
     ["repo", getRepo], ["stream", getStream], ["file", getFile], ["commits", getCommits], ["access", getAccess], ["seed", getSeed],
 ])("does not expose operator-private data through the %s route", async (route, handler) => {
     const snapshot = { schemaVersion: 1, owner: "example", repo: `route-${route}`, selectedBranch: "main", defaultBranch: "main", status: "ready", commitSha: SNAP_COMMIT, treeSha: SNAP_TREE, capturedAt: "2026-10-30T12:00:00.000Z", visibility: "public" };
-    const response = await handler(new NextRequest(`http://localhost/api/test?owner=example&repo=route-${route}&path=private.ts${route === "seed" ? `&snapshot=${encodeURIComponent(JSON.stringify(snapshot))}` : ""}`));
+    const response = await handler(new NextRequest(`http://localhost/api/test?owner=example&repo=route-${route}&path=private.ts${route === "commits" ? `&sha=${SNAP_COMMIT}` : ""}${route === "seed" ? `&snapshot=${encodeURIComponent(JSON.stringify(snapshot))}` : ""}`));
     const body = await response.text();
     expect(body).not.toContain("private-marker");
     if (route === "access") expect(JSON.parse(body)).toMatchObject({ ok: false });
@@ -93,7 +93,7 @@ it("rejects invalid caller tokens without inheriting operator permissions", asyn
 it("rejects private reads with pool-only server configuration", async () => {
     delete process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKENS = "pool-test-only";
-    await expect(fetchCommitsPage("example", "pool", "main", 1, 10)).rejects.toThrow();
+    await expect(fetchCommitsPage("example", "pool", SNAP_COMMIT, 1, 10)).rejects.toThrow();
 });
 
 it("preserves caller-authorized private reads", async () => {

@@ -20,15 +20,19 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CommitHistoryRail from "./commit-history-rail";
-import { repositorySnapshotKey } from "@/lib/repository-snapshot";
-import type { Branch, Commit, RepositorySnapshot } from "@/types";
+import { createBranchHistory, historyCommits, mergeHistoryPage, commitHistoryPageSchema, MAX_LOAD_ALL_REQUESTS, MAX_HISTORY_PAGES } from "@/lib/branch-history";
+import { repositorySnapshotKey, gitShaSchema } from "@/lib/repository-snapshot";
+import type { Branch, Commit, RepositorySnapshot, BranchHistory, HistoryPageResult } from "@/types";
 
 const BRANCH_COLOR = "var(--atlas-blue)";
 
 interface BranchGraphProps {
     snapshot?: RepositorySnapshot;
     branches: Branch[];
-    commits: Commit[];
+    commits?: Commit[];
+    graphCommits?: Commit[];
+    defaultHistory?: BranchHistory;
+    branchHistories?: Record<string, BranchHistory>;
     commitsFetchError?: boolean;
     defaultBranch: string;
     owner: string;
@@ -121,7 +125,10 @@ function BranchPicker({ branches, defaultBranch, selectedBranch, query, onQueryC
 
 export default function BranchGraph({
     branches,
-    commits: initialCommits,
+    commits: legacyGraphCommits,
+    graphCommits: initialGraphCommits,
+    defaultHistory: initialDefaultHistory,
+    branchHistories: initialBranchHistories,
     commitsFetchError = false,
     defaultBranch,
     owner,
@@ -140,144 +147,104 @@ export default function BranchGraph({
     const [branchQuery, setBranchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"newest" | "oldest" | "author">("newest");
 
-    const [selection, setSelection] = useState({ branch: defaultBranch, defaultBranch, attempt: 0 });
+    const [selection, setSelection] = useState({ branch: defaultBranch, defaultBranch, attempt: 0, retry: false });
     const selectedBranch = selection.defaultBranch === defaultBranch ? selection.branch : defaultBranch;
-    const selectedHead = branches.find(branch => branch.name === selectedBranch)?.headSha;
-    const branchHead = selectedHead ?? branches.find(branch => branch.name === selectedBranch)?.sha;
-    const defaultHead = branches.find(branch => branch.name === defaultBranch)?.sha;
-    const historyContext = useMemo(() => ({ owner, repo, headers: githubHeaders, defaultBranch, head: defaultHead, snapshotIdentity, commits: initialCommits }), [owner, repo, githubHeaders, defaultBranch, defaultHead, snapshotIdentity, initialCommits]);
-    const baseHistory = useMemo(() => ({ context: historyContext, commits: historyContext.commits, page: historyContext.commits.length >= 500 ? 5 : 1, hasMore: historyContext.commits.length >= 500 }), [historyContext]);
-    const [history, setHistory] = useState(baseHistory);
-    const currentHistory = history.context === historyContext ? history : baseHistory;
-    const allCommits = currentHistory.commits;
-    const currentPage = currentHistory.page;
-    const hasMore = currentHistory.hasMore;
-    const requestScope = useMemo(() => ({ identity: [historyContext, selectedBranch, branchHead, selection.attempt], active: false, controllers: new Set<AbortController>(), paginationPending: false }), [historyContext, selectedBranch, branchHead, selection.attempt]);
-    const branchRequestId = useRef(0);
-    const paginationRequestId = useRef(0);
-    const [branchResult, setBranchResult] = useState<{ scope: typeof requestScope; commits: Commit[]; loading: boolean; error: string | null } | null>(null);
+    const defaultHead = snapshot?.status === "ready" ? snapshot.commitSha : initialDefaultHistory?.headSha ?? branches.find(branch => branch.name === defaultBranch)?.headSha ?? branches.find(branch => branch.name === defaultBranch)?.sha;
+    const candidateHead = selectedBranch === defaultBranch ? defaultHead : branches.find(branch => branch.name === selectedBranch)?.headSha ?? branches.find(branch => branch.name === selectedBranch)?.sha;
+    const headSha = gitShaSchema.safeParse(candidateHead).success ? candidateHead! : null;
+    const repositoryContext = useMemo(() => ({ owner, repo, headers: githubHeaders, snapshotIdentity }), [owner, repo, githubHeaders, snapshotIdentity]);
+    const baseHistory = useMemo(() => {
+        const initial = selectedBranch === defaultBranch ? initialDefaultHistory : initialBranchHistories?.[selectedBranch];
+        return initial?.headSha === headSha ? createBranchHistory(selectedBranch, headSha, initial.pages, initial.perPage) : createBranchHistory(selectedBranch, headSha);
+    }, [selectedBranch, defaultBranch, headSha, initialDefaultHistory, initialBranchHistories]);
+    const [historyStore, setHistoryStore] = useState<{ context: typeof repositoryContext; histories: Record<string, BranchHistory> }>({ context: repositoryContext, histories: {} });
+    const stored = historyStore.context === repositoryContext ? historyStore.histories[selectedBranch] : undefined;
+    const currentHistory = stored?.headSha === headSha ? stored : baseHistory;
+    const historyRef = useRef(currentHistory);
+    historyRef.current = currentHistory;
+    const allCommits = useMemo(() => historyCommits(currentHistory), [currentHistory]);
+    const branchCommits = allCommits;
+    const hasMore = currentHistory.nextPage !== null && !currentHistory.cutoff;
+    const requestScope = useMemo(() => ({ context: repositoryContext, branch: selectedBranch, headSha, attempt: selection.attempt, active: false, controllers: new Set<AbortController>(), pending: false }), [repositoryContext, selectedBranch, headSha, selection.attempt]);
+    const scopeRef = useRef(requestScope);
+    scopeRef.current = requestScope;
+    const requestIdRef = useRef(0);
     const [pagination, setPagination] = useState<{ scope: typeof requestScope; more: boolean; all: boolean } | null>(null);
-    const branchCommits = useMemo(() => branchResult?.scope === requestScope ? branchResult.commits : [], [branchResult, requestScope]);
-    const isBranchLoading = selectedBranch !== defaultBranch && (branchResult?.scope !== requestScope || branchResult.loading);
-    const branchError = branchResult?.scope === requestScope ? branchResult.error : null;
     const isLoadingMore = pagination?.scope === requestScope && pagination.more;
     const isLoadingAll = pagination?.scope === requestScope && pagination.all;
+    const isBranchLoading = Boolean(headSha && !currentHistory.pages[1] && !currentHistory.error) || Boolean(isLoadingMore && !allCommits.length);
+    const branchError = !headSha && snapshot?.status !== "empty" ? "Captured branch head is unavailable. Reload the repository to retry." : currentHistory.error?.message ?? null;
+    const graphCommits = useMemo(() => {
+        const histories = historyStore.context === repositoryContext ? Object.values(historyStore.histories) : [];
+        return [...new Map([...(initialGraphCommits ?? legacyGraphCommits ?? []), ...(initialDefaultHistory ? historyCommits(initialDefaultHistory) : []), ...histories.flatMap(historyCommits)].map(commit => [commit.sha, commit])).values()];
+    }, [initialGraphCommits, legacyGraphCommits, initialDefaultHistory, historyStore, repositoryContext]);
+    const railBranches = useMemo(() => branches.some(branch => branch.name === defaultBranch) || !defaultHead ? branches : [{ name: defaultBranch, sha: defaultHead, headSha: defaultHead, isDefault: true }, ...branches], [branches, defaultBranch, defaultHead]);
 
-    // A selection owns this set, never a mutable ref belonging to a later selection.
+    const loadPages = useCallback(async (all: boolean) => {
+        if (!requestScope.active || requestScope.pending || !requestScope.headSha || scopeRef.current !== requestScope) return;
+        let history = historyRef.current;
+        if (history.headSha !== requestScope.headSha || history.branch !== requestScope.branch || history.nextPage === null) return;
+        const controller = new AbortController();
+        const controllers = requestScope.controllers;
+        controllers.add(controller);
+        requestScope.pending = true;
+        const requestId = ++requestIdRef.current;
+        const ownsRequest = () => scopeRef.current === requestScope && requestScope.active && !controller.signal.aborted && requestId === requestIdRef.current;
+        const save = (result: HistoryPageResult) => {
+            history = mergeHistoryPage(history, result);
+            const saved = history;
+            if (ownsRequest()) setHistoryStore(previous => ownsRequest() ? { context: repositoryContext, histories: { ...(previous.context === repositoryContext ? previous.histories : {}), [requestScope.branch]: saved } } : previous);
+        };
+        setPagination({ scope: requestScope, more: true, all });
+        try {
+            for (let attempt = 0; attempt < (all ? MAX_LOAD_ALL_REQUESTS : 1) && history.nextPage !== null && ownsRequest(); attempt++) {
+                const page = history.nextPage;
+                let status = 502;
+                try {
+                    const params = new URLSearchParams({ owner, repo, sha: requestScope.headSha, per_page: String(history.perPage), page: String(page) });
+                    const response = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
+                    if (!ownsRequest()) return;
+                    status = response.ok ? 502 : response.status;
+                    const body = await response.json().catch(() => null);
+                    if (!ownsRequest()) return;
+                    if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : `Could not load this branch's commits (HTTP ${status}). Retry page ${page}.`);
+                    const parsed = commitHistoryPageSchema.safeParse(body);
+                    if (!parsed.success || parsed.data.headSha !== requestScope.headSha || parsed.data.page !== page || parsed.data.perPage !== history.perPage) throw new Error("History response does not match the captured branch. Retry this page.");
+                    save(parsed.data);
+                } catch (error) {
+                    if (!ownsRequest()) return;
+                    save({ status: "error", page, perPage: history.perPage, error: { status: status || 502, message: error instanceof Error ? error.message : "Could not load captured history. Retry this page." } });
+                    break;
+                }
+            }
+        } finally {
+            controllers.delete(controller);
+            if (ownsRequest()) {
+                requestScope.pending = false;
+                setPagination({ scope: requestScope, more: false, all: false });
+            }
+        }
+    }, [owner, repo, githubHeaders, repositoryContext, requestScope]);
+
     useEffect(() => {
         requestScope.active = true;
-        requestScope.paginationPending = false;
+        requestScope.pending = false;
         const controllers = requestScope.controllers;
         setSelectedCommit(null);
         setPagination({ scope: requestScope, more: false, all: false });
-        const cleanup = () => {
+        if (requestScope.headSha && (!Object.keys(historyRef.current.pages).length || selection.retry)) void loadPages(false);
+        return () => {
             requestScope.active = false;
             for (const controller of controllers) controller.abort();
             controllers.clear();
         };
-        if (selectedBranch === defaultBranch) return cleanup;
-        const controller = new AbortController();
-        controllers.add(controller);
-        const requestId = ++branchRequestId.current;
-        const ownsRequest = () => requestScope.active && !controller.signal.aborted && branchRequestId.current === requestId;
-        const update = (value: { commits: Commit[]; loading: boolean; error: string | null }) => {
-            if (ownsRequest()) setBranchResult(previous => ownsRequest() ? { scope: requestScope, ...value } : previous);
-        };
-        update({ commits: [], loading: true, error: null });
-        void (async () => {
-            try {
-                const params = new URLSearchParams({ owner, repo, sha: selectedHead ?? selectedBranch, per_page: "100", page: "1" });
-                const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
-                if (!ownsRequest()) return;
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const commits: Commit[] = await res.json();
-                update({ commits, loading: false, error: null });
-            } catch {
-                update({ commits: [], loading: false, error: "Could not load this branch's commits. Select the branch again to retry." });
-            } finally {
-                controllers.delete(controller);
-            }
-        })();
-        return cleanup;
-    }, [requestScope, selectedBranch, selectedHead, defaultBranch, owner, repo, githubHeaders]);
+    }, [requestScope, loadPages, selection.retry]);
 
     const fetchBranchCommits = useCallback((branch: string) => {
-        setSelection(previous => ({ branch, defaultBranch, attempt: previous.attempt + 1 }));
+        setSelection(previous => ({ branch, defaultBranch, attempt: previous.attempt + 1, retry: branch === previous.branch }));
     }, [defaultBranch]);
-
-    const loadMoreCommits = useCallback(async () => {
-        if (!requestScope.active || requestScope.paginationPending) return;
-        const controller = new AbortController();
-        requestScope.controllers.add(controller);
-        requestScope.paginationPending = true;
-        const requestId = ++paginationRequestId.current;
-        const ownsRequest = () => requestScope.active && !controller.signal.aborted && paginationRequestId.current === requestId;
-        setPagination({ scope: requestScope, more: true, all: false });
-        try {
-            const nextPage = currentPage + 1;
-            const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(nextPage) });
-            const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
-            if (!ownsRequest()) return;
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const newCommits: Commit[] = await res.json();
-            if (!ownsRequest()) return;
-            setHistory(previous => {
-                if (!ownsRequest()) return previous;
-                const current = previous.context === historyContext ? previous : baseHistory;
-                return { ...current, commits: [...current.commits, ...newCommits], page: nextPage, hasMore: newCommits.length < 100 ? false : current.hasMore };
-            });
-        } catch {
-            if (!ownsRequest()) return;
-            console.error("Failed to load more commits");
-            setHistory(previous => ownsRequest() ? { ...(previous.context === historyContext ? previous : baseHistory), hasMore: false } : previous);
-        } finally {
-            requestScope.controllers.delete(controller);
-            if (ownsRequest()) {
-                requestScope.paginationPending = false;
-                setPagination(previous => ownsRequest() ? { scope: requestScope, more: false, all: false } : previous);
-            }
-        }
-    }, [currentPage, defaultBranch, owner, repo, githubHeaders, requestScope, historyContext, baseHistory]);
-
-    const loadAllCommits = useCallback(async () => {
-        if (!requestScope.active || requestScope.paginationPending) return;
-        const controller = new AbortController();
-        requestScope.controllers.add(controller);
-        requestScope.paginationPending = true;
-        const requestId = ++paginationRequestId.current;
-        const ownsRequest = () => requestScope.active && !controller.signal.aborted && paginationRequestId.current === requestId;
-        setPagination({ scope: requestScope, more: true, all: true });
-        let page = currentPage + 1;
-        let keepGoing = true;
-        try {
-            while (keepGoing && ownsRequest()) {
-                const params = new URLSearchParams({ owner, repo, sha: defaultBranch, per_page: "100", page: String(page) });
-                const res = await fetch(`/api/github/repo/commits?${params}`, { headers: githubHeaders, signal: controller.signal });
-                if (!ownsRequest()) return;
-                if (!res.ok) break;
-                const newCommits: Commit[] = await res.json();
-                if (!ownsRequest()) return;
-                if (newCommits.length === 0) break;
-                const receivedPage = page;
-                setHistory(previous => {
-                    if (!ownsRequest()) return previous;
-                    const current = previous.context === historyContext ? previous : baseHistory;
-                    return { ...current, commits: [...current.commits, ...newCommits], page: receivedPage };
-                });
-                if (newCommits.length < 100) keepGoing = false;
-                page++;
-            }
-        } catch {
-            if (ownsRequest()) console.error("Failed to load all commits");
-        } finally {
-            requestScope.controllers.delete(controller);
-            if (ownsRequest()) {
-                requestScope.paginationPending = false;
-                setHistory(previous => ownsRequest() ? { ...(previous.context === historyContext ? previous : baseHistory), hasMore: false } : previous);
-                setPagination(previous => ownsRequest() ? { scope: requestScope, more: false, all: false } : previous);
-            }
-        }
-    }, [currentPage, defaultBranch, owner, repo, githubHeaders, requestScope, historyContext, baseHistory]);
+    const loadMoreCommits = () => void loadPages(false);
+    const loadAllCommits = () => void loadPages(true);
 
     const filteredCommits = useMemo(() => {
         let result = [...(selectedBranch === defaultBranch ? allCommits : branchCommits)];
@@ -313,7 +280,7 @@ export default function BranchGraph({
 
     return (
         <div className="branch-history">
-            {commitsFetchError && (
+            {commitsFetchError && (view === "history" || !branchError) && (
                 <p role="alert" className="branch-history-alert text-sm text-muted-foreground">
                     Commit history could not be fully loaded. Available commits are shown; reload the repository to try again.
                 </p>
@@ -339,17 +306,18 @@ export default function BranchGraph({
                                 expanded={showAllGraphBranches} onToggleExpanded={() => setShowAllGraphBranches(!showAllGraphBranches)}
                                 onSelect={branch => setGraphBranch(graphBranch === branch ? null : branch)} />
 
-                            <CommitHistoryRail commits={allCommits} defaultBranch={defaultBranch} branches={branches} selectedBranchOverride={graphBranch} />
+                            <CommitHistoryRail commits={graphCommits} defaultBranch={defaultBranch} branches={railBranches} selectedBranchOverride={graphBranch} />
                         </div>
                     </div>
 
-                    {hasMore && (
+                    {(hasMore || currentHistory.cutoff) && (
                         <div className="branch-history-pagination">
+                            <p className="text-xs text-muted-foreground">Load all requests up to {MAX_LOAD_ALL_REQUESTS} more pages per pass, within the {MAX_HISTORY_PAGES}-page limit.</p>
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="branch-pagination-count text-xs text-muted-foreground">
                                     <GitCommit className="w-3.5 h-3.5" />
-                                    <span>{allCommits.length} loaded on <span className="branch-name">{defaultBranch}</span></span>
-                                    <span className="text-muted-foreground/50">• more available</span>
+                                    <span>{allCommits.length} loaded on <span className="branch-name">{selectedBranch}</span></span>
+                                    <span className="text-muted-foreground/50">{currentHistory.cutoff ? `• history limited to ${MAX_HISTORY_PAGES} pages (up to 5,000 commits)` : "• more available"}</span>
                                 </div>
 
                                 <div className="branch-pagination-actions">
@@ -364,20 +332,21 @@ export default function BranchGraph({
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={loadMoreCommits}
-                                                disabled={isLoadingMore}
+                                                aria-label={currentHistory.error ? `Retry history page ${currentHistory.nextPage}` : undefined}
+                                                disabled={isLoadingMore || currentHistory.cutoff}
                                             >
                                                 {isLoadingMore ? (
                                                     <Loader2 className="w-3 h-3 animate-spin" />
                                                 ) : (
                                                     <ChevronDown className="w-3 h-3" />
                                                 )}
-                                                +100
+                                                {currentHistory.error ? `Retry page ${currentHistory.nextPage}` : "+100"}
                                             </Button>
                                             <Button
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={loadAllCommits}
-                                                disabled={isLoadingMore}
+                                                disabled={isLoadingMore || currentHistory.cutoff}
                                             >
                                                 <GitCommit className="w-3 h-3" />
                                                 Load all
@@ -458,16 +427,15 @@ export default function BranchGraph({
                             <div className="relative">
                                 <div className="absolute left-[19px] top-0 bottom-0 w-px bg-border/40" />
 
-                                {branchError ? (
-                                    <p role="alert" className="text-center py-12 text-sm text-muted-foreground">{branchError}</p>
-                                ) : isBranchLoading ? (
+                                {branchError && <p role="alert" className="branch-history-alert text-sm text-muted-foreground">{branchError}</p>}
+                                {isBranchLoading ? (
                                     <div className="flex items-center justify-center py-16 gap-2 text-sm text-muted-foreground">
                                         <Loader2 className="w-4 h-4 animate-spin" />
                                         Loading commits for {selectedBranch}…
                                     </div>
                                 ) : displayCommits.length === 0 ? (
-                                    <div className="text-center py-12 text-sm text-muted-foreground">
-                                        {commitsFetchError && selectedBranch === defaultBranch && !searchQuery ? "Commit history is unavailable." : "No commits match your search."}
+                                    !branchError && <div className="text-center py-12 text-sm text-muted-foreground">
+                                        {searchQuery ? "No commits match your search." : currentHistory.complete ? "No commits in this captured history." : "No commits loaded yet."}
                                     </div>
                                 ) : (
                                     Array.from(groupedCommits.entries()).map(([date, dayCommits]) => (
@@ -568,11 +536,11 @@ export default function BranchGraph({
                                 )}
 
                                 {/* End marker */}
-                                {!branchError && !isBranchLoading && !searchQuery && displayCommits.length > 0 && (selectedBranch !== defaultBranch || !hasMore) && (
+                                {!branchError && !isBranchLoading && !searchQuery && displayCommits.length > 0 && (!hasMore && !currentHistory.cutoff) && (
                                     <div className="flex items-center gap-3 ml-1 pt-4 pb-2">
                                         <div className="w-[10px] h-[10px] rounded-full bg-muted-foreground/20 border-2 border-background z-10" />
                                         <span className="text-xs text-muted-foreground">
-                                            {selectedBranch === defaultBranch ? `${commitsFetchError ? "Available " : ""}${allCommits.length} commits loaded` : `${branchCommits.length} commits loaded for ${selectedBranch}${branchCommits.length === 100 ? " (first 100)" : ""}`}
+                                            {selectedBranch === defaultBranch ? `${commitsFetchError ? "Available " : ""}${allCommits.length} commits loaded` : `${branchCommits.length} commits loaded for ${selectedBranch}`}
                                         </span>
                                     </div>
                                 )}
@@ -581,13 +549,14 @@ export default function BranchGraph({
                     </div>
 
                     {/* Sticky Bottom Bar — always visible, no scrolling needed */}
-                    {hasMore && (
+                    {(hasMore || currentHistory.cutoff) && (
                         <div className="branch-history-pagination">
+                            <p className="text-xs text-muted-foreground">Load all requests up to {MAX_LOAD_ALL_REQUESTS} more pages per pass, within the {MAX_HISTORY_PAGES}-page limit.</p>
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="branch-pagination-count text-xs text-muted-foreground">
                                     <GitCommit className="w-3.5 h-3.5" />
-                                    <span>{allCommits.length} loaded on <span className="branch-name">{defaultBranch}</span></span>
-                                    <span className="text-muted-foreground/50">• more available</span>
+                                    <span>{allCommits.length} loaded on <span className="branch-name">{selectedBranch}</span></span>
+                                    <span className="text-muted-foreground/50">{currentHistory.cutoff ? `• history limited to ${MAX_HISTORY_PAGES} pages (up to 5,000 commits)` : "• more available"}</span>
                                 </div>
 
                                 <div className="branch-pagination-actions">
@@ -602,20 +571,21 @@ export default function BranchGraph({
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={loadMoreCommits}
-                                                disabled={isLoadingMore}
+                                                aria-label={currentHistory.error ? `Retry history page ${currentHistory.nextPage}` : undefined}
+                                                disabled={isLoadingMore || currentHistory.cutoff}
                                             >
                                                 {isLoadingMore ? (
                                                     <Loader2 className="w-3 h-3 animate-spin" />
                                                 ) : (
                                                     <ChevronDown className="w-3 h-3" />
                                                 )}
-                                                +100
+                                                {currentHistory.error ? `Retry page ${currentHistory.nextPage}` : "+100"}
                                             </Button>
                                             <Button
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={loadAllCommits}
-                                                disabled={isLoadingMore}
+                                                disabled={isLoadingMore || currentHistory.cutoff}
                                             >
                                                 <GitCommit className="w-3 h-3" />
                                                 Load all

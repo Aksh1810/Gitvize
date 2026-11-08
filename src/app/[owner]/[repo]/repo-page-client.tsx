@@ -34,6 +34,7 @@ import type {
     Contributor,
     Branch,
     Commit,
+    BranchHistory,
     MergedPR,
     LanguageStats,
     PipelineStep,
@@ -56,6 +57,9 @@ interface RepoData {
     contributorsFetchError?: string | null;
     branches: Branch[];
     commits: Commit[];
+    graphCommits?: Commit[];
+    defaultHistory?: BranchHistory;
+    branchHistories?: Record<string, BranchHistory>;
     commitsFetchError?: boolean;
     readme: string;
     languages: LanguageStats;
@@ -669,7 +673,9 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
             <BranchGraph
                 githubToken={githubToken}
                 branches={repoData.branches}
-                commits={repoData.commits}
+                graphCommits={repoData.graphCommits ?? repoData.commits}
+                defaultHistory={repoData.defaultHistory}
+                branchHistories={repoData.branchHistories}
                 commitsFetchError={repoData.commitsFetchError}
                 snapshot={repoData.snapshot}
                 defaultBranch={repoData.metadata.defaultBranch}

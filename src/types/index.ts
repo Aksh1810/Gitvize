@@ -87,6 +87,27 @@ export interface Commit {
   parents?: string[];
 }
 
+export interface CommitHistoryError { status: number; message: string; retryAfter?: number }
+export interface CommitHistoryPage {
+  status: "ready";
+  headSha: string;
+  page: number;
+  perPage: number;
+  commits: Commit[];
+  nextPage: number | null;
+}
+export type HistoryPageResult = CommitHistoryPage | { status: "error"; page: number; perPage: number; error: CommitHistoryError };
+export interface BranchHistory {
+  branch: string;
+  headSha: string | null;
+  perPage: number;
+  pages: Record<number, HistoryPageResult>;
+  nextPage: number | null;
+  complete: boolean;
+  cutoff: boolean;
+  error: CommitHistoryError | null;
+}
+
 export interface MergedPR {
   number: number;
   title: string;

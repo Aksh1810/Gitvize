@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { unstable_cache } from "next/cache";
+import { createBranchHistory, historyCommits, mergeHistoryPage, HISTORY_PAGE_SIZE, MAX_HISTORY_PAGES } from "@/lib/branch-history";
 import { gitShaSchema, parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { FILE_BATCH_CONCURRENCY, MAX_FILE_BYTES, readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
 import type {
@@ -14,6 +15,9 @@ import type {
     Contributor,
     Branch,
     Commit,
+    BranchHistory,
+    CommitHistoryPage,
+    HistoryPageResult,
     MergedPR,
     LanguageStats,
 } from "@/types";
@@ -56,12 +60,13 @@ export class GitHubApiError extends Error {
     readonly responseMessage?: string;
 }
 
-async function ghFetch<T>(
+async function ghFetchResponse<T>(
     path: string,
     token?: string | null,
     cacheMode: FetchCacheMode = { revalidate: 300 },
     signal?: AbortSignal,
-): Promise<T> {
+    redirect: RequestRedirect = "follow",
+): Promise<{ data: T; headers: Headers }> {
     signal?.throwIfAborted();
     const url = `${GITHUB_API}${path}`;
     const fetchInit =
@@ -75,7 +80,7 @@ async function ghFetch<T>(
                 next: { revalidate: cacheMode.revalidate },
             };
 
-    const res = await fetch(url, { ...fetchInit, signal });
+    const res = await fetch(url, { ...fetchInit, signal, redirect });
     signal?.throwIfAborted();
 
     if (!res.ok) {
@@ -93,7 +98,11 @@ async function ghFetch<T>(
 
     const text = await readBoundedText(res, 8 * 1024 * 1024);
     signal?.throwIfAborted();
-    return JSON.parse(text);
+    return { data: JSON.parse(text) as T, headers: res.headers };
+}
+
+async function ghFetch<T>(path: string, token?: string | null, cacheMode: FetchCacheMode = { revalidate: 300 }, signal?: AbortSignal): Promise<T> {
+    return (await ghFetchResponse<T>(path, token, cacheMode, signal)).data;
 }
 
 // --- Repository Metadata ---
@@ -307,78 +316,30 @@ export async function fetchCommits(
     );
 }
 
-/**
- * Fetches commits from the default branch (up to 500) PLUS one page from each
- * non-default branch whose HEAD SHA is not already in the default branch history.
- * This ensures that active unmerged branches appear in the commit graph for
- * large repos where branches haven't been merged to main yet.
- */
-async function fetchCommitsForDAG(
-    owner: string,
-    repo: string,
-    defaultHeadSha: string,
-    branches: Branch[],
-    token?: string | null
-): Promise<{ commits: Commit[]; commitsFetchError: boolean }> {
-    // Phase 1: fetch 5 pages at the captured default-branch commit in parallel
-    const base = `?sha=${encodeURIComponent(defaultHeadSha)}&per_page=100`;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const defaultPages = await Promise.allSettled<any[]>(
-        [1, 2, 3, 4, 5].map((page) =>
-            ghFetch<any[]>(
-                `/repos/${owner}/${repo}/commits${base}&page=${page}`,
-                token,
-                { revalidate: 120 }
-            )
-        )
-    );
-
-    let commitsFetchError = defaultPages.some((page) => page.status === "rejected");
-    const seen = new Set<string>();
-    const all: Commit[] = [];
-
-    for (const result of defaultPages) {
-        if (result.status !== "fulfilled") continue;
-        for (const c of result.value) {
-            if (seen.has(c.sha)) continue;
-            seen.add(c.sha);
-            all.push(mapApiCommit(c));
-        }
-    }
-
-    // Phase 2: for each non-default branch whose HEAD is NOT yet in our set,
-    // fetch one page of commits so its history appears in the graph
-    const missingBranches = branches
-        .filter((b) => !b.isDefault && !seen.has(b.sha))
-        .slice(0, 5); // cap at 5 extra branches to limit API calls and avoid rate exhaustion
-
-    if (missingBranches.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const branchPages = await Promise.allSettled<any[]>(
-            missingBranches.map((b) =>
-                ghFetch<any[]>(
-                    `/repos/${owner}/${repo}/commits?sha=${b.sha}&per_page=100&page=1`,
-                    token,
-                    { noStore: true }
-                )
-            )
-        );
-
-        commitsFetchError ||= branchPages.some((page) => page.status === "rejected");
-        for (const result of branchPages) {
-            if (result.status !== "fulfilled") continue;
-            for (const c of result.value) {
-                if (seen.has(c.sha)) continue;
-                seen.add(c.sha);
-                all.push(mapApiCommit(c));
-            }
-        }
-    }
-
-    return {
-        commits: all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-        commitsFetchError,
+async function fetchCommitsForDAG(context: RepositoryReadContext, snapshot: RepositorySnapshot, branches: Branch[]) {
+    let defaultHistory = createBranchHistory(snapshot.defaultBranch, snapshot.commitSha);
+    const branchHistories: Record<string, BranchHistory> = {};
+    if (snapshot.status === "empty") return { graphCommits: [] as Commit[], commits: [] as Commit[], defaultHistory, branchHistories, commitsFetchError: false };
+    const readPage = async (headSha: string, page: number): Promise<HistoryPageResult> => {
+        try { return await fetchHistoryPage(context, headSha, page, HISTORY_PAGE_SIZE); }
+        catch (error) { return { status: "error", page, perPage: HISTORY_PAGE_SIZE, error: historyError(error) }; }
     };
+    const pages = await Promise.all([1, 2, 3, 4, 5].map(page => readPage(snapshot.commitSha, page)));
+    for (const page of pages) defaultHistory = mergeHistoryPage(defaultHistory, page);
+    const seen = new Set(historyCommits(defaultHistory).map(commit => commit.sha));
+    const missing = branches.filter(branch => branch.name !== snapshot.defaultBranch && !seen.has(branch.headSha ?? branch.sha)).slice(0, 5);
+    for (const branch of branches) if (branch.name !== snapshot.defaultBranch) {
+        const head = branch.headSha ?? branch.sha;
+        branchHistories[branch.name] = createBranchHistory(branch.name, head, head === snapshot.commitSha ? defaultHistory.pages : {});
+    }
+    await Promise.all(missing.map(async branch => {
+        branchHistories[branch.name] = mergeHistoryPage(branchHistories[branch.name], await readPage(branch.headSha ?? branch.sha, 1));
+    }));
+    const all = [defaultHistory, ...Object.values(branchHistories)].flatMap(historyCommits);
+    const graphCommits = [...new Map(all.map(commit => [commit.sha, commit])).values()].sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+    const commitsFetchError = [defaultHistory, ...Object.values(branchHistories)].some(history => Object.values(history.pages).some(page => page.status === "error"));
+    // Legacy aggregate readers still receive the graph union; lists use only branch histories.
+    return { graphCommits, commits: graphCommits, defaultHistory, branchHistories, commitsFetchError };
 }
 
 // --- Merged Pull Requests ---
@@ -436,7 +397,7 @@ async function inspectRepoAccess(
     repo: string,
     token?: string | null,
     signal?: AbortSignal,
-): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string; rateLimited?: boolean; retryAfter?: number; token?: string }> {
+): Promise<{ ok: boolean; status: number; isPrivate: boolean; fullName?: string; rateLimited?: boolean; retryAfter?: number; token?: string; repositoryId?: number }> {
     const url = `${GITHUB_API}/repos/${owner}/${repo}`;
 
     const callerToken = token?.trim();
@@ -479,7 +440,7 @@ async function inspectRepoAccess(
         };
     }
 
-    const data = JSON.parse(await readBoundedText(res, 8 * 1024 * 1024)) as { private?: boolean; full_name?: string };
+    const data = JSON.parse(await readBoundedText(res, 8 * 1024 * 1024)) as { private?: boolean; full_name?: string; id?: number };
     signal?.throwIfAborted();
     if (typeof data.private !== "boolean") return { ok: false, status: 502, isPrivate: false };
     if (data.private && (!callerToken || requestToken !== callerToken)) {
@@ -491,6 +452,7 @@ async function inspectRepoAccess(
         isPrivate: Boolean(data.private),
         fullName: data.full_name,
         token: requestToken,
+        repositoryId: Number.isSafeInteger(data.id) && data.id! > 0 ? data.id : undefined,
     };
 }
 
@@ -507,7 +469,7 @@ function retryDelay(response: Response): number | undefined {
 
 declare const authorizedRead: unique symbol;
 export type RepositoryReadContext = { readonly [authorizedRead]: true };
-type ReadAccess = { owner: string; repo: string; visibility: "public" | "private"; token?: string; files: Map<string, Promise<string>>; commits: Map<string, Promise<void>>; activeReads: number; waitingReads: Array<() => void> };
+type ReadAccess = { repositoryId?: number; owner: string; repo: string; visibility: "public" | "private"; token?: string; files: Map<string, Promise<string>>; commits: Map<string, Promise<void>>; activeReads: number; waitingReads: Array<() => void> };
 // Opaque request-local handles cannot be reconstructed from browser JSON or serialized credentials.
 const readContexts = new WeakMap<RepositoryReadContext, ReadAccess>();
 
@@ -520,7 +482,7 @@ export async function authorizeRepositoryRead(owner: string, repo: string, calle
         throw new GitHubApiError(access.status, `/repos/${owner}/${repo}`, "Repository unavailable");
     }
     const context = Object.freeze({}) as RepositoryReadContext;
-    readContexts.set(context, { owner, repo, visibility: access.isPrivate ? "private" : "public", token: access.token, files: new Map(), commits: new Map(), activeReads: 0, waitingReads: [] });
+    readContexts.set(context, { owner, repo, repositoryId: access.repositoryId, visibility: access.isPrivate ? "private" : "public", token: access.token, files: new Map(), commits: new Map(), activeReads: 0, waitingReads: [] });
     return context;
 }
 
@@ -530,10 +492,6 @@ function snapshotAccess(context: RepositoryReadContext, value: RepositorySnapsho
     const snapshot = parseRepositorySnapshot(value, access.owner, access.repo);
     if (snapshot.visibility !== access.visibility) throw new RepositorySnapshotError();
     return access;
-}
-
-async function requireRepoToken(owner: string, repo: string, token?: string | null): Promise<string | undefined> {
-    return readContexts.get(await authorizeRepositoryRead(owner, repo, token))!.token;
 }
 
 async function verifySnapshotCommit(access: ReadAccess, snapshot: RepositorySnapshot, signal?: AbortSignal): Promise<void> {
@@ -586,22 +544,56 @@ export async function fetchDependencyFiles(context: RepositoryReadContext, snaps
 
 // --- Paginated commits (used by branch-graph "load more") ---
 
-export async function fetchCommitsPage(
-    owner: string,
-    repo: string,
-    sha: string,
-    page: number,
-    perPage: number,
-    token?: string | null,
-): Promise<Commit[]> {
-    const effectiveToken = await requireRepoToken(owner, repo, token);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ghFetch<any[]>(
-        `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(sha)}&per_page=${perPage}&page=${page}`,
-        effectiveToken,
-        { revalidate: 60 },
-    );
-    return data.map(mapApiCommit);
+export class HistoryRequestError extends Error {
+    constructor(message = "Invalid pinned history pagination.", public readonly status = 400) { super(message); }
+}
+
+function historyError(error: unknown) {
+    const status = error instanceof GitHubApiError || error instanceof HistoryRequestError ? error.status : error instanceof GitHubRateLimitError ? 429 : 502;
+    return { status, message: error instanceof GitHubRateLimitError ? error.message : `Could not load captured history page (HTTP ${status}). Try again.`, ...(error instanceof GitHubRateLimitError && error.retryAfter !== undefined ? { retryAfter: error.retryAfter } : {}) };
+}
+
+function validateHistoryRequest(headSha: string, page: number, perPage: number) {
+    if (!gitShaSchema.safeParse(headSha).success || !Number.isInteger(page) || page < 1 || page > MAX_HISTORY_PAGES || !Number.isInteger(perPage) || perPage < 1 || perPage > HISTORY_PAGE_SIZE) throw new HistoryRequestError();
+}
+
+function historyContinuation(link: string | null, access: ReadAccess, headSha: string, page: number, perPage: number, count: number): number | null {
+    if (!link) return count === perPage ? page + 1 : null;
+    let next: URL | undefined;
+    for (const part of link.split(/,\s*(?=<)/)) {
+        const match = part.trim().match(/^<([^>]+)>;\s*rel="([^"]+)"$/);
+        if (!match) throw new HistoryRequestError("GitHub returned invalid history continuation.", 502);
+        if (!match[2].split(" ").includes("next")) continue;
+        if (next) throw new HistoryRequestError("GitHub returned duplicate history continuation.", 502);
+        try { next = new URL(match[1]); } catch { throw new HistoryRequestError("GitHub returned invalid history continuation.", 502); }
+    }
+    if (!next) return null;
+    const namedPath = `/repos/${access.owner}/${access.repo}/commits`.toLowerCase();
+    const knownIdPath = access.repositoryId ? `/repositories/${access.repositoryId}/commits` : null;
+    const query = next.searchParams;
+    if (next.origin !== GITHUB_API || next.username || next.password || next.hash || (next.pathname.toLowerCase() !== namedPath && next.pathname !== knownIdPath) || [...query.keys()].some(key => !["sha", "page", "per_page"].includes(key)) || ["sha", "page", "per_page"].some(key => query.getAll(key).length !== 1) || query.get("sha") !== headSha || query.get("page") !== String(page + 1) || page + 1 > MAX_HISTORY_PAGES + 1 || query.get("per_page") !== String(perPage) || count === 0) throw new HistoryRequestError("GitHub returned mismatched history continuation.", 502);
+    return page + 1;
+}
+
+async function fetchHistoryPage(context: RepositoryReadContext, headSha: string, page: number, perPage: number, signal?: AbortSignal): Promise<CommitHistoryPage> {
+    signal?.throwIfAborted();
+    validateHistoryRequest(headSha, page, perPage);
+    const access = readContexts.get(context);
+    if (!access) throw new HistoryRequestError();
+    const repositoryPath = access.repositoryId ? `/repositories/${access.repositoryId}` : `/repos/${access.owner}/${access.repo}`;
+    const path = `${repositoryPath}/commits?sha=${headSha}&per_page=${perPage}&page=${page}`;
+    const { data, headers: responseHeaders } = await ghFetchResponse<Parameters<typeof mapApiCommit>[0][]>(path, access.token, { noStore: true }, signal, "error");
+    if (!Array.isArray(data) || data.length > perPage) throw new HistoryRequestError("GitHub returned an invalid history page.", 502);
+    const commits = data.map(mapApiCommit);
+    const nextPage = historyContinuation(responseHeaders.get("Link"), access, headSha, page, perPage, commits.length);
+    signal?.throwIfAborted();
+    return { status: "ready", headSha, page, perPage, commits, nextPage };
+}
+
+export async function fetchCommitsPage(owner: string, repo: string, headSha: string, page: number, perPage: number, token?: string | null, signal?: AbortSignal): Promise<CommitHistoryPage> {
+    signal?.throwIfAborted();
+    validateHistoryRequest(headSha, page, perPage);
+    return fetchHistoryPage(await authorizeRepositoryRead(owner, repo, token, signal), headSha, page, perPage, signal);
 }
 
 // --- Individual file content via GitHub contents API ---
@@ -782,7 +774,7 @@ async function _fetchAllRepoDataImpl(snapshot: RepositorySnapshot, metadata: Rep
     const [fileTree, branches, history, readme, dependencyFiles, mergedPRs] = await Promise.all([
         snapshot.status === "empty" ? null : fetchFileTree(owner, repo, snapshot.treeSha, token, { noStore: true }),
         branchesP,
-        snapshot.status === "empty" ? { commits: [], commitsFetchError: false } : branchesP.then(b => fetchCommitsForDAG(owner, repo, snapshot.commitSha!, b, token).catch(() => ({ commits: [] as Commit[], commitsFetchError: true }))),
+        branchesP.then(b => fetchCommitsForDAG(context, snapshot, b)),
         snapshot.status === "empty" ? "" : fetchReadme(context, snapshot).catch(() => { readmeFetchError = "Pinned README could not be loaded."; return ""; }),
         snapshot.status === "empty" ? [] : fetchDependencyFiles(context, snapshot).then(result => { dependencyFilesFetchError = result.fetchError; return result.files; }).catch(() => { dependencyFilesFetchError = "Pinned dependency manifests could not be loaded."; return []; }),
         fetchMergedPRs(owner, repo, 1, token).catch(() => []),
@@ -815,5 +807,5 @@ export async function fetchAllRepoData(owner: string, repo: string, token?: stri
     if (snapshot.status === "ready") access.commits.set(`${snapshot.commitSha}:${snapshot.treeSha}`, Promise.resolve());
     if (token?.trim()) return _fetchAllRepoDataImpl(snapshot, metadata, observedAt, context);
     // Cache the entire captured payload. Never relabel an old payload with new identity/time.
-    return unstable_cache(() => deduplicatedFetch(snapshot, metadata, observedAt, context), ["repo-data-v7-pinned-content", repositorySnapshotKey(snapshot)!], { revalidate: 300 })();
+    return unstable_cache(() => deduplicatedFetch(snapshot, metadata, observedAt, context), ["repo-data-v8-branch-history", repositorySnapshotKey(snapshot)!], { revalidate: 300 })();
 }
