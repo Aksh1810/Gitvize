@@ -19,16 +19,18 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import SectionNotice from "@/components/dashboard/section-notice";
 import CommitHistoryRail from "./commit-history-rail";
 import { createBranchHistory, historyCommits, mergeHistoryPage, commitHistoryPageSchema, MAX_LOAD_ALL_REQUESTS, MAX_HISTORY_PAGES } from "@/lib/branch-history";
 import { repositorySnapshotKey, gitShaSchema } from "@/lib/repository-snapshot";
-import type { Branch, Commit, RepositorySnapshot, BranchHistory, HistoryPageResult } from "@/types";
+import type { SectionResult, Branch, Commit, RepositorySnapshot, BranchHistory, HistoryPageResult } from "@/types";
 
 const BRANCH_COLOR = "var(--atlas-blue)";
 
 interface BranchGraphProps {
     snapshot?: RepositorySnapshot;
     branches: Branch[];
+    branchSection?: SectionResult<Branch[]>;
     commits?: Commit[];
     graphCommits?: Commit[];
     defaultHistory?: BranchHistory;
@@ -124,7 +126,7 @@ function BranchPicker({ branches, defaultBranch, selectedBranch, query, onQueryC
 }
 
 export default function BranchGraph({
-    branches,
+    branches, branchSection,
     commits: legacyGraphCommits,
     graphCommits: initialGraphCommits,
     defaultHistory: initialDefaultHistory,
@@ -280,6 +282,7 @@ export default function BranchGraph({
 
     return (
         <div className="branch-history">
+            <SectionNotice section={branchSection} label="Branches" />
             {commitsFetchError && (view === "history" || !branchError) && (
                 <p role="alert" className="branch-history-alert text-sm text-muted-foreground">
                     Commit history could not be fully loaded. Available commits are shown; reload the repository to try again.

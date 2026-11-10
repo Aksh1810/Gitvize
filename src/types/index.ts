@@ -14,7 +14,39 @@ export type RepositorySnapshot = {
   capturedAt: string;
 } & ({ status: "ready"; commitSha: string; treeSha: string } | { status: "empty"; commitSha: null; treeSha: null });
 
-export type RepositoryObservations = Record<"metadata" | "contributors" | "languages", { observedAt: string; status: "ready" | "error" }>;
+export type RepositoryObservations = Record<"metadata" | "contributors" | "languages", { observedAt: string; status: "ready" | "partial" | "error" }>;
+
+export interface SectionError {
+  code: "forbidden" | "not_found" | "rate_limited" | "upstream" | "oversized" | "batch_too_large" | "unsupported" | "parse_error" | "limited" | "coverage_unknown";
+  message: string;
+  status?: number;
+  retryAfter?: number;
+}
+export type SectionResult<T> =
+  | { status: "pending" }
+  | { status: "ready"; data: T }
+  | { status: "partial"; data: T; errors: SectionError[] }
+  | { status: "error" | "unsupported"; error: SectionError; errors?: SectionError[] };
+export interface DependencyFile { filename: string; content: string }
+export interface RepositorySections {
+  contributors: SectionResult<Contributor[]>;
+  languages: SectionResult<LanguageStats>;
+  branches: SectionResult<Branch[]>;
+  dependencyFiles: SectionResult<DependencyFile[]>;
+  readme: SectionResult<string>;
+  mergedPRs: SectionResult<MergedPR[]>;
+}
+export interface TreeCoverage {
+  upstreamTruncated: boolean;
+  applicationCapped: boolean;
+  enumeratedTreeItems: number;
+  enumeratedFiles: number;
+  retainedTreeItems: number;
+  retainedFiles: number;
+  totalTreeItems: number | null;
+  totalFiles: number | null;
+}
+export type FilePathOutcome = { path: string; status: "ready" } | { path: string; status: "error"; error: SectionError };
 
 export interface RepoMetadata {
   visibility?: "public" | "private";
@@ -47,6 +79,7 @@ export interface TreeItem {
 export type AnalysisTreeItem = Pick<TreeItem, "path" | "type">;
 
 export interface FileTreeResponse {
+  coverage?: TreeCoverage;
   sha: string;
   tree: TreeItem[];
   truncated: boolean;

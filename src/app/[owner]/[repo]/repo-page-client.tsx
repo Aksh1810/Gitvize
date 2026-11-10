@@ -15,7 +15,9 @@ import FileTreeGraph from "@/components/diagrams/file-tree-graph";
 import ContributorsNetwork from "@/components/diagrams/contributors-network";
 import BranchGraph from "@/components/diagrams/branch-graph";
 import DependencyGraph from "@/components/diagrams/dependency-graph";
-import { parseDependencyFile, type ParsedDependency } from "@/lib/dep-parser";
+import { parseDependencySection } from "@/lib/dep-parser";
+import SectionNotice from "@/components/dashboard/section-notice";
+import { sectionData, legacySection } from "@/lib/section-result";
 import { getFileColor } from "@/lib/file-icons";
 import GitHubTokenModal, { consumeOneTimeGitHubToken, setOneTimeGitHubToken } from "@/components/dashboard/github-token-modal";
 import CloneProgressScreen, { type CloneStep } from "@/components/dashboard/clone-progress-screen";
@@ -26,6 +28,7 @@ import { getCachedDiagram, cacheDiagram } from "@/lib/diagram-cache";
 import { parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { buildAnalysisRequest, resolveAnalysisResponse } from "@/lib/analysis-client";
 import type {
+    RepositorySections,
     DiagramTab,
     RepoMetadata,
     RepositorySnapshot,
@@ -48,6 +51,9 @@ interface RepoPageClientProps {
 }
 
 interface RepoData {
+    schemaVersion?: number;
+    sections?: RepositorySections;
+    dependencyFilesFetchError?: string | null;
     snapshot?: RepositorySnapshot;
     observations?: RepositoryObservations;
     metadata: RepoMetadata;
@@ -125,7 +131,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const repositoryContext = useMemo(() => ({ owner, repo, githubToken }), [owner, repo, githubToken]);
     const [loadedContext, setLoadedContext] = useState<typeof repositoryContext | null>(null);
     const loadedTree = loadedContext === repositoryContext ? repoData?.fileTree : null;
-    const emptyTree = repoData?.snapshot?.status === "ready" && loadedTree?.tree.length === 0;
+    const emptyTree = repoData?.snapshot?.status === "ready" && loadedTree?.tree.length === 0 && loadedTree.truncated === false;
     const analysisTree = emptyTree ? null : loadedTree;
     const analysisSnapshotIdentity = loadedContext === repositoryContext ? repositorySnapshotKey(repoData?.snapshot) : undefined;
     // Credentials stay in memory; neither they nor this identity enter persisted cache keys.
@@ -558,13 +564,19 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         setMountedTabs((prev) => (prev.includes(activeTab) ? prev : [...prev, activeTab]));
     }, [activeTab]);
 
-    // Parse dependencies
-    const dependencies: ParsedDependency[] = useMemo(() => {
-        if (!repoData?.dependencyFiles) return [];
-        return repoData.dependencyFiles.flatMap((df) =>
-            parseDependencyFile(df.filename, df.content)
-        );
-    }, [repoData?.dependencyFiles]);
+    // Revisionless/older payloads remain usable, with explicit unknown coverage.
+    const sections = useMemo<RepositorySections>(() => {
+        if (!repoData) return { contributors: { status: "pending" }, languages: { status: "pending" }, branches: { status: "pending" }, dependencyFiles: { status: "pending" }, readme: { status: "pending" }, mergedPRs: { status: "pending" } };
+        if (repoData.schemaVersion === 2 && repoData.sections) return repoData.sections;
+        return {
+            contributors: legacySection(repoData.contributors, repoData.contributorsFetchError ? "Contributor data could not be fully loaded. Available people are shown." : undefined),
+            languages: legacySection(repoData.languages), branches: legacySection(repoData.branches),
+            dependencyFiles: legacySection(repoData.dependencyFiles, repoData.dependencyFilesFetchError ?? undefined),
+            readme: legacySection(repoData.readme), mergedPRs: legacySection(repoData.mergedPRs),
+        };
+    }, [repoData]);
+    const dependencySection = useMemo(() => parseDependencySection(sections.dependencyFiles), [sections.dependencyFiles]);
+    const dependencies = useMemo(() => sectionData(dependencySection, []), [dependencySection]);
 
     const diagramBackground = activeTab === "architecture" ? "diagram-dot-field" : activeTab === "files" ? "diagram-grid" : "";
 
@@ -599,6 +611,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         const previous = Boolean(analysis && (displayedResult !== selectedResult || ((isAnalyzing || currentView?.error) && displayedResult?.generation !== currentView?.generation)));
         return (
             <div className="flex h-full min-h-0 min-w-0 flex-col">
+                <SectionNotice section={sections.readme} label="README" />
                 {previous && <p role="status" className="shrink-0 px-3 py-2 text-sm text-muted-foreground">Showing previous {displayedMode} diagram{isAnalyzing ? ` while ${selectedMode === "premium" ? "Premium" : "Smart"} analysis runs.` : "."}</p>}
                 {currentView?.error && <p role="alert" className="shrink-0 px-3 py-2 text-sm text-destructive break-words">{currentView.error}</p>}
                 <div className="flex-1 min-h-0 min-w-0">
@@ -621,7 +634,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 </div>
             </div>
         );
-    }, [analysis, analysisTree, emptyTree, currentView, displayedResult, isAnalyzing, owner, repo, repoData?.metadata.defaultBranch, repoData?.snapshot, runAnalysis, selectedMode, selectedResult, showNormalDiagram]);
+    }, [analysis, analysisTree, emptyTree, currentView, displayedResult, isAnalyzing, owner, repo, repoData?.metadata.defaultBranch, repoData?.snapshot, sections.readme, runAnalysis, selectedMode, selectedResult, showNormalDiagram]);
 
     const filesTabContent = useMemo(() => {
         if (emptyTree) return <div role="status" className="architecture-state text-sm text-muted-foreground">This snapshot contains no files.</div>;
@@ -632,6 +645,7 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                     
                     <FileTreeGraph
                         tree={repoData.fileTree.tree}
+                        coverage={repoData.fileTree.coverage}
                         owner={owner}
                         repo={repo}
                         githubToken={githubToken}
@@ -652,12 +666,13 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
     const contributorsTabContent = useMemo(
         () => (
             <ContributorsNetwork
-                contributors={repoData?.contributors ?? []}
+                contributors={sectionData(sections.contributors, [])}
+                section={sections.contributors}
                 truncated={repoData?.contributorsTruncated}
                 fetchError={repoData?.contributorsFetchError}
             />
         ),
-        [repoData?.contributors, repoData?.contributorsTruncated, repoData?.contributorsFetchError]
+        [sections.contributors, repoData?.contributorsTruncated, repoData?.contributorsFetchError]
     );
 
     const branchesTabContent = useMemo(() => {
@@ -672,7 +687,8 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
         return (
             <BranchGraph
                 githubToken={githubToken}
-                branches={repoData.branches}
+                branches={sectionData(sections.branches, [])}
+                branchSection={sections.branches}
                 graphCommits={repoData.graphCommits ?? repoData.commits}
                 defaultHistory={repoData.defaultHistory}
                 branchHistories={repoData.branchHistories}
@@ -683,11 +699,11 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                 repo={repo}
             />
         );
-    }, [owner, repo, repoData, githubToken]);
+    }, [owner, repo, repoData, githubToken, sections.branches]);
 
     const dependenciesTabContent = useMemo(
-        () => <DependencyGraph dependencies={dependencies} />,
-        [dependencies]
+        () => <DependencyGraph dependencies={dependencies} section={dependencySection} manifestCount={sectionData(sections.dependencyFiles, []).length} />,
+        [dependencies, dependencySection, sections.dependencyFiles]
     );
 
     const openOnboarding = useCallback(() => {
@@ -780,11 +796,12 @@ export default function RepoPageClient({ owner, repo }: RepoPageClientProps) {
                             {repoData.snapshot.status === "empty" ? "Empty repository" : <>Tree snapshot <code title={repoData.snapshot.commitSha}>{repoData.snapshot.commitSha.slice(0, 7)}</code></>} · Captured <time dateTime={repoData.snapshot.capturedAt}>{new Date(repoData.snapshot.capturedAt).toLocaleString()}</time>
                             {repoData.observations && <span className="block">Repository metrics observed <time dateTime={repoData.observations.metadata.observedAt}>{new Date(repoData.observations.metadata.observedAt).toLocaleString()}</time>; contributors and languages are live observations, not commit-specific.</span>}
                         </div>}
+                        <SectionNotice section={sections.languages} label="Language statistics" />
                     </div>
                     <div className="workspace-summary" aria-label="Repository summary">
-                        <span><strong className="text-white">{repoData.fileTree?.tree.filter((item) => item.type === "blob").length.toLocaleString() ?? "0"}</strong> files</span>
-                        <span><strong className="text-white">{repoData.contributors.length}</strong> contributors</span>
-                        <span><strong className="text-white">{repoData.branches.length}</strong> branches</span>
+                        <span><strong className="text-white">{repoData.fileTree?.tree.filter((item) => item.type === "blob").length.toLocaleString() ?? "0"}</strong> files loaded</span>
+                        <span>{sections.contributors.status === "error" ? "Contributors unavailable" : <><strong className="text-white">{sectionData(sections.contributors, []).length}</strong> contributors loaded</>}</span>
+                        <span>{sections.branches.status === "error" ? "Branch list unavailable" : <><strong className="text-white">{sectionData(sections.branches, []).length}</strong> branches loaded</>}</span>
                         <span><strong className="text-white">{repoData.metadata.defaultBranch}</strong> branch</span>
                     </div>
                 </div>

@@ -14,7 +14,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { Contributor } from "@/types";
+import SectionNotice from "@/components/dashboard/section-notice";
+import type { SectionResult, Contributor } from "@/types";
 
 function AvatarWithFallback({ src, alt, className }: { src?: string; alt: string; className: string }) {
     const [error, setError] = useState(false);
@@ -30,18 +31,20 @@ function AvatarWithFallback({ src, alt, className }: { src?: string; alt: string
 
 interface ContributorsNetworkProps {
     contributors: Contributor[];
+    section?: SectionResult<Contributor[]>;
     truncated?: boolean;
     fetchError?: string | null;
 }
 
 export default function ContributorsNetwork({
-    contributors,
+    contributors, section,
     truncated,
     fetchError,
 }: ContributorsNetworkProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"commits" | "name">("commits");
 
+    if (contributors.length === 0 && section && section.status !== "ready") return <div className="atlas-list-view"><SectionNotice section={section} label="Contributors" /></div>;
     if (contributors.length === 0) {
         const emptyMsg =
             fetchError === "rate_limited"
@@ -66,6 +69,7 @@ export default function ContributorsNetwork({
 
     return (
         <div className="atlas-list-view">
+            <SectionNotice section={section} label="Contributors" />
             {/* Header bar */}
             <div className="atlas-list-toolbar">
                 <div className="atlas-list-title">
@@ -91,7 +95,7 @@ export default function ContributorsNetwork({
                 </div>
             </div>
 
-            {truncated && (
+            {!section && truncated && (
                 <div role="status" className="atlas-list-notice px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200 bg-amber-500/5 border-b border-border">
                     Showing top {contributors.length} contributors by commit count
                 </div>

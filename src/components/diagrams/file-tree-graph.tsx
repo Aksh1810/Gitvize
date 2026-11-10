@@ -8,7 +8,8 @@ import type Sigma from "sigma";
 import { List, type RowComponentProps } from "react-window";
 import { getFileColor } from "@/lib/file-icons";
 import { repositorySnapshotKey, repositorySnapshotSchema } from "@/lib/repository-snapshot";
-import { fetchSourceFiles } from "@/lib/file-batch";
+import { fetchSourceFiles, SourceFilesError } from "@/lib/file-batch";
+import { treeCoverageText } from "@/lib/section-result";
 import { searchFiles } from "@/lib/search-engine";
 import { getWorkbenchPanelLayout } from "@/lib/workbench-layout";
 import { getGraphFit, hasGraphLabelPriority, showGraphLabel } from "@/lib/file-graph-presentation";
@@ -21,7 +22,7 @@ import {
     type SimNodeType,
 } from "@/lib/file-tree-physics";
 import { selectSymbolAnalysisFiles, isImportableCodeFile, type FileImportEdge, type SymbolKind, type SymbolGraphData } from "@/lib/symbol-parser";
-import type { TreeItem, FileNodeData, RepositorySnapshot } from "@/types";
+import type { TreeCoverage, FilePathOutcome, TreeItem, FileNodeData, RepositorySnapshot } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Maximize2, ZoomIn, ZoomOut, Search, X, ChevronDown, ChevronRight, Folder, File, Filter, Braces, FileCode2, FileJson2, FileText, FileType2, FolderOpen, PanelRightClose, PanelRightOpen, SquareCheck, Square } from "lucide-react";
 import Prism from "prismjs";
@@ -55,6 +56,7 @@ const extToPrismLang: Record<string, string> = {
 
 
 interface FileTreeGraphProps {
+    coverage?: TreeCoverage;
     snapshot?: RepositorySnapshot;
     tree: TreeItem[];
     owner: string;
@@ -91,6 +93,8 @@ interface CodeLineRow {
 }
 
 interface SymbolDiagnostics {
+    context?: object;
+    outcomes: FilePathOutcome[];
     totalBlobCount: number;
     candidateCount: number;
     selectedCount: number;
@@ -200,6 +204,7 @@ const BINARY_EXTENSIONS = new Set([
 ]);
 
 const EMPTY_SYMBOL_DIAGNOSTICS: SymbolDiagnostics = {
+    outcomes: [],
     totalBlobCount: 0,
     candidateCount: 0,
     selectedCount: 0,
@@ -391,7 +396,7 @@ function syncGraphData(
     return { nodeList, pathToId };
 }
 
-export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot, fileTypeLegend = [] }: FileTreeGraphProps) {
+export default function FileTreeGraph({ tree, coverage, owner, repo, githubToken, snapshot, fileTypeLegend = [] }: FileTreeGraphProps) {
     const snapshotIdentity = repositorySnapshotKey(snapshot);
     const githubHeaders = useMemo((): Record<string, string> => githubToken ? { "x-github-token": githubToken } : {}, [githubToken]);
     const { resolvedTheme } = useTheme();
@@ -438,8 +443,16 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
         variable: false,
     });
     const [symbolLoading, setSymbolLoading] = useState(false);
-    const [symbolError, setSymbolError] = useState<string | null>(null);
-    const [symbolDiagnostics, setSymbolDiagnostics] = useState<SymbolDiagnostics>(EMPTY_SYMBOL_DIAGNOSTICS);
+    const [symbolErrorResult, setSymbolErrorResult] = useState<{ context: object; error: string | null } | null>(null);
+    const symbolError = symbolErrorResult?.context === sourceCache ? symbolErrorResult.error : null;
+    const setSymbolError = useCallback((error: string | null) => setSymbolErrorResult({ context: sourceCache, error }), [sourceCache]);
+    const [symbolDiagnosticsResult, setSymbolDiagnostics] = useState<SymbolDiagnostics>(EMPTY_SYMBOL_DIAGNOSTICS);
+    const symbolDiagnostics = symbolDiagnosticsResult.context === sourceCache ? symbolDiagnosticsResult : EMPTY_SYMBOL_DIAGNOSTICS;
+    const [sourceRetry, setSourceRetry] = useState(0);
+    const [importDiagnostics, setImportDiagnostics] = useState<{ context: object; selected: number; candidates: number; loaded: number; outcomes: FilePathOutcome[]; parserFailed?: boolean } | null>(null);
+    const imports = importDiagnostics?.context === sourceCache ? importDiagnostics : null;
+    const sourceFailures = [...symbolDiagnostics.outcomes, ...(imports?.outcomes ?? [])].filter(outcome => outcome.status === "error");
+    const failureSummary = [...new Set(sourceFailures.map(outcome => outcome.error.code))].map(code => `${sourceFailures.filter(outcome => outcome.error.code === code).length} ${code.replaceAll("_", " ")}`).join(", ");
     const [showExplorer, setShowExplorer] = useState(true);
     const [showExplorerInspector, setShowExplorerInspector] = useState(false);
     const selectedRevision = useMemo(() => tree.find(item => item.path === selectedFile?.path)?.sha, [tree, selectedFile?.path]);
@@ -922,6 +935,8 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
 
             const sourceFiles = selection.sourceFiles;
             const baseDiagnostics: SymbolDiagnostics = {
+                context: sourceCache,
+                outcomes: [],
                 totalBlobCount: selection.totalBlobCount,
                 candidateCount: selection.candidateCount,
                 selectedCount: selection.sourceFiles.length,
@@ -952,6 +967,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
             let fetchSucceeded = 0;
             let cacheHits = 0;
             let fetchFailed = 0;
+            let outcomes: FilePathOutcome[] = [];
 
             // Split into cached vs. uncached to avoid fetching what we already have.
             const uncachedPaths: string[] = [];
@@ -970,8 +986,10 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
             if (uncachedPaths.length > 0 && !cancelled) {
                 fetchAttempted += uncachedPaths.length;
                 try {
-                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal, sourceCache.snapshot);
+                    const result = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal, sourceCache.snapshot);
                     if (cancelled || controller.signal.aborted) return;
+                    const { files } = result;
+                    outcomes = result.outcomes;
                     fetchSucceeded += files.length;
                     fetchFailed += uncachedPaths.length - files.length;
                     for (const file of files) {
@@ -986,6 +1004,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                         return;
                     }
                     fetchFailed += uncachedPaths.length;
+                    if (error instanceof SourceFilesError) outcomes = error.outcomes;
                 }
             }
 
@@ -996,7 +1015,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                 fetchAttempted,
                 fetchSucceeded,
                 cacheHits,
-                fetchFailed,
+                fetchFailed, outcomes,
             });
 
             if (filePayload.length === 0) {
@@ -1027,7 +1046,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                 if (symbolWorkerRef.current === worker) symbolWorkerRef.current = null;
             };
             worker.onerror = () => {
-                if (!cancelled) setSymbolLoading(false);
+                if (!cancelled) { setSymbolError("Symbol parser failed. Source files remain available; retry analysis."); setSymbolLoading(false); }
                 worker.terminate();
                 if (symbolWorkerRef.current === worker) symbolWorkerRef.current = null;
             };
@@ -1045,7 +1064,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
             ownedWorker?.terminate();
             if (symbolWorkerRef.current === ownedWorker) symbolWorkerRef.current = null;
         };
-    }, [owner, repo, tree, githubHeaders, sourceCache, setSymbolGraph]);
+    }, [owner, repo, tree, githubHeaders, sourceCache, sourceRetry, setSymbolGraph, setSymbolError]);
 
     // Multi-language file import analysis (Python, Go, Rust, Java, C/C++, C#)
     // Fetches non-JS/TS source files and extracts file-to-file import edges.
@@ -1075,12 +1094,15 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
             });
 
             if (nonJsTsFiles.length === 0) {
+                setMultiLangLoading(false);
+                setImportDiagnostics({ context: sourceCache, selected: 0, candidates: 0, loaded: 0, outcomes: [] });
                 setFileImportEdges([]);
                 return;
             }
 
             setMultiLangLoading(true);
             const selected = nonJsTsFiles.slice(0, 60);
+            let outcomes: FilePathOutcome[] = [];
             const filePayload: Array<{ path: string; content: string }> = [];
 
             // Serve from cache where possible; batch-fetch the rest in one request.
@@ -1097,8 +1119,10 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
 
             if (uncachedPaths.length > 0 && !cancelled) {
                 try {
-                    const files = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal, sourceCache.snapshot);
+                    const result = await fetchSourceFiles(owner, repo, uncachedPaths, githubHeaders, controller.signal, sourceCache.snapshot);
                     if (cancelled || controller.signal.aborted) return;
+                    const { files } = result;
+                    outcomes = result.outcomes;
                     for (const file of files) {
                         sourceCache.files.set(`${owner}/${repo}/${file.path}`, file.content);
                         filePayload.push(file);
@@ -1109,12 +1133,15 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                         setMultiLangLoading(false);
                         return;
                     }
+                    if (error instanceof SourceFilesError) outcomes = error.outcomes;
                     // Keep available sources after genuine partial failures.
                 }
             }
 
             if (cancelled) return;
 
+            setImportDiagnostics({ context: sourceCache, selected: selected.length, candidates: nonJsTsFiles.length, loaded: filePayload.length, outcomes });
+            if (!filePayload.length) { setFileImportEdges([]); setMultiLangLoading(false); return; }
             const fileSet = tree.map((i) => i.path);
 
             importWorkerRef.current?.terminate();
@@ -1134,7 +1161,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                 if (importWorkerRef.current === worker) importWorkerRef.current = null;
             };
             worker.onerror = () => {
-                if (!cancelled) setMultiLangLoading(false);
+                if (!cancelled) { setImportDiagnostics({ context: sourceCache, selected: selected.length, candidates: nonJsTsFiles.length, loaded: filePayload.length, outcomes, parserFailed: true }); setMultiLangLoading(false); }
                 worker.terminate();
                 if (importWorkerRef.current === worker) importWorkerRef.current = null;
             };
@@ -1152,7 +1179,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
             ownedWorker?.terminate();
             if (importWorkerRef.current === ownedWorker) importWorkerRef.current = null;
         };
-    }, [owner, repo, tree, githubHeaders, sourceCache, setFileImportEdges]);
+    }, [owner, repo, tree, githubHeaders, sourceCache, sourceRetry, setFileImportEdges]);
 
     // Build graph elements — show all files
     const elements = useMemo(() => {
@@ -1471,7 +1498,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
         return { nodes, edges };
     }, [tree, repo, symbolGraph, fileImportEdges]);
 
-    // Total blob count across the entire tree (pre-truncation) — feeds the truncation banner.
+    // Loaded blobs only; upstream enumeration and application retention are separate coverage.
     const totalFileCount = useMemo(
         () => tree.reduce((n, item) => (item.type === "blob" ? n + 1 : n), 0),
         [tree],
@@ -2637,15 +2664,22 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                         <span>Symbols</span>
                     </Button>
                 </div>
-                {symbolDiagnostics.fetchFailed > 0 && (
-                    <div role="status" className="shrink-0 border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                        Partial symbol index: {symbolDiagnostics.fetchFailed} files unavailable. File browsing is still available.
+                <p role="status" aria-live="polite" aria-atomic="true" className="shrink-0 border-b border-border px-3 py-2 text-xs leading-5 text-muted-foreground break-words">
+                    {treeCoverageText(coverage, totalFileCount)}
+                </p>
+                <p className="shrink-0 border-b border-border px-3 py-2 text-xs leading-5 text-muted-foreground break-words">
+                    {symbolDiagnosticsResult.context !== sourceCache || !imports ? "Source analysis pending." : <>Source sample: JS/TS {symbolDiagnostics.fetchSucceeded + symbolDiagnostics.cacheHits}/{symbolDiagnostics.selectedCount} files loaded ({symbolDiagnostics.candidateCount} eligible; {symbolDiagnostics.skippedByLimit} limit and {symbolDiagnostics.skippedBySize} size omissions). Other imports {imports.loaded}/{imports.selected} files loaded (60-file cap). {symbolDiagnostics.selectedCount === 0 && imports.selected === 0 ? "No loaded files are eligible for the source parsers. " : ""}Syntax subsets only; relationships are incomplete.</>}
+                </p>
+                {(sourceFailures.length > 0 || symbolError || imports?.parserFailed) && (
+                    <div className="shrink-0 border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                        <p role="status" aria-live="polite" aria-atomic="true">Partial source analysis: {failureSummary || symbolError || "Import parser failed"}. File browsing is still available.</p>
+                        <Button variant="outline" size="sm" disabled={symbolLoading || multiLangLoading} onClick={() => setSourceRetry(attempt => attempt + 1)}>Retry unavailable sources</Button>
                     </div>
                 )}
-                {totalFileCount > clusterInfo.files && (
-                    <div role="status" className="shrink-0 border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                        Showing top {clusterInfo.files.toLocaleString()} of {totalFileCount.toLocaleString()} files (filtered by importance)
-                    </div>
+                {tree.length > 2000 && (
+                    <p role="status" aria-live="polite" aria-atomic="true" className="shrink-0 border-b border-border bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                        Graph sample: {clusterInfo.files.toLocaleString()} of {totalFileCount.toLocaleString()} loaded files. Up to 2,000 tree items selected by importance; root and containing folders are added. Explorer searches all loaded files.
+                    </p>
                 )}
                 </div>
 
@@ -2687,12 +2721,12 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                         </div>
                         <div className="flex-1 overflow-auto px-2.5 py-2.5 text-[10px] font-mono text-slate-300 space-y-3">
                             <details className="rounded-md border border-slate-700/70 bg-slate-900/70 px-2 py-2 space-y-1">
-                                <summary className="cursor-pointer text-xs text-slate-200">Symbol index · {symbolLoading ? "Indexing" : "Ready"}</summary>
+                                <summary className="cursor-pointer text-xs text-slate-200">Symbol index · {symbolLoading || symbolDiagnosticsResult.context !== sourceCache ? "Indexing" : symbolError ? "Unavailable" : symbolDiagnostics.fetchFailed ? "Partial" : "Ready"}</summary>
                                 <p className="text-xs text-slate-200 mt-2">
                                     Indexed {symbolGraph.symbols.length} symbols from {symbolDiagnostics.fetchSucceeded + symbolDiagnostics.cacheHits}/{symbolDiagnostics.selectedCount} files.
                                 </p>
                                 <p className="text-xs text-slate-400">
-                                    Symbols: JS/TS only. File imports: all languages ({multiLangLoading ? "indexing…" : `${fileImportEdges.length} edges`}).
+                                    Symbols: sampled JS/TS only; {symbolDiagnostics.skippedNotAnalyzable} loaded files excluded by eligibility/parser support. File imports: JS/TS, Python, Go, Rust, Java, C/C++ and C# syntax subsets ({multiLangLoading ? "indexing…" : `${fileImportEdges.length} edges`}).
                                 </p>
                                 {(symbolDiagnostics.skippedByLimit > 0 || symbolDiagnostics.skippedBySize > 0) && (
                                     <p className="text-xs text-amber-300/90">
@@ -2704,6 +2738,7 @@ export default function FileTreeGraph({ tree, owner, repo, githubToken, snapshot
                                         {symbolDiagnostics.fetchFailed} source fetches failed; showing partial symbol graph.
                                     </p>
                                 )}
+                                {imports && <p className="text-xs text-slate-400">Non-JS/TS imports: {imports.loaded}/{imports.selected} selected files loaded from {imports.candidates} eligible files (60-file selection limit). {imports.parserFailed && "Import parser failed."}</p>}
                                 {symbolError && (
                                     <p className="text-xs text-rose-300">{symbolError}</p>
                                 )}

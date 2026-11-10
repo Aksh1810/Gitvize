@@ -69,7 +69,9 @@ export async function GET(request: NextRequest) {
 
     try {
         const data = await fetchAllRepoData(owner, repo, token);
-        return NextResponse.json({ ...data, contributors: deduplicateContributors(data.contributors ?? []) }, { headers: { "Cache-Control": "private, no-store" } });
+        const contributors = deduplicateContributors(data.contributors ?? []);
+        const sections = data.sections ? { ...data.sections, contributors: data.sections.contributors.status === "ready" || data.sections.contributors.status === "partial" ? { ...data.sections.contributors, data: contributors } : data.sections.contributors } : undefined;
+        return NextResponse.json({ ...data, sections, contributors }, { headers: { "Cache-Control": "private, no-store" } });
     } catch (error) {
         const raw =
             error instanceof Error ? error.message : "Failed to fetch repo data";

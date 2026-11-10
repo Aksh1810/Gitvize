@@ -1,3 +1,6 @@
+import type { DependencyFile, SectionResult } from "@/types";
+import { sectionErrors, sectionWithData } from "@/lib/section-result";
+
 // ============================================================================
 // Gitvize — Dependency File Parsers
 // ============================================================================
@@ -166,4 +169,33 @@ function parsePyprojectToml(content: string): ParsedDependency[] {
     }
 
     return deps;
+}
+
+/** Preserve download and parser limitations instead of flattening them into zero packages. */
+export function parseDependencySection(section: SectionResult<DependencyFile[]>): SectionResult<ParsedDependency[]> {
+    if (section.status !== "ready" && section.status !== "partial") return section;
+    const errors = [...sectionErrors(section)];
+    const dependencies: ParsedDependency[] = [];
+    let parsed = 0;
+    for (const file of section.data) {
+        if (!["package.json", "requirements.txt", "go.mod", "Cargo.toml", "pyproject.toml"].includes(file.filename)) {
+            errors.push({ code: "unsupported", message: `${file.filename} is loaded, but its dependency syntax is unsupported.` });
+            continue;
+        }
+        if (file.filename === "package.json") {
+            try {
+                const pkg = JSON.parse(file.content);
+                if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) throw new Error();
+                for (const key of ["dependencies", "devDependencies"]) if (pkg[key] !== undefined && (!pkg[key] || typeof pkg[key] !== "object" || Array.isArray(pkg[key]))) throw new Error();
+            } catch {
+                errors.push({ code: "parse_error", message: "package.json could not be parsed as a dependency manifest." });
+                continue;
+            }
+        }
+        dependencies.push(...parseDependencyFile(file.filename, file.content));
+        parsed++;
+    }
+    const unique = [...new Map(dependencies.map(dep => [`${dep.ecosystem}:${dep.name}:${dep.isDirect}`, dep])).values()];
+    if (!parsed && errors.length && errors.every(error => error.code === "unsupported")) return { status: "unsupported", error: { code: "unsupported", message: errors.map(error => error.message).join(" ") } };
+    return sectionWithData(unique, errors, parsed > 0);
 }

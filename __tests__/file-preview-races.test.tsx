@@ -203,3 +203,66 @@ it("does not seed a new snapshot graph with symbols retained from the previous c
     expect(mockGraphs.at(-1)?.hasNode("symbol:source.ts:function:OLD_ONLY")).toBe(false);
     await act(async () => pending.resolve({ files: [{ path: "source.ts", content: "new source" }] }));
 });
+
+it("distinguishes upstream enumeration, retained items and the graph sample in the actual file view", () => {
+    global.fetch = jest.fn(async () => ({ ok: false })) as unknown as typeof fetch;
+    const items = Array.from({ length: 2001 }, (_, i) => ({ ...tree[0], path: `file-${i}.txt` }));
+    render(<FileTreeGraph tree={items} owner="example" repo="repo" coverage={{ upstreamTruncated: true, applicationCapped: true, enumeratedTreeItems: 6000, enumeratedFiles: 5900, retainedTreeItems: 2001, retainedFiles: 2001, totalTreeItems: null, totalFiles: null }} />);
+    expect(screen.getByText(/exact repository totals are unknown/)).toHaveTextContent(/6,000 enumerated tree items/);
+    expect(screen.getByText(/Graph sample:/)).toHaveTextContent(/2,000 of 2,001 loaded files/);
+    expect(screen.getByText(/Graph sample:/)).toHaveTextContent(/2,000 tree items/);
+});
+it("reports typed source failure and recovers via retry without applying duplicate or stale sources", async () => {
+    let fail = true;
+    global.fetch = jest.fn(async url => String(url).includes("/files") ? { ok: true, json: async () => fail ? { files: [], outcomes: [{ path: "a.ts", status: "error", error: { code: "forbidden", status: 403 } }] } : { files: [{ path: "a.ts", content: "RECOVERED_SOURCE" }], outcomes: [{ path: "a.ts", status: "ready" }] } } : { ok: false }) as unknown as typeof fetch;
+    render(<FileTreeGraph tree={[{ ...tree[0], path: "a.ts" }]} owner="example" repo="repo" />);
+    await screen.findByText(/1 forbidden/);
+    fail = false; fireEvent.click(screen.getByRole("button", { name: "Retry unavailable sources" }));
+    await waitFor(() => expect(mockWorkerMessages.some(message => message.fileContents?.some(file => file.content === "RECOVERED_SOURCE"))).toBe(true));
+    expect(screen.queryByText(/1 forbidden/)).not.toBeInTheDocument();
+    expect(mockWorkerMessages.find(message => message.type === "buildSymbolGraph")?.fileContents).toEqual([{ path: "a.ts", content: "RECOVERED_SOURCE" }]);
+});
+
+it("retries only unavailable sources while retaining successful files exactly once", async () => {
+    const sources = ["a.ts", "b.ts"].map(path => ({ ...tree[0], path }));
+    let attempt = 0;
+    global.fetch = jest.fn(async url => String(url).includes("/files") ? { ok: true, json: async () => ++attempt === 1 ? {
+        files: [{ path: "a.ts", content: "RETAINED" }], outcomes: [{ path: "a.ts", status: "ready" }, { path: "b.ts", status: "error", error: { status: 503 } }],
+    } : { files: [{ path: "b.ts", content: "REPAIRED" }], outcomes: [{ path: "b.ts", status: "ready" }] } } : { ok: false }) as unknown as typeof fetch;
+    render(<FileTreeGraph tree={sources} owner="example" repo="repo" />);
+    await screen.findByText(/1 upstream/);
+    await waitFor(() => expect(mockWorkerMessages.some(message => message.type === "buildSymbolGraph")).toBe(true));
+    const worker = mockWorkers.find(worker => (worker as unknown as { lastMessageType: string }).lastMessageType === "buildSymbolGraph")!;
+    act(() => { worker.onmessage?.call(worker, { data: { type: "symbolGraph", data: { symbols: [], references: [] } } } as MessageEvent); });
+    fireEvent.click(screen.getByRole("button", { name: "Retry unavailable sources" }));
+    await waitFor(() => expect(mockWorkerMessages.filter(message => message.type === "buildSymbolGraph")).toHaveLength(2));
+    const requests = jest.mocked(global.fetch).mock.calls.filter(([url]) => String(url).includes("/files"));
+    expect(JSON.parse(String(requests[1][1]?.body)).paths).toEqual(["b.ts"]);
+    expect(mockWorkerMessages.filter(message => message.type === "buildSymbolGraph")[1].fileContents).toEqual([{ path: "a.ts", content: "RETAINED" }, { path: "b.ts", content: "REPAIRED" }]);
+    expect(screen.queryByText(/1 upstream/)).not.toBeInTheDocument();
+});
+
+it.each(["ts", "py"])("keeps %s parser failures visible and retryable without hiding file browsing", async ext => {
+    const path = `a.${ext}`;
+    global.fetch = jest.fn(async url => String(url).includes("/files") ? { ok: true, json: async () => ({ files: [{ path, content: "SOURCE" }] }) } : String(url).includes("/file?") ? text("READABLE_SOURCE") : { ok: false }) as unknown as typeof fetch;
+    render(<FileTreeGraph tree={[{ ...tree[0], path }]} owner="example" repo="repo" />);
+    const kind = ext === "ts" ? "buildSymbolGraph" : "extractFileToFileImports";
+    await waitFor(() => expect(mockWorkerMessages.some(message => message.type === kind)).toBe(true));
+    const worker = mockWorkers.find(worker => (worker as unknown as { lastMessageType: string }).lastMessageType === kind)!;
+    act(() => { worker.onerror?.call(worker, {} as ErrorEvent); });
+    expect(screen.getByRole("button", { name: "Retry unavailable sources" })).toBeEnabled();
+    expect(screen.getAllByRole("status").some(status => (ext === "ts" ? /Symbol parser failed/ : /Import parser failed/).test(status.textContent ?? ""))).toBe(true);
+    choose(path); await screen.findByText("READABLE_SOURCE");
+});
+it("does not let an obsolete import parser's loading flag block source recovery in the next context", async () => {
+    global.fetch = jest.fn(async (url, init) => {
+        if (!String(url).includes("/files")) return { ok: false };
+        const path = JSON.parse(String(init?.body)).paths[0];
+        return { ok: true, json: async () => path === "a.py" ? { files: [{ path, content: "SOURCE" }] } : { files: [], outcomes: [{ path, status: "error", error: { status: 403 } }] } };
+    }) as unknown as typeof fetch;
+    const ui = render(<FileTreeGraph tree={[{ ...tree[0], path: "a.py" }]} owner="example" repo="repo" />);
+    await waitFor(() => expect(mockWorkerMessages.some(message => message.type === "extractFileToFileImports")).toBe(true));
+    ui.rerender(<FileTreeGraph tree={[{ ...tree[0], path: "a.ts" }]} owner="example" repo="repo" />);
+    await screen.findByText(/1 forbidden/);
+    expect(screen.getByRole("button", { name: "Retry unavailable sources" })).toBeEnabled();
+});

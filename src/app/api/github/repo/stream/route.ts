@@ -106,6 +106,7 @@ export async function GET(request: NextRequest) {
                     payload: {
                         ...data,
                         contributors,
+                        sections: data.sections ? { ...data.sections, contributors: data.sections.contributors.status === "ready" || data.sections.contributors.status === "partial" ? { ...data.sections.contributors, data: contributors } : data.sections.contributors } : undefined,
                     },
                 });
             } catch (err) {

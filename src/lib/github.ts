@@ -2,11 +2,13 @@
 // Gitvize — GitHub API Service
 // ============================================================================
 
+import { sectionError, sectionWithData, sectionData } from "@/lib/section-result";
 import { unstable_cache } from "next/cache";
 import { createBranchHistory, historyCommits, mergeHistoryPage, HISTORY_PAGE_SIZE, MAX_HISTORY_PAGES } from "@/lib/branch-history";
 import { gitShaSchema, parseRepositorySnapshot, repositorySnapshotKey, RepositorySnapshotError } from "@/lib/repository-snapshot";
 import { FILE_BATCH_CONCURRENCY, MAX_FILE_BYTES, readBoundedText, ResponseTooLargeError } from "@/lib/response-limits";
 import type {
+    SectionResult, SectionError, RepositorySections, DependencyFile,
     RepoMetadata,
     RepositorySnapshot,
     RepositoryObservations,
@@ -141,14 +143,16 @@ export async function fetchFileTree(
     repo: string,
     treeRef?: string,
     token?: string | null,
-    cacheMode: FetchCacheMode = { revalidate: 120 }
+    cacheMode: FetchCacheMode = { revalidate: 120 },
+    signal?: AbortSignal,
 ): Promise<FileTreeResponse> {
     const ref = treeRef ?? "HEAD";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await ghFetch<any>(
         `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
         token,
-        cacheMode
+        cacheMode,
+        signal,
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allItems: TreeItem[] = data.tree.map((item: any) => ({
@@ -169,7 +173,14 @@ export async function fetchFileTree(
         ? allItems.slice(0, MAX_TREE_ITEMS)
         : allItems;
 
-    return { sha: data.sha, tree, truncated };
+    const enumeratedFiles = allItems.filter(item => item.type === "blob").length;
+    const coverage = {
+        upstreamTruncated: Boolean(data.truncated), applicationCapped: allItems.length > MAX_TREE_ITEMS,
+        enumeratedTreeItems: allItems.length, enumeratedFiles,
+        retainedTreeItems: tree.length, retainedFiles: tree.filter(item => item.type === "blob").length,
+        totalTreeItems: data.truncated ? null : allItems.length, totalFiles: data.truncated ? null : enumeratedFiles,
+    };
+    return { sha: data.sha, tree, truncated, coverage };
 }
 
 // --- README ---
@@ -197,7 +208,7 @@ export async function fetchContributors(
     owner: string,
     repo: string,
     token?: string | null
-): Promise<{ data: Contributor[]; truncated: boolean }> {
+): Promise<{ data: Contributor[]; truncated: boolean; errors: SectionError[] }> {
     const hasToken = !!(token?.trim() || process.env.GITHUB_TOKEN?.trim());
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -214,6 +225,7 @@ export async function fetchContributors(
         htmlUrl: c.html_url,
     });
     const all: Contributor[] = page1.map(mapItem);
+    const errors: SectionError[] = [];
 
     // With a token, paginate up to 500 total (5 pages of 100)
     if (hasToken && page1.length === 100) {
@@ -227,13 +239,14 @@ export async function fetchContributors(
             )
         );
         for (const result of extraPages) {
-            if (result.status !== "fulfilled" || result.value.length === 0) break;
-            all.push(...result.value.map(mapItem));
-            if (result.value.length < 100) break;
+            if (result.status === "rejected") errors.push(githubSectionError(result.reason, "Contributor page"));
+            else all.push(...result.value.map(mapItem));
         }
     }
 
-    return { data: all, truncated: all.length === 500 };
+    const truncated = hasToken ? all.length === 500 || errors.length > 0 : page1.length === 100;
+    if (truncated) errors.push({ code: "limited", message: `Contributor sample: ${all.length} loaded; additional contributors may be unavailable.` });
+    return { data: all, truncated, errors };
 }
 
 // --- Branches ---
@@ -521,25 +534,34 @@ const MANIFEST_FILES = [
     "pyproject.toml",
 ];
 
-export async function fetchDependencyFiles(context: RepositoryReadContext, snapshot: RepositorySnapshot, signal?: AbortSignal): Promise<{ files: { filename: string; content: string }[]; fetchError: string | null }> {
+export async function fetchDependencyFiles(context: RepositoryReadContext, snapshot: RepositorySnapshot, signal?: AbortSignal, inventory?: Promise<FileTreeResponse | null>): Promise<{ files: DependencyFile[]; fetchError: string | null; section: SectionResult<DependencyFile[]> }> {
     signal?.throwIfAborted();
     const access = snapshotAccess(context, snapshot);
-    if (snapshot.status === "empty") return { files: [], fetchError: null };
+    if (snapshot.status === "empty") return { files: [], fetchError: null, section: { status: "ready", data: [] } };
     const files: { filename: string; content: string }[] = [];
-    let failure: unknown;
+    const errors: SectionError[] = [];
+    let treePromise = inventory;
     for (let offset = 0; offset < MANIFEST_FILES.length; offset += FILE_BATCH_CONCURRENCY) {
         signal?.throwIfAborted();
         const results = await Promise.allSettled(MANIFEST_FILES.slice(offset, offset + FILE_BATCH_CONCURRENCY).map(async filename => ({ filename, content: await readFileAtSnapshot(context, snapshot, filename, signal) })));
         signal?.throwIfAborted();
-        for (const result of results) {
+        for (const [index, result] of results.entries()) {
             if (result.status === "fulfilled") files.push(result.value);
             else if (result.reason !== null && typeof result.reason === "object" && "name" in result.reason && result.reason.name === "AbortError") throw result.reason;
             else if (result.reason instanceof GitHubApiError && result.reason.status === 404) {
-                try { await verifySnapshotCommit(access, snapshot, signal); } catch (error) { signal?.throwIfAborted(); failure ??= error; }
-            } else failure ??= result.reason;
+                try {
+                    await verifySnapshotCommit(access, snapshot, signal);
+                    treePromise ??= fetchFileTree(access.owner, access.repo, snapshot.treeSha, access.token, { noStore: true }, signal);
+                    const tree = await treePromise;
+                    signal?.throwIfAborted();
+                    if (!tree || tree.sha !== snapshot.treeSha) throw new RepositorySnapshotError();
+                    // A content 404 alone is not evidence of absence or continuing Contents access.
+                    if (tree.truncated || tree.tree.some(item => item.path === MANIFEST_FILES[offset + index])) errors.push(githubSectionError(result.reason, "Dependency manifest"));
+                } catch (error) { signal?.throwIfAborted(); errors.push(githubSectionError(error, "Dependency manifest")); }
+            } else errors.push(githubSectionError(result.reason, "Dependency manifest"));
         }
     }
-    return { files, fetchError: failure ? "Some pinned dependency manifests could not be loaded." : null };
+    return { files, fetchError: errors.length ? "Some pinned dependency manifests could not be loaded." : null, section: sectionWithData(files, errors, files.length > 0) };
 }
 
 // --- Paginated commits (used by branch-graph "load more") ---
@@ -747,40 +769,55 @@ export async function fetchRepositorySnapshotTree(owner: string, repo: string, v
     return { snapshot, fileTree };
 }
 
+function githubSectionError(error: unknown, subject: string): SectionError {
+    const status = error instanceof GitHubApiError ? error.status : error instanceof GitHubRateLimitError ? 429 : error instanceof ResponseTooLargeError ? 413 : 502;
+    return sectionError(status, subject, error instanceof GitHubRateLimitError ? error.retryAfter : undefined);
+}
+
+async function optionalSection<T>(load: () => Promise<T>, subject: string): Promise<SectionResult<T>> {
+    try { return { status: "ready", data: await load() }; }
+    catch (error) { return { status: "error", error: githubSectionError(error, subject) }; }
+}
+
 async function _fetchAllRepoDataImpl(snapshot: RepositorySnapshot, metadata: RepoMetadata, metadataObservedAt: string, context: RepositoryReadContext) {
     const token = readContexts.get(context)!.token;
-    let readmeFetchError: string | null = null;
-    let dependencyFilesFetchError: string | null = null;
     const { owner, repo } = snapshot;
-    let contributorsFetchError: string | null = null;
     const observations: RepositoryObservations = {
         metadata: { status: "ready", observedAt: metadataObservedAt },
         contributors: { status: "ready", observedAt: metadataObservedAt },
         languages: { status: "ready", observedAt: metadataObservedAt },
     };
-    const [contributorsResult, languages] = await Promise.all([
-        fetchContributors(owner, repo, token).then(result => { observations.contributors.observedAt = new Date().toISOString(); return result; }).catch((err) => {
-            const msg = (err as Error)?.message ?? String(err);
-            contributorsFetchError = /rate.?limit|secondary.?rate/i.test(msg) ? "rate_limited" : "fetch_failed";
-            observations.contributors = { status: "error", observedAt: new Date().toISOString() };
-            return { data: [] as Contributor[], truncated: false };
-        }),
-        fetchLanguages(owner, repo, token).then(result => { observations.languages.observedAt = new Date().toISOString(); return result; }).catch(() => {
-            observations.languages = { status: "error", observedAt: new Date().toISOString() };
-            return {};
-        }),
-    ]);
-    const branchesP = snapshot.status === "empty" ? Promise.resolve([] as Branch[]) : fetchBranches(owner, repo, snapshot.defaultBranch, token).then(branches => branches.map(branch => branch.isDefault ? { ...branch, sha: snapshot.commitSha!, headSha: snapshot.commitSha!, capturedAt: snapshot.capturedAt } : branch)).catch(() => [] as Branch[]);
+    const contributorsP: Promise<SectionResult<Contributor[]>> = fetchContributors(owner, repo, token)
+        .then(result => sectionWithData(result.data, result.errors, result.data.length > 0))
+        .catch(error => ({ status: "error" as const, error: githubSectionError(error, "Contributors") }))
+        .then(section => { observations.contributors = { observedAt: new Date().toISOString(), status: section.status === "ready" ? "ready" : section.status === "partial" ? "partial" : "error" }; return section; });
+    const languagesP = optionalSection(() => fetchLanguages(owner, repo, token), "Language statistics")
+        .then(section => { observations.languages = { observedAt: new Date().toISOString(), status: section.status === "ready" ? "ready" : "error" }; return section; });
+    const [contributors, languages] = await Promise.all([contributorsP, languagesP]);
+    const branchesP: Promise<SectionResult<Branch[]>> = snapshot.status === "empty" ? Promise.resolve({ status: "ready", data: [] }) : optionalSection(async () => {
+        const branches = await fetchBranches(owner, repo, snapshot.defaultBranch, token);
+        return branches.map(branch => branch.isDefault ? { ...branch, sha: snapshot.commitSha!, headSha: snapshot.commitSha!, capturedAt: snapshot.capturedAt } : branch);
+    }, "Branch list").then(section => section.status === "ready" && section.data.length === 20 ? { status: "partial", data: section.data, errors: [{ code: "limited", message: "Only the first 20 branches are loaded; the repository may have additional branches." }] } : section);
+    const fileTreeP = snapshot.status === "empty" ? Promise.resolve(null) : fetchFileTree(owner, repo, snapshot.treeSha, token, { noStore: true });
     const [fileTree, branches, history, readme, dependencyFiles, mergedPRs] = await Promise.all([
-        snapshot.status === "empty" ? null : fetchFileTree(owner, repo, snapshot.treeSha, token, { noStore: true }),
-        branchesP,
-        branchesP.then(b => fetchCommitsForDAG(context, snapshot, b)),
-        snapshot.status === "empty" ? "" : fetchReadme(context, snapshot).catch(() => { readmeFetchError = "Pinned README could not be loaded."; return ""; }),
-        snapshot.status === "empty" ? [] : fetchDependencyFiles(context, snapshot).then(result => { dependencyFilesFetchError = result.fetchError; return result.files; }).catch(() => { dependencyFilesFetchError = "Pinned dependency manifests could not be loaded."; return []; }),
-        fetchMergedPRs(owner, repo, 1, token).catch(() => []),
+        fileTreeP, branchesP,
+        branchesP.then(section => fetchCommitsForDAG(context, snapshot, sectionData(section, []))),
+        optionalSection(() => fetchReadme(context, snapshot), "Pinned README"),
+        fetchDependencyFiles(context, snapshot, undefined, fileTreeP).then(result => result.section).catch(error => ({ status: "error" as const, error: githubSectionError(error, "Dependency manifests") })),
+        optionalSection(() => fetchMergedPRs(owner, repo, 1, token), "Merged pull requests"),
     ]);
     if (snapshot.status === "ready" && fileTree?.sha !== snapshot.treeSha) throw new RepositorySnapshotError();
-    return { snapshot, observations, metadata, fileTree, contributors: contributorsResult.data, contributorsTruncated: contributorsResult.truncated, contributorsFetchError, branches, ...history, readme, readmeFetchError, languages, dependencyFiles, dependencyFilesFetchError, mergedPRs };
+    const sections: RepositorySections = { contributors, languages, branches, dependencyFiles, readme, mergedPRs };
+    return {
+        schemaVersion: 2 as const, sections, snapshot, observations, metadata, fileTree, ...history,
+        // Compatibility aliases: current readers use sections rather than infer success from emptiness.
+        contributors: sectionData(contributors, []), contributorsTruncated: contributors.status === "partial",
+        contributorsFetchError: contributors.status === "error" ? contributors.error.code === "rate_limited" ? "rate_limited" : "fetch_failed" : null,
+        branches: sectionData(branches, []), languages: sectionData(languages, {}),
+        readme: sectionData(readme, ""), readmeFetchError: readme.status === "error" ? readme.error.message : null,
+        dependencyFiles: sectionData(dependencyFiles, []), dependencyFilesFetchError: dependencyFiles.status === "partial" ? dependencyFiles.errors[0].message : dependencyFiles.status === "error" ? dependencyFiles.error.message : null,
+        mergedPRs: sectionData(mergedPRs, []),
+    };
 }
 
 // Only public aggregates share work; credentials never enter persistent arguments/keys.
@@ -807,5 +844,5 @@ export async function fetchAllRepoData(owner: string, repo: string, token?: stri
     if (snapshot.status === "ready") access.commits.set(`${snapshot.commitSha}:${snapshot.treeSha}`, Promise.resolve());
     if (token?.trim()) return _fetchAllRepoDataImpl(snapshot, metadata, observedAt, context);
     // Cache the entire captured payload. Never relabel an old payload with new identity/time.
-    return unstable_cache(() => deduplicatedFetch(snapshot, metadata, observedAt, context), ["repo-data-v8-branch-history", repositorySnapshotKey(snapshot)!], { revalidate: 300 })();
+    return unstable_cache(() => deduplicatedFetch(snapshot, metadata, observedAt, context), ["repo-data-v9-section-coverage", repositorySnapshotKey(snapshot)!], { revalidate: 300 })();
 }

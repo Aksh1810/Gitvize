@@ -14,6 +14,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import SectionNotice from "@/components/dashboard/section-notice";
+import type { SectionResult } from "@/types";
 import type { ParsedDependency } from "@/lib/dep-parser";
 
 /* ─── Known-package registry (static, no API calls needed) ─── */
@@ -287,10 +289,12 @@ function formatDownloads(n: number): string {
 
 interface DependencyGraphProps {
     dependencies: ParsedDependency[];
+    section?: SectionResult<ParsedDependency[]>;
+    manifestCount?: number;
 }
 
 export default function DependencyGraph({
-    dependencies,
+    dependencies, section, manifestCount,
 }: DependencyGraphProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"name" | "category" | "type">("type");
@@ -348,14 +352,17 @@ export default function DependencyGraph({
     const directCount = dependencies.filter((d) => d.isDirect).length;
     const devCount = dependencies.filter((d) => !d.isDirect).length;
 
+    if (dependencies.length === 0 && section && section.status !== "ready") {
+        return <div className="atlas-list-view"><SectionNotice section={section} label="Dependencies" /></div>;
+    }
     if (dependencies.length === 0) {
         return (
             <div className="atlas-list-view atlas-list-state" role="status">
                 <div className="text-center">
                     <div className="text-4xl mb-4">📦</div>
-                    <p className="text-sm text-muted-foreground">No dependency data found.</p>
+                    <p className="text-sm text-muted-foreground">{manifestCount === 0 ? "No root dependency manifests found among the checked filenames." : "No dependencies found in the loaded root manifests."}</p>
                     <p className="text-xs text-muted-foreground mt-1">
-                        This repo may not have a recognized manifest file (package.json, requirements.txt, etc.)
+                        Root manifest checks cover package.json, requirements.txt, go.mod, Cargo.toml, pyproject.toml, Gemfile, pom.xml and build.gradle. Nested manifests and unsupported syntax are not analyzed.
                     </p>
                 </div>
             </div>
@@ -364,6 +371,7 @@ export default function DependencyGraph({
 
     return (
         <div className="atlas-list-view">
+            <SectionNotice section={section} label="Dependencies" />
             <div className="atlas-list-toolbar">
                 <div className="atlas-list-title">
                     <Package className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
@@ -391,7 +399,7 @@ export default function DependencyGraph({
 
             <div className="atlas-list-scroll custom-scrollbar">
                 <div className="atlas-list-body">
-                    <p className="atlas-list-summary">{directCount} direct · {devCount} development dependencies</p>
+                    <p className="atlas-list-summary">{directCount} direct · {devCount} development dependencies. Sample from loaded root manifests and supported declarations; nested manifests and other syntax may be omitted.</p>
                     <div className="atlas-package-list">
                         {filtered.map((dep) => {
                             const catColor = CATEGORY_COLORS[dep.category] ?? CATEGORY_COLORS.Other;
